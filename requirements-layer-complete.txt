@@ -12,6 +12,9 @@ aiofiles==24.1.0
 motor==3.7.1
 pymongo==4.13.2
 
+# AWS Lambda support
+mangum==0.19.0
+
 # HTTP and networking
 aiohttp==3.12.13
 requests==2.32.3
