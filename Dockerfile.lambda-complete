@@ -64,7 +64,7 @@ RUN pip install --target python/ --no-cache-dir \
     PyJWT==2.10.0 \
     cryptography==3.4.8 \
     python-dotenv==1.1.1 \
-    email-validator==2.2.1 \
+    email-validator==2.2.0 \
     html2text==2025.4.15 \
     tqdm==4.67.1 \
     python-multipart==0.0.20 \
