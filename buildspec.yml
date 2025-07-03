@@ -1,0 +1,29 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Starting Lambda layer build..."
+      - docker --version
+      
+  build:
+    commands:
+      - echo "Building Docker image..."
+      - docker build -f Dockerfile.lambda-complete -t lambda-layer-complete .
+      - echo "Creating container and extracting layer..."
+      - CONTAINER_ID=$(docker create lambda-layer-complete)
+      - docker cp $CONTAINER_ID:/tmp/lambda-layer-complete.zip ./lambda-layer-complete.zip
+      - docker rm $CONTAINER_ID
+      - echo "Layer size:"
+      - ls -lh lambda-layer-complete.zip
+      
+  post_build:
+    commands:
+      - echo "Uploading layer to S3..."
+      - aws s3 cp lambda-layer-complete.zip s3://crawlchat-deployment/
+      - echo "Build completed successfully!"
+
+artifacts:
+  files:
+    - lambda-layer-complete.zip
+  discard-paths: no 

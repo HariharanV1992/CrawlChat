@@ -1,0 +1,132 @@
+FROM public.ecr.aws/lambda/python:3.10
+
+# Install all necessary build dependencies
+RUN yum update -y && yum install -y \
+    gcc \
+    gcc-c++ \
+    make \
+    python3-devel \
+    openssl-devel \
+    libffi-devel \
+    zlib-devel \
+    bzip2-devel \
+    readline-devel \
+    sqlite-devel \
+    tk-devel \
+    xz-devel \
+    freetype-devel \
+    libpng-devel \
+    jpeg-devel \
+    libtiff-devel \
+    lcms2-devel \
+    libwebp-devel \
+    tcl-devel \
+    && yum clean all
+
+# Set environment variables for better compatibility
+ENV CFLAGS="-I/usr/include/openssl"
+ENV LDFLAGS="-L/usr/lib64"
+ENV PKG_CONFIG_PATH="/usr/lib64/pkgconfig"
+
+# Create working directory
+WORKDIR /tmp
+
+# Copy requirements file
+COPY requirements-layer-complete.txt .
+
+# Install Python dependencies with specific flags for Lambda compatibility
+RUN pip install --upgrade pip setuptools wheel
+
+# Install dependencies in stages to handle failures gracefully
+RUN pip install --target python/ --no-cache-dir \
+    fastapi==0.115.14 \
+    uvicorn[standard]==0.32.1 \
+    mangum==0.19.0 \
+    starlette==0.46.2 \
+    motor==3.7.1 \
+    pymongo==4.13.2 \
+    aiohttp==3.12.13 \
+    httpx==0.28.1 \
+    requests==2.32.3 \
+    urllib3==2.2.2 \
+    beautifulsoup4==4.13.4 \
+    lxml==6.0.0 \
+    selenium==4.20.0 \
+    webdriver-manager==4.0.1 \
+    PyPDF2==3.0.1 \
+    pypdf==5.7.0 \
+    PyMuPDF==1.18.19 \
+    pdfplumber==0.10.3 \
+    openai==1.93.0 \
+    numpy==1.26.4 \
+    passlib[bcrypt]==1.7.4 \
+    python-jose[cryptography]==3.5.0 \
+    PyJWT==2.10.0 \
+    cryptography==3.4.8 \
+    python-dotenv==1.1.1 \
+    email-validator==2.2.1 \
+    html2text==2025.4.15 \
+    tqdm==4.67.1 \
+    python-multipart==0.0.20 \
+    click==8.1.7 \
+    pydantic==2.11.7 \
+    pydantic-settings==2.10.1 \
+    pydantic-core==2.33.2 \
+    aiofiles==24.1.0 \
+    asyncio-throttle==1.0.2 \
+    anyio==4.9.0 \
+    typing-extensions==4.14.0 \
+    typing-inspection==0.4.1 \
+    exceptiongroup==1.3.0 \
+    sniffio==1.3.1
+
+# Clean up unnecessary files to reduce size
+RUN find python/ -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+RUN find python/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+RUN find python/ -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+RUN find python/ -name "*.pyc" -delete 2>/dev/null || true
+RUN find python/ -name "*.pyo" -delete 2>/dev/null || true
+RUN find python/ -name "*.md" -delete 2>/dev/null || true
+RUN find python/ -name "*.txt" -delete 2>/dev/null || true
+RUN find python/ -name "*.rst" -delete 2>/dev/null || true
+RUN find python/ -name "LICENSE*" -delete 2>/dev/null || true
+RUN find python/ -name "README*" -delete 2>/dev/null || true
+
+# Remove large test directories
+RUN rm -rf python/numpy/tests/ python/numpy/f2py/tests/ python/numpy/typing/tests/ python/numpy/testing/tests/ python/numpy/ma/tests/ python/numpy/linalg/tests/ python/numpy/fft/tests/ python/numpy/core/tests/ 2>/dev/null || true
+RUN rm -rf python/bs4/tests/ 2>/dev/null || true
+RUN rm -rf python/lxml/tests/ 2>/dev/null || true
+RUN rm -rf python/aiohttp/tests/ 2>/dev/null || true
+RUN rm -rf python/fastapi/tests/ 2>/dev/null || true
+RUN rm -rf python/pydantic/tests/ 2>/dev/null || true
+RUN rm -rf python/motor/tests/ 2>/dev/null || true
+RUN rm -rf python/pymongo/tests/ 2>/dev/null || true
+RUN rm -rf python/openai/tests/ 2>/dev/null || true
+RUN rm -rf python/PyPDF2/tests/ 2>/dev/null || true
+RUN rm -rf python/PyMuPDF/tests/ 2>/dev/null || true
+RUN rm -rf python/pypdf/tests/ 2>/dev/null || true
+RUN rm -rf python/html2text/tests/ 2>/dev/null || true
+RUN rm -rf python/python_jose/tests/ 2>/dev/null || true
+RUN rm -rf python/passlib/tests/ 2>/dev/null || true
+RUN rm -rf python/mangum/tests/ 2>/dev/null || true
+RUN rm -rf python/uvicorn/tests/ 2>/dev/null || true
+RUN rm -rf python/starlette/tests/ 2>/dev/null || true
+RUN rm -rf python/email_validator/tests/ 2>/dev/null || true
+RUN rm -rf python/requests/tests/ 2>/dev/null || true
+RUN rm -rf python/urllib3/tests/ 2>/dev/null || true
+RUN rm -rf python/httpx/tests/ 2>/dev/null || true
+RUN rm -rf python/selenium/tests/ 2>/dev/null || true
+RUN rm -rf python/webdriver_manager/tests/ 2>/dev/null || true
+RUN rm -rf python/python_dateutil/tests/ 2>/dev/null || true
+RUN rm -rf python/prometheus_client/tests/ 2>/dev/null || true
+RUN rm -rf python/PyJWT/tests/ 2>/dev/null || true
+RUN rm -rf python/jinja2/tests/ 2>/dev/null || true
+
+# Remove unnecessary numpy files
+RUN rm -rf python/numpy/doc/ python/numpy/f2py/ python/numpy/distutils/ 2>/dev/null || true
+
+# Create layer ZIP
+RUN zip -r lambda-layer-complete.zip python/
+
+# Keep container running to copy files
+CMD ["tail", "-f", "/dev/null"] 
