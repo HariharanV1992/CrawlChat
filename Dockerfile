@@ -33,14 +33,15 @@ RUN yum update -y && yum install -y \
 
 WORKDIR /tmp
 
-# Build Tesseract from source
-RUN git clone --branch 4.1.1 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
+# Try to install Tesseract from package manager first, fallback to source build
+RUN yum install -y tesseract tesseract-devel || \
+    (git clone --branch 4.1.0 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
     cd tesseract && \
     ./autogen.sh && \
     ./configure --prefix=/usr/local && \
     make && make install && \
     ldconfig && \
-    cd /tmp && rm -rf tesseract
+    cd /tmp && rm -rf tesseract)
 
 # Download Tesseract English language data
 RUN mkdir -p /usr/local/share/tessdata && \
