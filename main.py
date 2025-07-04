@@ -13,6 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2.exceptions import TemplateNotFound
 import uvicorn
 
 from src.core.config import config
@@ -131,6 +132,20 @@ if config.is_production:
         allowed_hosts=["*"]  # Configure with actual allowed hosts
     )
 
+# Template not found exception handler
+@app.exception_handler(TemplateNotFound)
+async def template_not_found_handler(request: Request, exc: TemplateNotFound):
+    """Handle template not found errors gracefully."""
+    logger.warning(f"Template not found: {exc}")
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Template not found",
+            "message": "The requested template is not available in this environment. Please use the API endpoints directly.",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -138,7 +153,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
     # Handle template not found errors gracefully
-    if "TemplateNotFound" in str(exc) or "not found in search path" in str(exc):
+    if isinstance(exc, TemplateNotFound) or "TemplateNotFound" in str(exc) or "not found in search path" in str(exc):
         return JSONResponse(
             status_code=404,
             content={
