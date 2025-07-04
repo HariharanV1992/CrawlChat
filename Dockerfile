@@ -1,23 +1,54 @@
-# ---------- BUILD STAGE ----------
-FROM tesseractshadow/tesseract4re AS tesseract
-
 # ---------- FINAL LAMBDA IMAGE ----------
 FROM public.ecr.aws/lambda/python:3.10
 
-# Install runtime dependencies
-RUN yum update -y && \
-    yum install -y poppler-utils && \
-    yum clean all && rm -rf /var/cache/yum
+# Install system dependencies and build tools
+RUN yum update -y && yum install -y \
+    gcc \
+    gcc-c++ \
+    make \
+    wget \
+    tar \
+    git \
+    autoconf \
+    automake \
+    libtool \
+    pkgconfig \
+    openssl-devel \
+    libffi-devel \
+    python3-devel \
+    libjpeg-devel \
+    zlib-devel \
+    freetype-devel \
+    lcms2-devel \
+    libwebp-devel \
+    tcl-devel \
+    tk-devel \
+    poppler-utils \
+    poppler-devel \
+    libpng-devel \
+    libtiff-devel \
+    epel-release \
+    leptonica-devel \
+    && yum clean all && rm -rf /var/cache/yum
 
-# Copy Tesseract + Leptonica from the tesseractshadow image
-COPY --from=tesseract /usr/local /usr/local
-COPY --from=tesseract /usr/share/tessdata /usr/local/share/tessdata
+WORKDIR /tmp
+
+# Build Tesseract from source
+RUN git clone --branch 4.1.1 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
+    cd tesseract && \
+    ./autogen.sh && \
+    ./configure --prefix=/usr/local && \
+    make && make install && \
+    ldconfig && \
+    cd /tmp && rm -rf tesseract
+
+# Download Tesseract English language data
+RUN mkdir -p /usr/local/share/tessdata && \
+    wget -O /usr/local/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
 
 # Add Tesseract to PATH and library paths
 ENV PATH="/usr/local/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
-    
-# Tesseract English language data is already included from tesseractshadow image
     
     # Copy your app code
     COPY requirements.txt ${LAMBDA_TASK_ROOT}/
