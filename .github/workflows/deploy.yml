@@ -64,7 +64,19 @@ jobs:
     - name: Test Lambda function
       run: |
         echo "Testing Lambda function..."
-        echo '{"httpMethod": "GET", "path": "/health"}' > payload.json
+        cat > payload.json << 'EOF'
+        {
+          "httpMethod": "GET",
+          "path": "/health",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "queryStringParameters": null,
+          "pathParameters": null,
+          "body": null,
+          "isBase64Encoded": false
+        }
+        EOF
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
           --payload file://payload.json \
