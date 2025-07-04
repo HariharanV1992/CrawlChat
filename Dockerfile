@@ -1,5 +1,5 @@
 # ---------- BUILD STAGE ----------
-FROM jitesoft/tesseract-ocr:5-5.5.1 AS tesseract
+FROM tesseractshadow/tesseract4re AS tesseract
 
 # ---------- FINAL LAMBDA IMAGE ----------
 FROM public.ecr.aws/lambda/python:3.10
@@ -9,11 +9,15 @@ RUN yum update -y && \
     yum install -y poppler-utils && \
     yum clean all && rm -rf /var/cache/yum
 
-# Copy Tesseract + Leptonica from the jitesoft image
+# Copy Tesseract + Leptonica from the tesseractshadow image
 COPY --from=tesseract /usr/local /usr/local
-COPY --from=tesseract /usr/local/share/tessdata /usr/local/share/tessdata
+COPY --from=tesseract /usr/share/tessdata /usr/local/share/tessdata
+
+# Add Tesseract to PATH and library paths
+ENV PATH="/usr/local/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
     
-    # Tesseract English language data is already included from jitesoft image
+# Tesseract English language data is already included from tesseractshadow image
     
     # Copy your app code
     COPY requirements.txt ${LAMBDA_TASK_ROOT}/
