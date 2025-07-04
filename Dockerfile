@@ -33,9 +33,15 @@
     
     WORKDIR /tmp
     
-    # Install Leptonica from package manager (more reliable for Lambda)
-RUN yum install -y leptonica-devel && \
-    yum clean all && rm -rf /var/cache/yum
+    # Build Leptonica from source (required for Tesseract)
+RUN cd /tmp && \
+    wget https://github.com/DanBloomberg/leptonica/releases/download/1.84.0/leptonica-1.84.0.tar.gz && \
+    tar -xzf leptonica-1.84.0.tar.gz && \
+    cd leptonica-1.84.0 && \
+    ./configure --prefix=/usr/local && \
+    make && make install && \
+    ldconfig && \
+    cd /tmp && rm -rf leptonica-1.84.0*
     
     # Build Tesseract
     RUN git clone --branch 5.3.3 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
