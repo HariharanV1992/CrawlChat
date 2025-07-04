@@ -1,13 +1,13 @@
 #!/bin/bash
 
-echo "🔧 Creating Lambda-Compatible Layer with Docker"
-echo "================================================"
+echo "🔧 Creating Lambda-Compatible Layer with Docker (OCR Enabled)"
+echo "============================================================="
 
 # Create a Dockerfile for Lambda-compatible builds
 cat > Dockerfile.lambda-layer << 'EOF'
 FROM public.ecr.aws/lambda/python:3.10
 
-# Install build dependencies
+# Install build dependencies and OCR requirements
 RUN yum update -y && yum install -y \
     gcc \
     gcc-c++ \
@@ -22,6 +22,12 @@ RUN yum update -y && yum install -y \
     libwebp-devel \
     tcl-devel \
     tk-devel \
+    # OCR dependencies for Amazon Linux
+    poppler-utils \
+    poppler-devel \
+    leptonica-devel \
+    libpng-devel \
+    libtiff-devel \
     && yum clean all
 
 # Copy requirements file
@@ -80,11 +86,18 @@ RUN find /opt/python -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null ||
 RUN ls -la /opt/python/pydantic_core/ || echo "pydantic_core not found, will reinstall"
 RUN python -c "import pydantic_core; print('pydantic_core imported successfully')" || echo "pydantic_core import failed"
 
+# Verify OCR dependencies
+RUN python -c "import pytesseract; print('pytesseract imported successfully')" || echo "pytesseract import failed"
+RUN python -c "from pdf2image import convert_from_bytes; print('pdf2image imported successfully')" || echo "pdf2image import failed"
+
+# Show final layer size
+RUN du -sh /opt/python
+
 # Create a simple command to keep container running
-CMD ["/bin/bash", "-c", "echo 'Layer built successfully' && sleep infinity"]
+CMD ["/bin/bash", "-c", "echo 'Layer built successfully with OCR support' && sleep infinity"]
 EOF
 
-echo "🐳 Building Lambda-compatible layer with Docker..."
+echo "🐳 Building Lambda-compatible layer with Docker (OCR Enabled)..."
 
 # Build the Docker image
 docker build -f Dockerfile.lambda-layer -t lambda-layer-builder .
@@ -105,7 +118,7 @@ docker create --name temp-container lambda-layer-builder
 docker cp temp-container:/opt/python lambda-layer-lambda-compatible/
 docker rm temp-container
 
-# Create ZIP file
+# Create ZIP file with Python packages only
 cd lambda-layer-lambda-compatible
 zip -r lambda-layer-lambda-compatible.zip python/ -x "*.pyc" "__pycache__/*" "*.pyo" "*.pyd" ".git/*" ".gitignore" "*.log" "*.tmp"
 
@@ -115,13 +128,26 @@ cd python
 UNZIPPED_SIZE=$(du -sh . | cut -f1)
 cd ..
 
-echo "📊 Lambda-compatible layer - ZIP: $ZIP_SIZE, Unzipped: $UNZIPPED_SIZE"
+echo "📊 Lambda-compatible layer (OCR Enabled) - ZIP: $ZIP_SIZE, Python: $UNZIPPED_SIZE"
 
 # Verify pydantic_core is in the layer
 if [ -d "python/pydantic_core" ]; then
     echo "✅ pydantic_core found in layer"
 else
     echo "❌ pydantic_core missing from layer!"
+fi
+
+# Verify OCR Python libraries are in the layer
+if [ -d "python/pytesseract" ]; then
+    echo "✅ pytesseract found in layer"
+else
+    echo "❌ pytesseract missing from layer!"
+fi
+
+if [ -d "python/pdf2image" ]; then
+    echo "✅ pdf2image found in layer"
+else
+    echo "❌ pdf2image missing from layer!"
 fi
 
 # Upload to S3
@@ -133,7 +159,7 @@ cd ..
 # Clean up
 rm -f Dockerfile.lambda-layer
 
-echo "🎉 Lambda-compatible layer created and uploaded!"
+echo "🎉 Lambda-compatible layer with OCR support created and uploaded!"
 echo ""
 echo "📋 Next steps:"
 echo "1. Go to AWS Lambda Console"
@@ -143,5 +169,7 @@ echo "4. Upload from S3: s3://crawlchat-deployment/lambda-layer-lambda-compatibl
 echo "5. Update your Lambda function to use the new layer version"
 echo ""
 echo "🔧 This layer was built in a Lambda-compatible environment to avoid GLIBC version issues."
-echo "📦 Optimized for lightweight dependencies: PyPDF2 + pdfminer.six (no pdfplumber/pymupdf)"
-echo "🔍 Includes pydantic_core for Pydantic v2 compatibility" 
+echo "📦 Includes Python OCR libraries: pytesseract + pdf2image + poppler-utils"
+echo "🔍 Includes pydantic_core for Pydantic v2 compatibility"
+echo "📄 Note: Tesseract binary needs to be installed separately in Lambda runtime"
+echo "   - Consider using a custom Lambda runtime or container image for full OCR support" 
