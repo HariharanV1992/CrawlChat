@@ -27,8 +27,8 @@
         poppler-utils \
         poppler-devel \
         libpng-devel \
-        libtiff-devel \
-        && yum clean all && \
+        libtiff-devel && \
+        yum clean all && \
         rm -rf /var/cache/yum
     
     WORKDIR /tmp
@@ -38,15 +38,17 @@
         tar -xzf leptonica-1.84.0.tar.gz && \
         cd leptonica-1.84.0 && \
         ./configure --prefix=/usr/local && \
-        make && make install && ldconfig && \
+        make && make install && \
+        ldconfig && \
         cd /tmp && rm -rf leptonica-1.84.0*
     
     # Build Tesseract from source
     RUN git clone --branch 5.3.3 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
         cd tesseract && \
         ./autogen.sh && \
-        ./configure --prefix=/usr/local && \
-        make && make install && ldconfig && \
+        PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure --prefix=/usr/local && \
+        make && make install && \
+        ldconfig && \
         cd /tmp && rm -rf tesseract
     
     # ---------- FINAL LAMBDA IMAGE ----------
@@ -57,14 +59,14 @@
         yum install -y poppler-utils && \
         yum clean all && rm -rf /var/cache/yum
     
-    # Copy Tesseract + Leptonica from build stage
+    # Copy Tesseract + Leptonica binaries and libs
     COPY --from=build /usr/local /usr/local
     
-    # Download English traineddata for Tesseract
+    # Download Tesseract English language data
     RUN mkdir -p /usr/local/share/tessdata && \
         wget -O /usr/local/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
     
-    # Copy app code
+    # Copy your app code
     COPY requirements.txt ${LAMBDA_TASK_ROOT}/
     RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
     
@@ -74,5 +76,6 @@
     COPY templates/ ${LAMBDA_TASK_ROOT}/templates/
     COPY static/ ${LAMBDA_TASK_ROOT}/static/
     
+    # Lambda handler entry point
     CMD ["lambda_handler.handler"]
     
