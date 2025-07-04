@@ -34,8 +34,7 @@
     WORKDIR /tmp
     
     # Install Leptonica from package manager (more reliable for Lambda)
-RUN yum install -y epel-release && \
-    yum install -y leptonica-devel && \
+RUN yum install -y leptonica-devel && \
     yum clean all && rm -rf /var/cache/yum
     
     # Build Tesseract
