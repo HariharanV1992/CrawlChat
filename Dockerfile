@@ -33,42 +33,23 @@ RUN yum update -y && yum install -y \
 
 WORKDIR /tmp
 
-# Set PATH for Tesseract
-ENV PATH="/usr/local/bin:${PATH}"
-
-# Install Tesseract dependencies for Amazon Linux 2
-RUN yum install -y \
-    wget \
-    unzip \
+# Install Tesseract and dependencies from package manager (recommended approach)
+RUN yum install -y epel-release && \
+    yum install -y \
+    tesseract \
+    tesseract-devel \
+    tesseract-langpack-eng \
     leptonica-devel \
-    automake \
-    make \
-    pkgconfig \
-    libicu-devel \
-    cairo-devel \
-    bc \
+    poppler-utils \
     && yum clean all && rm -rf /var/cache/yum
 
-# Build Tesseract 4.1.1 from source (your team's approach)
-RUN wget https://github.com/tesseract-ocr/tesseract/archive/4.1.1.zip && \
-    unzip 4.1.1.zip && \
-    cd tesseract-4.1.1 && \
-    ./autogen.sh && \
-    ./configure --prefix=/usr/local && \
-    make && \
-    make install && \
-    ldconfig && \
-    make training && \
-    make training-install && \
-    tesseract --version && \
-    cd /tmp && rm -rf tesseract-4.1.1*
+# Set PATH for Tesseract
+ENV PATH="/usr/bin:${PATH}"
+ENV TESSDATA_PREFIX="/usr/share/tessdata"
 
-# Download Tesseract English language data
-RUN mkdir -p /usr/local/share/tessdata && \
-    wget -O /usr/local/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
-
+# English language data is included with tesseract-langpack-eng package
 # Set library paths
-ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/lib64:${LD_LIBRARY_PATH}"
     
     # Copy your app code
     COPY requirements.txt ${LAMBDA_TASK_ROOT}/
