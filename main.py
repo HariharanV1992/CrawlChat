@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -359,8 +359,20 @@ app.include_router(crawler_router, prefix="/api/v1/crawler")
 app.include_router(documents_router, prefix="/api/v1/documents")
 app.include_router(vector_store_router, prefix="/api/v1")
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount static files - handle Lambda environment gracefully
+if os.path.exists("static") and not os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+    # Only mount static files in non-Lambda environments where the directory exists
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+else:
+    # Create a simple static handler for Lambda or when static directory doesn't exist
+    @app.get("/static/{path:path}")
+    async def static_files(path: str):
+        """Serve static files from the static directory."""
+        static_path = os.path.join("static", path)
+        if os.path.exists(static_path) and os.path.isfile(static_path):
+            return FileResponse(static_path)
+        else:
+            raise HTTPException(status_code=404, detail="Static file not found")
 
 # Main entry point
 if __name__ == "__main__":

@@ -490,19 +490,19 @@ class DocumentService:
     def _get_content_type(self, extension: str) -> str:
         """Get content type from file extension with caching."""
         if extension not in self._content_type_cache:
-            content_types = {
-                '.pdf': 'application/pdf',
-                '.doc': 'application/msword',
-                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                '.txt': 'text/plain',
-                '.html': 'text/html',
-                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                '.xls': 'application/vnd.ms-excel',
-                '.csv': 'text/csv',
-                '.ppt': 'application/vnd.ms-powerpoint',
-                '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                '.json': 'application/json',
-            }
+        content_types = {
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.txt': 'text/plain',
+            '.html': 'text/html',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls': 'application/vnd.ms-excel',
+            '.csv': 'text/csv',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.json': 'application/json',
+        }
             self._content_type_cache[extension] = content_types.get(extension, 'application/octet-stream')
         return self._content_type_cache[extension]
     
@@ -510,16 +510,17 @@ class DocumentService:
         """Get a document by ID."""
         try:
             await mongodb.connect()
-            doc = await mongodb.get_collection("documents").find_one({"document_id": document_id, "user_id": user_id})
+        doc = await mongodb.get_collection("documents").find_one({"document_id": document_id, "user_id": user_id})
             return Document(**doc) if doc else None
         except Exception as e:
             logger.error(f"Error getting document {document_id}: {e}")
-            return None
+        return None
     
     async def list_user_documents(self, user_id: str, limit: int = 50, skip: int = 0) -> DocumentList:
         """List documents for a user with optimized querying."""
         try:
             await mongodb.connect()
+            
             # Use projection to only fetch needed fields
             projection = {
                 "document_id": 1,
@@ -530,13 +531,15 @@ class DocumentService:
                 "processed_at": 1,
                 "file_size": 1
             }
+            
             cursor = mongodb.get_collection("documents").find(
                 {"user_id": user_id}, 
                 projection=projection
             ).skip(skip).limit(limit)
-            docs = [Document(**doc) async for doc in cursor]
-            total_count = await mongodb.get_collection("documents").count_documents({"user_id": user_id})
-            return DocumentList(documents=docs, total_count=total_count)
+            
+        docs = [Document(**doc) async for doc in cursor]
+        total_count = await mongodb.get_collection("documents").count_documents({"user_id": user_id})
+        return DocumentList(documents=docs, total_count=total_count)
         except Exception as e:
             logger.error(f"Error listing documents for user {user_id}: {e}")
             return DocumentList(documents=[], total_count=0)
