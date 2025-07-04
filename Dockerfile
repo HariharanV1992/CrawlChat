@@ -11,7 +11,7 @@ RUN yum update -y && \
 
 # Copy Tesseract + Leptonica from the jitesoft image
 COPY --from=tesseract /usr/local /usr/local
-COPY --from=tesseract /usr/share/tessdata /usr/local/share/tessdata
+COPY --from=tesseract /usr/local/share/tessdata /usr/local/share/tessdata
     
     # Tesseract English language data is already included from jitesoft image
     
