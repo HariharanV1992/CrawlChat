@@ -33,41 +33,38 @@
     
     WORKDIR /tmp
     
-    # Build Leptonica from source (required for Tesseract)
-RUN cd /tmp && \
-    wget https://github.com/DanBloomberg/leptonica/releases/download/1.84.0/leptonica-1.84.0.tar.gz && \
-    tar -xzf leptonica-1.84.0.tar.gz && \
-    cd leptonica-1.84.0 && \
-    ./configure --prefix=/usr/local && \
-    make && make install && \
-    ldconfig && \
-    cd /tmp && rm -rf leptonica-1.84.0*
+    # Build Leptonica from source
+    RUN wget https://github.com/DanBloomberg/leptonica/releases/download/1.84.0/leptonica-1.84.0.tar.gz && \
+        tar -xzf leptonica-1.84.0.tar.gz && \
+        cd leptonica-1.84.0 && \
+        ./configure --prefix=/usr/local && \
+        make && make install && ldconfig && \
+        cd /tmp && rm -rf leptonica-1.84.0*
     
-    # Build Tesseract
+    # Build Tesseract from source
     RUN git clone --branch 5.3.3 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
         cd tesseract && \
         ./autogen.sh && \
         ./configure --prefix=/usr/local && \
-        make && make install && \
-        ldconfig && \
+        make && make install && ldconfig && \
         cd /tmp && rm -rf tesseract
     
     # ---------- FINAL LAMBDA IMAGE ----------
     FROM public.ecr.aws/lambda/python:3.10
     
     # Install runtime dependencies
-    RUN yum update -y && yum install -y \
-        poppler-utils \
-        && yum clean all && rm -rf /var/cache/yum
+    RUN yum update -y && \
+        yum install -y poppler-utils && \
+        yum clean all && rm -rf /var/cache/yum
     
     # Copy Tesseract + Leptonica from build stage
     COPY --from=build /usr/local /usr/local
     
-    # Download Tesseract English language data
+    # Download English traineddata for Tesseract
     RUN mkdir -p /usr/local/share/tessdata && \
         wget -O /usr/local/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
     
-    # Copy your app code
+    # Copy app code
     COPY requirements.txt ${LAMBDA_TASK_ROOT}/
     RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
     
