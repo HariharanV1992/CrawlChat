@@ -38,6 +38,8 @@ ENV PATH="/usr/local/bin:${PATH}"
 
 # Install Tesseract dependencies for Amazon Linux 2
 RUN yum install -y \
+    wget \
+    unzip \
     leptonica-devel \
     automake \
     make \
