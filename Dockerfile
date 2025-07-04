@@ -1,70 +1,19 @@
 # ---------- BUILD STAGE ----------
-    FROM amazonlinux:2 AS build
+FROM jitesoft/tesseract-ocr:5-5.5.1 AS tesseract
 
-    # Install build dependencies
-    RUN yum update -y && \
-        yum install -y \
-        gcc \
-        gcc-c++ \
-        make \
-        wget \
-        tar \
-        git \
-        autoconf \
-        automake \
-        libtool \
-        pkgconfig \
-        openssl-devel \
-        libffi-devel \
-        python3-devel \
-        libjpeg-devel \
-        zlib-devel \
-        freetype-devel \
-        lcms2-devel \
-        libwebp-devel \
-        tcl-devel \
-        tk-devel \
-        poppler-utils \
-        poppler-devel \
-        libpng-devel \
-        libtiff-devel && \
-        yum clean all && \
-        rm -rf /var/cache/yum
+# ---------- FINAL LAMBDA IMAGE ----------
+FROM public.ecr.aws/lambda/python:3.10
+
+# Install runtime dependencies
+RUN yum update -y && \
+    yum install -y poppler-utils && \
+    yum clean all && rm -rf /var/cache/yum
+
+# Copy Tesseract + Leptonica from the jitesoft image
+COPY --from=tesseract /usr/local /usr/local
+COPY --from=tesseract /usr/share/tessdata /usr/local/share/tessdata
     
-    WORKDIR /tmp
-    
-    # Build Leptonica from source
-    RUN wget https://github.com/DanBloomberg/leptonica/releases/download/1.84.0/leptonica-1.84.0.tar.gz && \
-        tar -xzf leptonica-1.84.0.tar.gz && \
-        cd leptonica-1.84.0 && \
-        ./configure --prefix=/usr/local && \
-        make && make install && \
-        ldconfig && \
-        cd /tmp && rm -rf leptonica-1.84.0*
-    
-    # Build Tesseract from source
-    RUN git clone --branch 5.3.3 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
-        cd tesseract && \
-        ./autogen.sh && \
-        PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure --prefix=/usr/local && \
-        make && make install && \
-        ldconfig && \
-        cd /tmp && rm -rf tesseract
-    
-    # ---------- FINAL LAMBDA IMAGE ----------
-    FROM public.ecr.aws/lambda/python:3.10
-    
-    # Install runtime dependencies
-    RUN yum update -y && \
-        yum install -y poppler-utils && \
-        yum clean all && rm -rf /var/cache/yum
-    
-    # Copy Tesseract + Leptonica binaries and libs
-    COPY --from=build /usr/local /usr/local
-    
-    # Download Tesseract English language data
-    RUN mkdir -p /usr/local/share/tessdata && \
-        wget -O /usr/local/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+    # Tesseract English language data is already included from jitesoft image
     
     # Copy your app code
     COPY requirements.txt ${LAMBDA_TASK_ROOT}/
