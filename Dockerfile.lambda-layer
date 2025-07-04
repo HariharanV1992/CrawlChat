@@ -1,6 +1,6 @@
 FROM public.ecr.aws/lambda/python:3.10
 
-# Install build dependencies
+# Install build dependencies and OCR requirements
 RUN yum update -y && yum install -y \
     gcc \
     gcc-c++ \
@@ -15,6 +15,14 @@ RUN yum update -y && yum install -y \
     libwebp-devel \
     tcl-devel \
     tk-devel \
+    # OCR dependencies
+    tesseract \
+    tesseract-langpack-eng \
+    poppler-utils \
+    poppler-devel \
+    leptonica-devel \
+    libpng-devel \
+    libtiff-devel \
     && yum clean all
 
 # Copy requirements file
@@ -25,6 +33,12 @@ RUN pip install -r /tmp/requirements.txt -t /opt/python --no-cache-dir
 
 # Ensure pydantic_core is properly installed
 RUN pip install pydantic-core>=2.0.0 -t /opt/python --no-cache-dir --force-reinstall
+
+# Copy Tesseract binary and data to Lambda layer
+RUN mkdir -p /opt/tesseract
+RUN cp -r /usr/bin/tesseract /opt/tesseract/
+RUN cp -r /usr/share/tessdata /opt/tesseract/
+RUN cp -r /usr/lib64/libtesseract* /opt/tesseract/
 
 # Clean up unnecessary files to reduce layer size
 RUN find /opt/python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
@@ -73,8 +87,14 @@ RUN find /opt/python -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null ||
 RUN ls -la /opt/python/pydantic_core/ || echo "pydantic_core not found, will reinstall"
 RUN python -c "import pydantic_core; print('pydantic_core imported successfully')" || echo "pydantic_core import failed"
 
+# Verify OCR dependencies
+RUN ls -la /opt/tesseract/ || echo "Tesseract not found"
+RUN python -c "import pytesseract; print('pytesseract imported successfully')" || echo "pytesseract import failed"
+RUN python -c "from pdf2image import convert_from_bytes; print('pdf2image imported successfully')" || echo "pdf2image import failed"
+
 # Show final layer size
 RUN du -sh /opt/python
+RUN du -sh /opt/tesseract
 
 # Create a simple command to keep container running
-CMD ["/bin/bash", "-c", "echo 'Layer built successfully' && sleep infinity"]
+CMD ["/bin/bash", "-c", "echo 'Layer built successfully with OCR support' && sleep infinity"] 

@@ -23,18 +23,21 @@ jobs:
       run: |
         CONTAINER_ID=$(docker create lambda-layer-builder)
         docker cp $CONTAINER_ID:/opt/python ./python
+        docker cp $CONTAINER_ID:/opt/tesseract ./tesseract
         docker rm $CONTAINER_ID
         
-        # Create the layer zip file
-        zip -r lambda-layer-essential.zip python/
+        # Create the layer zip file with both Python packages and Tesseract
+        zip -r lambda-layer-ocr.zip python/ tesseract/
     
     - name: Check layer file
       run: |
-        ls -la lambda-layer-essential.zip
-        echo "Layer size: $(du -h lambda-layer-essential.zip | cut -f1)"
+        ls -la lambda-layer-ocr.zip
+        echo "Layer size: $(du -h lambda-layer-ocr.zip | cut -f1)"
+        echo "Python packages size: $(du -sh python/ | cut -f1)"
+        echo "Tesseract size: $(du -sh tesseract/ | cut -f1)"
     
     - name: Upload layer as artifact
       uses: actions/upload-artifact@v4
       with:
-        name: lambda-layer-essential
-        path: lambda-layer-essential.zip 
+        name: lambda-layer-ocr
+        path: lambda-layer-ocr.zip 

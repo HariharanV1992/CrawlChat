@@ -2,7 +2,7 @@ lxml-6.0.0.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQ
 lxml-6.0.0.dist-info/METADATA,sha256=l0V9FIpBXx7-YI5aTsHRBGKuJZYt__AMOBXA3mPJtNE,6600
 lxml-6.0.0.dist-info/RECORD,,
 lxml-6.0.0.dist-info/REQUESTED,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0
-lxml-6.0.0.dist-info/WHEEL,sha256=Obtqci3x5vy5ZivY2BiOH9GHO8-xQ0d4HFhTOtXMNhw,152
+lxml-6.0.0.dist-info/WHEEL,sha256=DTnKjM5OInJxWADod3iQyWxWcdG-eRwxzGww236swpY,151
 lxml-6.0.0.dist-info/licenses/LICENSE.txt,sha256=j8K1aBM1FuRoRdIUeRet7uFkjnCumrXtbFQXr-9M6FU,1507
 lxml-6.0.0.dist-info/licenses/LICENSES.txt,sha256=QdSd1AaqDhVIptXyGjDWv2OLPNlutyid00jYPtLkA5I,1514
 lxml-6.0.0.dist-info/top_level.txt,sha256=NjD988wqaKq512nshNdLt-uDxsjkp4Bh51m6N-dhUrk,5
@@ -17,10 +17,10 @@ lxml/__pycache__/doctestcompare.cpython-310.pyc,,
 lxml/__pycache__/pyclasslookup.cpython-310.pyc,,
 lxml/__pycache__/sax.cpython-310.pyc,,
 lxml/__pycache__/usedoctest.cpython-310.pyc,,
-lxml/_elementpath.cpython-310-x86_64-linux-gnu.so,sha256=GcRwgPX9RhLtwLecp-yPTcF_zR6oY7e6m-05k14T4Xw,221440
+lxml/_elementpath.cpython-310-x86_64-linux-gnu.so,sha256=PSIXUQCu3ouJz2u5YsPvRUCklH81kW-Gu4-fWHK81Gw,213160
 lxml/_elementpath.py,sha256=b80hM3ndAkTtRX6v54za3LkkAqCcd0700BbMPZHnTBU,10959
 lxml/apihelpers.pxi,sha256=9S6bzp-VKCUPZv0f6-el5PsbPFN4FJqSnMCIYilS0eU,63881
-lxml/builder.cpython-310-x86_64-linux-gnu.so,sha256=er6O0nFv2tuybVpYROIrocT_49qNLjbLrvYWIF8nZSM,129112
+lxml/builder.cpython-310-x86_64-linux-gnu.so,sha256=nv7-JfskjLYB772t0kQX3lQPi0XZ2PETauFRMBezkaw,124928
 lxml/builder.py,sha256=KI1HxHTd4wJqqVfmTRtSbXBQdl2T-P36ih4hT-J3MNw,8485
 lxml/classlookup.pxi,sha256=Tax8Vhbm5C6UCjgmRFsYjW0pFHxIuTthH1MOgASDLgc,22435
 lxml/cleanup.pxi,sha256=ZNEpbv7qx_ICPzsxhCaMUHCOfiznOoZ_u3jlYXHAuh4,8454
@@ -29,7 +29,7 @@ lxml/debug.pxi,sha256=KTcpR8-slUYvmIPbE35GoHDNTb-gjTEvD7bw6LltM4c,1125
 lxml/docloader.pxi,sha256=bYSZAxxbBEfVzfLXTUWFRfOyUTfV23L7i9hR2dgtSNY,5772
 lxml/doctestcompare.py,sha256=40EDnkwpcvW86qNa86990OXF42xdHaosSZoiBsEjkzU,17731
 lxml/dtd.pxi,sha256=IAKkmA4ZoC68sqAWcTqoS8jEGYcPQrVMCZgn4iLBYko,15281
-lxml/etree.cpython-310-x86_64-linux-gnu.so,sha256=5nCvJn16II_qXf0bIxe7R4ZBsG7jijeZW4hFQPULBBE,5366600
+lxml/etree.cpython-310-x86_64-linux-gnu.so,sha256=5lg9F26kU2fKpEoLSOmag9DjAbS1DvEua8pVNOuWyAw,5243672
 lxml/etree.h,sha256=0h07COSE5RC8y3MbrK3cc4ElLplQjGFZTxRbGMrTsMA,9792
 lxml/etree.pyx,sha256=2qCb8ZNjsdoB0fUELYwAM4ldLQZWS5_gt-OxKEUM-vs,138014
 lxml/etree_api.h,sha256=1c5kUDv9UYF9-y7OVw_Bf22hdlfYojVQ_onrrPAPl4A,17372
@@ -51,14 +51,14 @@ lxml/html/__pycache__/html5parser.cpython-310.pyc,,
 lxml/html/__pycache__/soupparser.cpython-310.pyc,,
 lxml/html/__pycache__/usedoctest.cpython-310.pyc,,
 lxml/html/_diffcommand.py,sha256=kz_7EP9PmYWuczlZcGiw74_rG0eTKvQ2lrO0rkiwlYE,2081
-lxml/html/_difflib.cpython-310-x86_64-linux-gnu.so,sha256=g062sI4rI9ZsXOr4vzHS6pzJVqeTmD8c9WphBRP1lNw,574416
+lxml/html/_difflib.cpython-310-x86_64-linux-gnu.so,sha256=fQOaK37WpEq3-tGAAygdLfxz3e9N8mE-2BUeJhwvT-k,566144
 lxml/html/_difflib.py,sha256=GgH_jVrZQC8tI8WV_lFZQsXFJ3mOTAPup1zjBJNvkPo,84954
 lxml/html/_html5builder.py,sha256=NLaT-Ev-aBgJpeQl-6ZbJChLZK5GV-znDkHOJD5VQC4,3230
 lxml/html/_setmixin.py,sha256=8IFIOLmVz0G-XzsD2tCEkSFWO-dgPBHgvHufC8ni67s,1188
 lxml/html/builder.py,sha256=Uz3r5uiuCdoN0UPa7ngoLMwAadVIhslzGvlRPGigY_M,6187
 lxml/html/clean.py,sha256=FghSJy4jt2RaBy6dgusowkU18hxpZ4XLE5ceCK9qxyA,503
 lxml/html/defs.py,sha256=l_6nh4DHvrsVyWVqWCUUx14QiahRyZv4Melqy_thf6Q,4250
-lxml/html/diff.cpython-310-x86_64-linux-gnu.so,sha256=8IR61PeTYIpEgJA3xtJ_dv6y0wZRNNrP2dWOeqv7Efk,381944
+lxml/html/diff.cpython-310-x86_64-linux-gnu.so,sha256=I0q3K-Le7BEEzH4-T__cngENKBmNNOgPhUnrlcIshpY,353184
 lxml/html/diff.py,sha256=Za0By-yeYlQEjUu7m7xKB288kKiy8VBS5gT0RPOaFY0,32989
 lxml/html/formfill.py,sha256=umgk0BbkAI1W6q9musFbL-cDnI_aap2NsLBJqk0UmVI,9681
 lxml/html/html5parser.py,sha256=dnyC4cqHxywjZSzk0mu2L7THTZjxhg4yF4pncjusa_w,8634
@@ -180,7 +180,7 @@ lxml/iterparse.pxi,sha256=JXvYhSOCaRjT_hYbRGMlJt2rlqx0TiRpN4FE1jQc63w,16521
 lxml/lxml.etree.h,sha256=0h07COSE5RC8y3MbrK3cc4ElLplQjGFZTxRbGMrTsMA,9792
 lxml/lxml.etree_api.h,sha256=ZrX9se6gmhPcafaEjNJwqSrgFejIyDhXnKHchEZ9IKM,17377
 lxml/nsclasses.pxi,sha256=5pzNBhBtlqObPdThL9QIGRs1Dxj1qnr0PyXuTCURqTg,9129
-lxml/objectify.cpython-310-x86_64-linux-gnu.so,sha256=V3CMqnHzFFYUzTqU4g0WKnydmh0SjIQR92P0g_6hmNY,2924912
+lxml/objectify.cpython-310-x86_64-linux-gnu.so,sha256=oc-ifJUdJigF77XoEdu8f1hzXH1pUMa0ermqYhheUy4,2879808
 lxml/objectify.pyx,sha256=I4bQQXmQssBtk5bTrid-eVURBLKRTM5iQZiviugIrts,75823
 lxml/objectpath.pxi,sha256=s5TNG2-EbaWWKLFAiX303B95zK_Ui8ausB__3QvFFGw,11450
 lxml/parser.pxi,sha256=C1wKmFQFTh7YM6q1GgxD9cgLq3dMpQ7Y07dtj0zxxHI,84788
@@ -190,7 +190,7 @@ lxml/public-api.pxi,sha256=XoP6_cJOEoQIItvE1RiYCKYD1ry4AobaOr4XLo0KSE4,6666
 lxml/pyclasslookup.py,sha256=gLD1HM2HtITYYiGzjEOewSwbB7XkVx_NZv_quCt79Oc,92
 lxml/readonlytree.pxi,sha256=ddRYczhHieJ4XUvWvTPW9N9oQ8vuKtv7lC1mtE1qvH8,18976
 lxml/relaxng.pxi,sha256=3OQ-fZMzP-KF5vM6HTozT_9ee3J0DJnpj9RcHC8LoMw,6339
-lxml/sax.cpython-310-x86_64-linux-gnu.so,sha256=t04JXHRCUT4OIEsmiO_NB2W_jylb_x7WWMwHU4bvxYM,190328
+lxml/sax.cpython-310-x86_64-linux-gnu.so,sha256=tlijQJJvfz36nZjiKU7EBGHZ5P0n0a7s9jPfo-o-lN8,186144
 lxml/sax.py,sha256=nby0w7jWwdq6QHYkRMkw096rxDZsscXy-zx8d67tbzE,9705
 lxml/saxparser.pxi,sha256=TmkdM5h9xII9iKRaBk_1NGk2KTfeesl5Ha8bpFQGqLc,33529
 lxml/schematron.pxi,sha256=F2OHKZUl57-byBk_wWtPTnHZ1fwlj0FtwG3VuGtG-UY,6064

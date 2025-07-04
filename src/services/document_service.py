@@ -259,7 +259,7 @@ class DocumentService:
             return f"Error extracting content: {e}"
 
     async def _extract_pdf_text_optimized(self, content: bytes, filename: str) -> str:
-        """Optimized PDF text extraction with early returns."""
+        """Optimized PDF text extraction with early returns and OCR fallback."""
         
         logger.info(f"Starting PDF extraction for: {filename}")
         
@@ -268,20 +268,24 @@ class DocumentService:
             import PyPDF2
             pdf = PyPDF2.PdfReader(io.BytesIO(content))
             text_content = []
+            total_pages = len(pdf.pages)
+            
             for i, page in enumerate(pdf.pages):
                 try:
                     page_text = page.extract_text()
-                    if page_text:
+                    if page_text and page_text.strip():
                         text_content.append(f"Page {i+1}: {page_text}")
+                    else:
+                        logger.warning(f"Page {i+1} appears to be empty or image-based")
                 except Exception as e:
                     logger.warning(f"Failed to extract text from page {i+1}: {e}")
             
             if text_content:
                 result = '\n\n'.join(text_content)
-                logger.info(f"Successfully extracted PDF text using PyPDF2: {filename} ({len(pdf.pages)} pages)")
+                logger.info(f"Successfully extracted PDF text using PyPDF2: {filename} ({total_pages} pages, {len(text_content)} pages with text)")
                 return result
             else:
-                logger.warning(f"PyPDF2 extracted no text from {filename}")
+                logger.warning(f"PyPDF2 extracted no text from {filename} - file may be image-based or corrupted")
         except Exception as e:
             logger.warning(f"PyPDF2 failed for {filename}: {e}")
         
@@ -293,12 +297,20 @@ class DocumentService:
                 logger.info(f"Successfully extracted PDF text using pdfminer.six: {filename}")
                 return text_content
             else:
-                logger.warning(f"pdfminer.six extracted no text from {filename}")
+                logger.warning(f"pdfminer.six extracted no text from {filename} - file may be image-based or corrupted")
         except Exception as e:
             logger.warning(f"pdfminer.six failed for {filename}: {e}")
         
-        # Note: PyMuPDF removed to keep layer size manageable
-        # Using PyPDF2 and pdfminer.six for PDF processing
+        # Try OCR for scanned PDFs
+        try:
+            ocr_text = await self._extract_text_with_ocr(content, filename)
+            if ocr_text and ocr_text.strip():
+                logger.info(f"Successfully extracted text using OCR: {filename}")
+                return ocr_text
+            else:
+                logger.warning(f"OCR extracted no text from {filename}")
+        except Exception as e:
+            logger.warning(f"OCR failed for {filename}: {e}")
         
         # Final fallback - try to decode as text
         try:
@@ -310,7 +322,68 @@ class DocumentService:
             logger.error(f"Final fallback failed for {filename}: {e}")
         
         logger.error(f"All PDF extraction methods failed for {filename}")
-        return f"Could not extract text from PDF: {filename} (all extraction methods failed)"
+        return f"Could not extract text from PDF: {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n\nPlease try uploading a text-based PDF or a different document format."
+    
+    async def _extract_text_with_ocr(self, content: bytes, filename: str) -> str:
+        """Extract text from PDF using OCR for scanned documents."""
+        try:
+            import pytesseract
+            from pdf2image import convert_from_bytes
+            from PIL import Image
+            import tempfile
+            import os
+            
+            logger.info(f"Starting OCR extraction for: {filename}")
+            
+            # Configure pytesseract to use the Tesseract binary from Lambda layer
+            tesseract_path = "/opt/tesseract/tesseract"
+            if os.path.exists(tesseract_path):
+                pytesseract.pytesseract.tesseract_cmd = tesseract_path
+                logger.info(f"Using Tesseract from Lambda layer: {tesseract_path}")
+            else:
+                logger.warning("Tesseract binary not found in Lambda layer, using system default")
+            
+            # Convert PDF pages to images
+            images = convert_from_bytes(content, dpi=300)  # Higher DPI for better OCR accuracy
+            
+            if not images:
+                logger.warning(f"No images extracted from PDF: {filename}")
+                return ""
+            
+            text_content = []
+            
+            for i, image in enumerate(images):
+                try:
+                    # Preprocess image for better OCR
+                    # Convert to grayscale
+                    gray_image = image.convert('L')
+                    
+                    # Use pytesseract to extract text
+                    page_text = pytesseract.image_to_string(gray_image, lang='eng')
+                    
+                    if page_text and page_text.strip():
+                        text_content.append(f"Page {i+1} (OCR): {page_text}")
+                        logger.info(f"OCR successful for page {i+1}")
+                    else:
+                        logger.warning(f"OCR extracted no text from page {i+1}")
+                        
+                except Exception as e:
+                    logger.warning(f"OCR failed for page {i+1}: {e}")
+            
+            if text_content:
+                result = '\n\n'.join(text_content)
+                logger.info(f"OCR extraction completed for {filename} ({len(images)} pages)")
+                return result
+            else:
+                logger.warning(f"OCR extracted no text from any page in {filename}")
+                return ""
+                
+        except ImportError as e:
+            logger.warning(f"OCR dependencies not available: {e}")
+            return ""
+        except Exception as e:
+            logger.error(f"OCR extraction failed for {filename}: {e}")
+            return ""
 
     async def _generate_summary(self, content: str, user_query: Optional[str]) -> str:
         """Generate summary of document content."""

@@ -1,4 +1,4 @@
-#!/home/hariharan2v/Downloads/crawlchat-api-function-c0fa3bc1-b31c-4de0-ade0-5cfb188494bf/venv/bin/python3
+#!/var/lang/bin/python3.10
 
 ##############################################################################
 #
