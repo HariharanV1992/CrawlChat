@@ -34,11 +34,9 @@ RUN yum update -y && yum install -y \
 WORKDIR /tmp
 
 # Install Tesseract and dependencies from package manager (recommended approach)
-RUN yum install -y epel-release && \
-    yum install -y \
+RUN yum install -y \
     tesseract \
     tesseract-devel \
-    tesseract-langpack-eng \
     leptonica-devel \
     poppler-utils \
     && yum clean all && rm -rf /var/cache/yum
@@ -47,7 +45,10 @@ RUN yum install -y epel-release && \
 ENV PATH="/usr/bin:${PATH}"
 ENV TESSDATA_PREFIX="/usr/share/tessdata"
 
-# English language data is included with tesseract-langpack-eng package
+# Download English language data manually
+RUN mkdir -p /usr/share/tessdata && \
+    wget -O /usr/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+
 # Set library paths
 ENV LD_LIBRARY_PATH="/usr/lib64:${LD_LIBRARY_PATH}"
     
