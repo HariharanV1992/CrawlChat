@@ -1,0 +1,33 @@
+{
+  "Variables": {
+    "ENVIRONMENT": "production",
+    "S3_BUCKET": "stock-market-crawler-data",
+    "MONGODB_URI": "mongodb+srv://hariharanv:welcome030219@financedata.doarsxf.mongodb.net/?retryWrites=true&w=majority&appName=FinanceData",
+    "OPENAI_API_KEY": "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",
+    "DB_NAME": "stock_market_crawler",
+    "COLLECTION_PREFIX": "crawler",
+    "OPENAI_MODEL": "gpt-4o-mini",
+    "OPENAI_MAX_TOKENS": "4000",
+    "OPENAI_TEMPERATURE": "0.1",
+    "S3_DOCUMENTS_PREFIX": "documents/",
+    "S3_CRAWLED_DATA_PREFIX": "crawled_data/",
+    "SECRET_KEY": "eUEuO5za52XF7tUxKxChoVOvPYSeMtNouGU8Yi4SxLQ",
+    "ALGORITHM": "HS256",
+    "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
+    "CORS_ORIGINS": "[\"https://crawlchat.site\",\"https://www.crawlchat.site\"]",
+    "CRAWLER_MAX_WORKERS": "10",
+    "CRAWLER_TIMEOUT": "30",
+    "CRAWLER_DELAY": "1.0",
+    "CRAWLER_MAX_PAGES": "100",
+    "CRAWLER_MAX_DOCUMENTS": "20",
+    "CRAWLER_USER_AGENT": "StockMarketCrawler/1.0",
+    "MAX_FILE_SIZE_MB": "50",
+    "PROCESSING_TIMEOUT": "300",
+    "BATCH_SIZE": "10",
+    "LOG_LEVEL": "INFO",
+    "LOG_FILE": "/var/log/crawlchat/app.log",
+    "PROXY_API_KEY": "fffb0d04b4eddfafd822af54a6a0941e",
+    "USE_PROXY": "true",
+    "SCRAPERAPI_BASE": "http://api.scraperapi.com/"
+  }
+} 

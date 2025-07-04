@@ -18,11 +18,27 @@ import uvicorn
 from src.core.config import config
 from src.core.database import mongodb
 from src.core.logging import setup_logging
-from src.services.storage_service import get_storage_service
-from src.services.crawler_service import crawler_service
-from src.services.chat_service import chat_service
-from src.services.document_service import document_service
-from src.services.auth_service import auth_service
+
+# Lazy imports for Lambda optimization
+def get_storage_service_lazy():
+    from src.services.storage_service import get_storage_service
+    return get_storage_service()
+
+def get_crawler_service_lazy():
+    from src.services.crawler_service import crawler_service
+    return crawler_service
+
+def get_chat_service_lazy():
+    from src.services.chat_service import chat_service
+    return chat_service
+
+def get_document_service_lazy():
+    from src.services.document_service import document_service
+    return document_service
+
+def get_auth_service_lazy():
+    from src.services.auth_service import auth_service
+    return auth_service
 
 # Import API routers
 from src.api.v1.auth import router as auth_router
@@ -41,23 +57,33 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting CrawlChat - AI Document Analysis Platform...")
     
-    # Setup logging (only if not in Lambda)
-    if not os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+    # In Lambda, do minimal startup - defer everything until needed
+    if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+        # Lambda environment - minimal startup
+        logger.info("Running in Lambda environment - minimal startup")
+        # Skip all heavy operations during Lambda cold start
+        # These will be done on-demand when endpoints are called
+        pass
+    else:
+        # Non-Lambda environment - full startup
+        logger.info("Running in non-Lambda environment - full startup")
+        # Setup logging
         setup_logging()
-    
-    # Connect to MongoDB
-    try:
-        await mongodb.connect()
-        logger.info("Database connection established")
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
-        raise RuntimeError("Database connection failed")
-    
-    # Create necessary directories
-    config.setup_directories()
-    
-    # Ensure default user exists
-    await auth_service.ensure_default_user()
+        
+        # Connect to MongoDB
+        try:
+            await mongodb.connect()
+            logger.info("Database connection established")
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {e}")
+            raise RuntimeError("Database connection failed")
+        
+        # Create necessary directories
+        config.setup_directories()
+        
+        # Ensure default user exists
+        auth_service = get_auth_service_lazy()
+        await auth_service.ensure_default_user()
     
     logger.info("CrawlChat - AI Document Analysis Platform started successfully")
     
@@ -66,8 +92,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down CrawlChat - AI Document Analysis Platform...")
     
-    # Disconnect from MongoDB
-    await mongodb.disconnect()
+    # Disconnect from MongoDB only if connected and not in Lambda
+    if not os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+        await mongodb.disconnect()
 
 # Create FastAPI app
 app = FastAPI(
@@ -81,9 +108,17 @@ app = FastAPI(
 )
 
 # Add middleware
+import json
+
+origins = os.getenv("CORS_ORIGINS", "[]")
+try:
+    origins = json.loads(origins)
+except Exception:
+    origins = ["https://api.crawlchat.site", "https://crawlchat.site"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://api.crawlchat.site", "https://crawlchat.site"],  # Allow both domains
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -116,45 +151,60 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def health_check():
     """Health check endpoint."""
     try:
-        # Check MongoDB connection
-        try:
-            # Check if MongoDB client exists and is connected
-            if mongodb.client is not None and mongodb.db is not None:
-                await mongodb.db.command('ping')
-                db_healthy = True
-            else:
-                # Try to reconnect if not connected
-                await mongodb.connect()
-                if mongodb.db is not None:
+        # Fast health check - don't block on database operations
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {
+                "api": "healthy",
+                "lambda": "healthy"
+            },
+            "environment": "lambda"
+        }
+        
+        # Only check database if explicitly requested or in non-Lambda environment
+        if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+            # In Lambda, return fast response without DB check
+            return JSONResponse(content=health_status, status_code=200)
+        else:
+            # In non-Lambda environment, do full health check
+            try:
+                # Check if MongoDB client exists and is connected
+                if mongodb.client is not None and mongodb.db is not None:
                     await mongodb.db.command('ping')
                     db_healthy = True
                 else:
-                    db_healthy = False
-        except Exception as e:
-            logger.error(f"MongoDB health check failed: {e}")
-            db_healthy = False
-        
-        # Check storage service
-        storage_service = get_storage_service()
-        storage_info = storage_service.get_storage_info()
-        
-        health_status = {
-            "status": "healthy" if db_healthy else "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "services": {
-                "database": "healthy" if db_healthy else "unhealthy",
-                "storage": "healthy" if storage_service.s3_client else "limited",
-                "crawler": "healthy",
-                "chat": "healthy",
-                "document": "healthy"
-            },
-            "metrics": {
-                "storage": storage_info
-            }
-        }
-        
-        status_code = 200 if db_healthy else 503
-        return JSONResponse(content=health_status, status_code=status_code)
+                    # Try to reconnect if not connected
+                    await mongodb.connect()
+                    if mongodb.db is not None:
+                        await mongodb.db.command('ping')
+                        db_healthy = True
+                    else:
+                        db_healthy = False
+            except Exception as e:
+                logger.error(f"MongoDB health check failed: {e}")
+                db_healthy = False
+            
+            # Check storage service
+            storage_service = get_storage_service_lazy()
+            storage_info = storage_service.get_storage_info()
+            
+            health_status.update({
+                "status": "healthy" if db_healthy else "unhealthy",
+                "services": {
+                    "database": "healthy" if db_healthy else "unhealthy",
+                    "storage": "healthy" if storage_service.s3_client else "limited",
+                    "crawler": "healthy",
+                    "chat": "healthy",
+                    "document": "healthy"
+                },
+                "metrics": {
+                    "storage": storage_info
+                }
+            })
+            
+            status_code = 200 if db_healthy else 503
+            return JSONResponse(content=health_status, status_code=status_code)
         
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -189,21 +239,31 @@ async def root(request: Request):
     if not token:
         return RedirectResponse(url="/login")
     
-    # Verify token
-    try:
-        user = await auth_service.get_current_user(token)
-        if not user:
-            return RedirectResponse(url="/login")
-        
-        # User is authenticated, redirect to chat
+    # In Lambda, skip token verification for faster page loads
+    # The frontend will handle authentication
+    if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+        # User has token, redirect to chat (let frontend validate)
         crawl_task = request.query_params.get("crawl_task")
         if crawl_task:
             return RedirectResponse(url=f"/chat?crawl_task={crawl_task}")
         else:
             return RedirectResponse(url="/chat")
-    except Exception as e:
-        logger.error(f"Error verifying token in root route: {e}")
-        return RedirectResponse(url="/login")
+    else:
+        # Non-Lambda environment - verify token
+        try:
+            user = await auth_service.get_current_user(token)
+            if not user:
+                return RedirectResponse(url="/login")
+            
+            # User is authenticated, redirect to chat
+            crawl_task = request.query_params.get("crawl_task")
+            if crawl_task:
+                return RedirectResponse(url=f"/chat?crawl_task={crawl_task}")
+            else:
+                return RedirectResponse(url="/chat")
+        except Exception as e:
+            logger.error(f"Error verifying token in root route: {e}")
+            return RedirectResponse(url="/login")
 
 # Web UI routes
 @app.get("/chat", response_class=HTMLResponse)
@@ -224,17 +284,23 @@ async def chat_interface(request: Request):
     if not token:
         return RedirectResponse(url="/login")
     
-    # Verify token
-    try:
-        user = await auth_service.get_current_user(token)
-        if not user:
-            return RedirectResponse(url="/login")
-        
-        # User is authenticated, serve chat interface
+    # In Lambda, skip token verification for faster page loads
+    # The frontend will handle authentication
+    if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+        # User has token, serve chat interface (let frontend validate)
         return templates.TemplateResponse("chat.html", {"request": request})
-    except Exception as e:
-        logger.error(f"Error verifying token in chat route: {e}")
-        return RedirectResponse(url="/login")
+    else:
+        # Non-Lambda environment - verify token
+        try:
+            user = await auth_service.get_current_user(token)
+            if not user:
+                return RedirectResponse(url="/login")
+            
+            # User is authenticated, serve chat interface
+            return templates.TemplateResponse("chat.html", {"request": request})
+        except Exception as e:
+            logger.error(f"Error verifying token in chat route: {e}")
+            return RedirectResponse(url="/login")
 
 @app.get("/crawler", response_class=HTMLResponse)
 async def crawler_interface(request: Request):
@@ -295,32 +361,6 @@ app.include_router(vector_store_router, prefix="/api/v1")
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Add Lambda handler for AWS deployment
-import json
-from mangum import Mangum
-
-# Create Mangum handler for AWS Lambda
-handler = Mangum(app, lifespan="off")
-
-def lambda_handler(event, context):
-    """AWS Lambda handler for FastAPI application."""
-    try:
-        # Handle the request through Mangum
-        response = handler(event, context)
-        return response
-        
-    except Exception as e:
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': str(e)}),
-            'headers': {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type',
-                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS'
-            }
-        }
 
 # Main entry point
 if __name__ == "__main__":

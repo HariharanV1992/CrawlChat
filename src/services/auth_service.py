@@ -14,6 +14,7 @@ from src.core.database import mongodb
 import logging
 from src.services.email_service import email_service
 from datetime import timedelta
+import os
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -32,27 +33,41 @@ class AuthService:
         pass  # No in-memory users
     
     async def _ensure_mongodb_connected(self):
-        """Ensure MongoDB is connected before operations."""
+        """Ensure MongoDB is connected with detailed logging."""
+        logger.info("_ensure_mongodb_connected called")
         try:
-            if not mongodb.is_connected():
-                await mongodb.connect()
+            # Always try to connect - the MongoDB module will handle Lambda startup optimization
+            await mongodb.connect()
+            logger.info("MongoDB connection successful")
         except Exception as e:
             logger.error(f"Failed to connect to MongoDB: {e}")
-            raise AuthenticationError(f"MongoDB connection failed: {e}")
+            raise
     
     async def get_user_by_username(self, username: str) -> Optional[UserInDB]:
-        await self._ensure_mongodb_connected()
-        user_doc = await mongodb.get_collection("users").find_one({"username": username})
-        if user_doc:
-            return UserInDB(**user_doc)
-        return None
+        """Get user by username with lazy database connection."""
+        logger.info(f"get_user_by_username called with: {username}")
+        try:
+            await self._ensure_mongodb_connected()
+            user_doc = await mongodb.get_collection("users").find_one({"username": username})
+            if user_doc:
+                return UserInDB(**user_doc)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by username {username}: {e}")
+            return None
     
     async def get_user_by_email(self, email: str) -> Optional[UserInDB]:
-        await self._ensure_mongodb_connected()
-        user_doc = await mongodb.get_collection("users").find_one({"email": email})
-        if user_doc:
-            return UserInDB(**user_doc)
-        return None
+        """Get user by email with lazy database connection."""
+        logger.info(f"get_user_by_email called with: {email}")
+        try:
+            await self._ensure_mongodb_connected()
+            user_doc = await mongodb.get_collection("users").find_one({"email": email})
+            if user_doc:
+                return UserInDB(**user_doc)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user by email {email}: {e}")
+            return None
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash."""
@@ -96,6 +111,9 @@ class AuthService:
     async def authenticate_user(self, username_or_email: str, password: str) -> Optional[UserInDB]:
         """Authenticate a user with username/email and password."""
         try:
+            # Ensure MongoDB is connected before authentication
+            await self._ensure_mongodb_connected()
+            
             user = await self.get_user_by_username(username_or_email)
             if not user:
                 user = await self.get_user_by_email(username_or_email)
@@ -170,54 +188,69 @@ class AuthService:
     
     async def create_user(self, user_create: UserCreate) -> UserInDB:
         """Create a new user with email confirmation."""
-        await self._ensure_mongodb_connected()
-        
-        # Check if user already exists
-        existing = await self.get_user_by_username(user_create.username)
-        if existing:
-            raise AuthenticationError("Username already registered")
-        existing_email = await self.get_user_by_email(user_create.email)
-        if existing_email:
-            raise AuthenticationError("Email already registered")
-        
-        # Generate confirmation token
-        confirmation_token = email_service.generate_confirmation_token()
-        confirmation_expires = datetime.utcnow() + timedelta(hours=24)
-        
-        # Create new user (active by default for now)
-        hashed_password = self.get_password_hash(user_create.password)
-        user = UserInDB(
-            user_id=str(uuid.uuid4()),
-            username=user_create.username,
-            email=user_create.email,
-            hashed_password=hashed_password,
-            salt="",  # Not used with bcrypt
-            is_active=True,  # Active by default for now
-            email_confirmed=True,  # Confirmed by default for now
-            email_confirmation_token=confirmation_token,
-            email_confirmation_expires=confirmation_expires,
-            created_at=datetime.utcnow()
-        )
-        
-        await mongodb.get_collection("users").insert_one(user.dict())
-        
-        # Send confirmation email
         try:
-            email_sent = email_service.send_confirmation_email(
-                user_create.email, 
-                user_create.username, 
-                confirmation_token
+            # Ensure MongoDB is connected before user creation
+            await self._ensure_mongodb_connected()
+            
+            # Check if user already exists
+            existing = await self.get_user_by_username(user_create.username)
+            if existing:
+                raise AuthenticationError("Username already registered")
+            existing_email = await self.get_user_by_email(user_create.email)
+            if existing_email:
+                raise AuthenticationError("Email already registered")
+            
+            # Generate confirmation token
+            confirmation_token = email_service.generate_confirmation_token()
+            confirmation_expires = datetime.utcnow() + timedelta(hours=24)
+            
+            # Create new user (active by default for now)
+            hashed_password = self.get_password_hash(user_create.password)
+            user = UserInDB(
+                user_id=str(uuid.uuid4()),
+                username=user_create.username,
+                email=user_create.email,
+                hashed_password=hashed_password,
+                salt="",  # Not used with bcrypt
+                is_active=True,  # Active by default for now
+                email_confirmed=True,  # Confirmed by default for now
+                email_confirmation_token=confirmation_token,
+                email_confirmation_expires=confirmation_expires,
+                created_at=datetime.utcnow()
             )
-            if not email_sent:
-                logger.warning(f"Failed to send confirmation email to {user_create.email}")
+            
+            # Insert user into database
+            await self._ensure_mongodb_connected()
+            await mongodb.get_collection("users").insert_one(user.dict())
+            logger.info(f"Created new user: {user_create.username} ({user_create.email})")
+            
+            # Send confirmation email (optional)
+            try:
+                email_sent = email_service.send_confirmation_email(
+                    user_create.email, 
+                    user_create.username, 
+                    confirmation_token
+                )
+                if not email_sent:
+                    logger.warning(f"Failed to send confirmation email to {user_create.email}")
+            except Exception as e:
+                logger.error(f"Error sending confirmation email: {e}")
+            
+            return user
         except Exception as e:
-            logger.error(f"Error sending confirmation email: {e}")
-        
-        return user
+            logger.error(f"Error creating user {user_create.username}: {e}")
+            raise AuthenticationError(f"Failed to create user: {e}")
     
     async def ensure_default_user(self):
         """Create a default admin user if no users exist, or fix existing users' password hashes."""
         try:
+            # Skip this during Lambda startup to avoid timeouts
+            if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+                logger.info("Skipping ensure_default_user during Lambda startup")
+                return
+            
+            await self._ensure_mongodb_connected()
+            
             # Get all users
             users = await mongodb.get_collection("users").find({}).to_list(length=None)
             

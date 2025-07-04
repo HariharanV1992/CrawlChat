@@ -1,0 +1,1 @@
+{"statusCode": 200, "headers": {"content-length": "132", "content-type": "application/json"}, "multiValueHeaders": {}, "body": "{\"status\":\"healthy\",\"timestamp\":\"2025-07-04T10:41:21.372099\",\"services\":{\"api\":\"healthy\",\"lambda\":\"healthy\"},\"environment\":\"lambda\"}", "isBase64Encoded": false}

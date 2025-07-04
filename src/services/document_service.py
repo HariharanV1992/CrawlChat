@@ -12,7 +12,7 @@ import io
 from functools import lru_cache
 
 from src.models.documents import (
-    Document, DocumentType, DocumentStatus, DocumentUpload,
+    Document, DocumentType, DocumentStatus, DocumentUpload, 
     DocumentProcessResponse, DocumentList
 )
 from src.core.exceptions import DocumentProcessingError
@@ -23,20 +23,22 @@ logger = logging.getLogger(__name__)
 
 class DocumentService:
     """Document service for managing document processing and storage using MongoDB."""
-
+    
     def __init__(self):
         # Cache for document type and content type mappings
         self._document_type_cache = {}
         self._content_type_cache = {}
-
+    
     async def upload_document(self, upload_data: DocumentUpload) -> Document:
         """Upload and store a document with optimized performance."""
         try:
+            await mongodb.connect()
+            
             document_id = str(uuid.uuid4())
             extension = Path(upload_data.filename).suffix.lower()
             document_type = self._get_document_type(extension)
             storage_service = get_storage_service()
-
+            
             # Generate S3 key more efficiently
             timestamp = int(datetime.utcnow().timestamp())
             unique_id = str(uuid.uuid4())[:8]
@@ -54,7 +56,7 @@ class DocumentService:
                 uploaded_at=datetime.utcnow(),
                 task_id=upload_data.task_id
             )
-
+            
             # Parallel operations: S3 upload and database insert
             upload_task = storage_service.upload_file_from_bytes(
                 upload_data.content, s3_key, content_type=self._get_content_type(extension)
@@ -66,16 +68,18 @@ class DocumentService:
             
             logger.info(f"Uploaded document {document_id}: {upload_data.filename}")
             return document
-
+            
         except Exception as e:
             logger.error(f"Error uploading document: {e}")
             raise DocumentProcessingError(f"Failed to upload document: {e}")
-
+    
     async def process_document(self, document_path: str, user_query: Optional[str] = None) -> DocumentProcessResponse:
         """Process a document and extract content with optimized performance."""
         try:
+            await mongodb.connect()
+            
             start_time = datetime.utcnow()
-
+            
             # Get document data
             doc_data = await mongodb.get_collection("documents").find_one({"file_path": document_path})
             if not doc_data:
@@ -94,7 +98,7 @@ class DocumentService:
                     key_points=document.key_points or [],
                     processing_time=0.0
                 )
-
+            
             # Update status to processing
             await mongodb.get_collection("documents").update_one(
                 {"document_id": document.document_id},
@@ -123,10 +127,10 @@ class DocumentService:
                 {"document_id": document.document_id},
                 {"$set": update_data}
             )
-
+            
             processing_time = (datetime.utcnow() - start_time).total_seconds()
             logger.info(f"Processed document {document.document_id} in {processing_time:.2f}s")
-
+            
             return DocumentProcessResponse(
                 document_id=document.document_id,
                 status=DocumentStatus.PROCESSED,
@@ -135,11 +139,11 @@ class DocumentService:
                 key_points=key_points,
                 processing_time=processing_time
             )
-
+            
         except Exception as e:
             logger.error(f"Error processing document: {e}")
             raise DocumentProcessingError(f"Failed to process document: {e}")
-
+    
     async def _extract_content(self, document: Document) -> str:
         """Extract content from document based on type with optimized performance."""
         try:
@@ -257,7 +261,7 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error extracting content from {document.filename}: {e}")
             return f"Error extracting content: {e}"
-
+    
     async def _extract_pdf_text_optimized(self, content: bytes, filename: str) -> str:
         """Optimized PDF text extraction with early returns and OCR fallback."""
         
@@ -335,16 +339,55 @@ class DocumentService:
             
             logger.info(f"Starting OCR extraction for: {filename}")
             
-            # Configure pytesseract to use the Tesseract binary from Lambda layer
-            tesseract_path = "/opt/tesseract/tesseract"
-            if os.path.exists(tesseract_path):
-                pytesseract.pytesseract.tesseract_cmd = tesseract_path
-                logger.info(f"Using Tesseract from Lambda layer: {tesseract_path}")
-            else:
-                logger.warning("Tesseract binary not found in Lambda layer, using system default")
+            # Check if Tesseract is available
+            try:
+                # Try to get Tesseract version to check if it's installed
+                tesseract_version = pytesseract.get_tesseract_version()
+                logger.info(f"Tesseract version: {tesseract_version}")
+            except Exception as e:
+                logger.error(f"Tesseract not available: {e}")
+                # Try to find tesseract binary manually
+                import subprocess
+                try:
+                    result = subprocess.run(['which', 'tesseract'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        logger.info(f"Tesseract found at: {result.stdout.strip()}")
+                        # Try to set the path manually
+                        pytesseract.pytesseract.tesseract_cmd = result.stdout.strip()
+                        tesseract_version = pytesseract.get_tesseract_version()
+                        logger.info(f"Tesseract version after manual path: {tesseract_version}")
+                    else:
+                        logger.error("Tesseract binary not found in PATH")
+                        return f"Could not extract text from PDF: {filename}. This appears to be an image-based (scanned) document, but OCR is not available in this environment. Please try uploading a text-based PDF or contact support for OCR capabilities."
+                except Exception as sub_e:
+                    logger.error(f"Error checking tesseract binary: {sub_e}")
+                    return f"Could not extract text from PDF: {filename}. This appears to be an image-based (scanned) document, but OCR is not available in this environment. Please try uploading a text-based PDF or contact support for OCR capabilities."
+            
+            # Check if Poppler is available by testing pdf2image
+            try:
+                # This will fail if poppler-utils is not installed
+                from pdf2image.exceptions import PDFPageCountError
+                logger.info("Poppler utilities are available")
+                
+                # Also check if pdftoppm is available
+                import subprocess
+                result = subprocess.run(['which', 'pdftoppm'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    logger.info(f"pdftoppm found at: {result.stdout.strip()}")
+                else:
+                    logger.error("pdftoppm binary not found in PATH")
+                    return "OCR is not available. Please contact support or try again later."
+            except ImportError:
+                logger.error("Poppler utilities not available")
+                return "OCR is not available. Please contact support or try again later."
             
             # Convert PDF pages to images
-            images = convert_from_bytes(content, dpi=300)  # Higher DPI for better OCR accuracy
+            try:
+                images = convert_from_bytes(content, dpi=300)  # Higher DPI for better OCR accuracy
+                logger.info(f"Successfully converted PDF to {len(images)} images")
+            except Exception as e:
+                logger.error(f"Failed to convert PDF to images: {e}")
+                return f"OCR failed: Could not convert PDF to images. Error: {e}"
             
             if not images:
                 logger.warning(f"No images extracted from PDF: {filename}")
@@ -380,17 +423,17 @@ class DocumentService:
                 
         except ImportError as e:
             logger.warning(f"OCR dependencies not available: {e}")
-            return ""
+            return "OCR not available: Required dependencies (pytesseract, pdf2image, PIL) are not installed. Please use a container-based Lambda function with OCR support."
         except Exception as e:
             logger.error(f"OCR extraction failed for {filename}: {e}")
-            return ""
+            return f"OCR extraction failed: {e}"
 
     async def _generate_summary(self, content: str, user_query: Optional[str]) -> str:
         """Generate summary of document content."""
         if user_query:
             return f"Summary based on query '{user_query}': {content[:200]}..."
-        return f"Document summary: {content[:200]}..."
-
+            return f"Document summary: {content[:200]}..."
+    
     async def _extract_key_points(self, content: str) -> List[str]:
         """Extract key points from document content."""
         return [
@@ -398,7 +441,7 @@ class DocumentService:
             "Key point 2 (placeholder)",
             "Key point 3 (placeholder)"
         ]
-
+    
     def _get_document_type(self, extension: str) -> DocumentType:
         """Get document type from file extension with caching."""
         if extension not in self._document_type_cache:
@@ -421,7 +464,7 @@ class DocumentService:
             }
             self._document_type_cache[extension] = extension_map.get(extension, DocumentType.TXT)
         return self._document_type_cache[extension]
-
+    
     def _get_content_type(self, extension: str) -> str:
         """Get content type from file extension with caching."""
         if extension not in self._content_type_cache:
@@ -440,106 +483,129 @@ class DocumentService:
             }
             self._content_type_cache[extension] = content_types.get(extension, 'application/octet-stream')
         return self._content_type_cache[extension]
-
+    
     async def get_document(self, document_id: str, user_id: str) -> Optional[Document]:
         """Get a document by ID."""
-        doc = await mongodb.get_collection("documents").find_one({"document_id": document_id, "user_id": user_id})
-        return Document(**doc) if doc else None
+        try:
+            await mongodb.connect()
+            doc = await mongodb.get_collection("documents").find_one({"document_id": document_id, "user_id": user_id})
+            return Document(**doc) if doc else None
+        except Exception as e:
+            logger.error(f"Error getting document {document_id}: {e}")
+            return None
 
     async def list_user_documents(self, user_id: str, limit: int = 50, skip: int = 0) -> DocumentList:
         """List documents for a user with optimized querying."""
-        # Use projection to only fetch needed fields
-        projection = {
-            "document_id": 1,
-            "filename": 1,
-            "document_type": 1,
-            "status": 1,
-            "uploaded_at": 1,
-            "processed_at": 1,
-            "file_size": 1
-        }
-        
-        cursor = mongodb.get_collection("documents").find(
-            {"user_id": user_id}, 
-            projection=projection
-        ).skip(skip).limit(limit)
-        
-        docs = [Document(**doc) async for doc in cursor]
-        total_count = await mongodb.get_collection("documents").count_documents({"user_id": user_id})
-        return DocumentList(documents=docs, total_count=total_count)
-
+        try:
+            await mongodb.connect()
+            
+            # Use projection to only fetch needed fields
+            projection = {
+                "document_id": 1,
+                "filename": 1,
+                "document_type": 1,
+                "status": 1,
+                "uploaded_at": 1,
+                "processed_at": 1,
+                "file_size": 1
+            }
+            
+            cursor = mongodb.get_collection("documents").find(
+                {"user_id": user_id}, 
+                projection=projection
+            ).skip(skip).limit(limit)
+            
+            docs = [Document(**doc) async for doc in cursor]
+            total_count = await mongodb.get_collection("documents").count_documents({"user_id": user_id})
+            return DocumentList(documents=docs, total_count=total_count)
+        except Exception as e:
+            logger.error(f"Error listing documents for user {user_id}: {e}")
+            return DocumentList(documents=[], total_count=0)
+    
     async def delete_document(self, document_id: str, user_id: str) -> bool:
         """Delete a document with optimized operations."""
-        doc_data = await mongodb.get_collection("documents").find_one(
-            {"document_id": document_id, "user_id": user_id},
-            projection={"file_path": 1}
-        )
-        if not doc_data:
-            return False
-        
-        # Parallel delete operations
-        delete_tasks = []
-        
-        # Delete from storage
         try:
-            storage_service = get_storage_service()
-            delete_tasks.append(storage_service.delete_file(doc_data["file_path"]))
-            logger.info(f"Deleted file: {doc_data['file_path']}")
+            await mongodb.connect()
+            
+            doc_data = await mongodb.get_collection("documents").find_one(
+                {"document_id": document_id, "user_id": user_id},
+                projection={"file_path": 1}
+            )
+            if not doc_data:
+                return False
+                
+            # Parallel delete operations
+            delete_tasks = []
+                
+            # Delete from storage
+            try:
+                storage_service = get_storage_service()
+                delete_tasks.append(storage_service.delete_file(doc_data["file_path"]))
+                logger.info(f"Deleted file: {doc_data['file_path']}")
+            except Exception as e:
+                logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
+                
+            # Delete from database
+            delete_tasks.append(
+                mongodb.get_collection("documents").delete_one({"document_id": document_id, "user_id": user_id})
+            )
+            
+            # Wait for all delete operations
+            results = await asyncio.gather(*delete_tasks, return_exceptions=True)
+            
+            # Check database deletion result
+            db_result = results[-1]
+            if isinstance(db_result, Exception):
+                logger.error(f"Database deletion failed: {db_result}")
+                return False
+            
+            return db_result.deleted_count > 0
         except Exception as e:
-            logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
-        
-        # Delete from database
-        delete_tasks.append(
-            mongodb.get_collection("documents").delete_one({"document_id": document_id, "user_id": user_id})
-        )
-        
-        # Wait for all delete operations
-        results = await asyncio.gather(*delete_tasks, return_exceptions=True)
-        
-        # Check database deletion result
-        db_result = results[-1]
-        if isinstance(db_result, Exception):
-            logger.error(f"Database deletion failed: {db_result}")
+            logger.error(f"Error deleting document {document_id}: {e}")
             return False
-        
-        return db_result.deleted_count > 0
-
+    
     async def delete_document_by_filename(self, filename: str, user_id: str) -> bool:
         """Delete a document by filename with optimized operations."""
-        doc_data = await mongodb.get_collection("documents").find_one(
-            {"filename": filename, "user_id": user_id},
-            projection={"document_id": 1, "file_path": 1}
-        )
-        if not doc_data:
-            return False
-        
-        # Parallel delete operations
-        delete_tasks = []
-        
-        # Delete from storage
         try:
-            storage_service = get_storage_service()
-            delete_tasks.append(storage_service.delete_file(doc_data["file_path"]))
-            logger.info(f"Deleted file: {doc_data['file_path']}")
+            await mongodb.connect()
+            
+            doc_data = await mongodb.get_collection("documents").find_one(
+                {"filename": filename, "user_id": user_id},
+                projection={"document_id": 1, "file_path": 1}
+            )
+            if not doc_data:
+                return False
+                
+            # Parallel delete operations
+            delete_tasks = []
+                
+            # Delete from storage
+            try:
+                storage_service = get_storage_service()
+                delete_tasks.append(storage_service.delete_file(doc_data["file_path"]))
+                logger.info(f"Deleted file: {doc_data['file_path']}")
+            except Exception as e:
+                logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
+                
+            # Delete from database
+            delete_tasks.append(
+                mongodb.get_collection("documents").delete_one({"document_id": doc_data["document_id"], "user_id": user_id})
+            )
+            
+            # Wait for all delete operations
+            results = await asyncio.gather(*delete_tasks, return_exceptions=True)
+            
+            # Check database deletion result
+            db_result = results[-1]
+            if isinstance(db_result, Exception):
+                logger.error(f"Database deletion failed: {db_result}")
+                return False
+            
+            return db_result.deleted_count > 0
         except Exception as e:
-            logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
-        
-        # Delete from database
-        delete_tasks.append(
-            mongodb.get_collection("documents").delete_one({"document_id": doc_data["document_id"], "user_id": user_id})
-        )
-        
-        # Wait for all delete operations
-        results = await asyncio.gather(*delete_tasks, return_exceptions=True)
-        
-        # Check database deletion result
-        db_result = results[-1]
-        if isinstance(db_result, Exception):
-            logger.error(f"Database deletion failed: {db_result}")
+            logger.error(f"Error deleting document by filename {filename}: {e}")
             return False
-        
-        return db_result.deleted_count > 0
-
+    
     async def get_task_documents(self, task_id: str) -> List[Document]:
         """Get documents for a specific task with optimized querying."""
         try:

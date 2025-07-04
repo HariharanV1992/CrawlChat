@@ -1,0 +1,18 @@
+{
+    "resource": "/{proxy+}",
+    "path": "/health",
+    "httpMethod": "GET",
+    "headers": {},
+    "multiValueHeaders": {},
+    "queryStringParameters": null,
+    "multiValueQueryStringParameters": null,
+    "pathParameters": null,
+    "stageVariables": null,
+    "requestContext": {
+      "resourcePath": "/{proxy+}",
+      "httpMethod": "GET",
+      "path": "/health"
+    },
+    "body": null,
+    "isBase64Encoded": false
+  }
