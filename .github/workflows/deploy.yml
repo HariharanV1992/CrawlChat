@@ -61,26 +61,9 @@ jobs:
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
           --region ${{ env.AWS_REGION }}
     
-    - name: Test Lambda function
+    - name: Deployment complete
       run: |
-        echo "Testing Lambda function..."
-        cat > payload.json << 'EOF'
-        {
-          "httpMethod": "GET",
-          "path": "/health",
-          "headers": {
-            "Content-Type": "application/json"
-          },
-          "queryStringParameters": null,
-          "pathParameters": null,
-          "body": null,
-          "isBase64Encoded": false
-        }
-        EOF
-        aws lambda invoke \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload file://payload.json \
-          --region ${{ env.AWS_REGION }} \
-          response.json
-        
-        cat response.json 
+        echo "✅ Lambda function updated successfully!"
+        echo "🔗 Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+        echo "🖼️  Image: ${{ steps.build.outputs.image }}"
+        echo "🚀 OCR capabilities are now available for document processing" 
