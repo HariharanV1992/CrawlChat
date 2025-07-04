@@ -137,6 +137,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
+    # Handle template not found errors gracefully
+    if "TemplateNotFound" in str(exc) or "not found in search path" in str(exc):
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Template not found",
+                "message": "The requested template is not available in this environment. Please use the API endpoints directly.",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
+    
     return JSONResponse(
         status_code=500,
         content={
