@@ -33,22 +33,39 @@ RUN yum update -y && yum install -y \
 
 WORKDIR /tmp
 
-# Try to install Tesseract from package manager first, fallback to source build
-RUN yum install -y tesseract tesseract-devel || \
-    (git clone --branch 4.1.0 --depth 1 https://github.com/tesseract-ocr/tesseract.git && \
-    cd tesseract && \
+# Set PATH for Tesseract
+ENV PATH="/usr/local/bin:${PATH}"
+
+# Install Tesseract dependencies for Amazon Linux 2
+RUN yum install -y \
+    leptonica-devel \
+    automake \
+    make \
+    pkgconfig \
+    libicu-devel \
+    cairo-devel \
+    bc \
+    && yum clean all && rm -rf /var/cache/yum
+
+# Build Tesseract 4.1.1 from source (your team's approach)
+RUN wget https://github.com/tesseract-ocr/tesseract/archive/4.1.1.zip && \
+    unzip 4.1.1.zip && \
+    cd tesseract-4.1.1 && \
     ./autogen.sh && \
     ./configure --prefix=/usr/local && \
-    make && make install && \
+    make && \
+    make install && \
     ldconfig && \
-    cd /tmp && rm -rf tesseract)
+    make training && \
+    make training-install && \
+    tesseract --version && \
+    cd /tmp && rm -rf tesseract-4.1.1*
 
 # Download Tesseract English language data
 RUN mkdir -p /usr/local/share/tessdata && \
     wget -O /usr/local/share/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
 
-# Add Tesseract to PATH and library paths
-ENV PATH="/usr/local/bin:${PATH}"
+# Set library paths
 ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
     
     # Copy your app code
