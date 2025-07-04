@@ -64,9 +64,10 @@ jobs:
     - name: Test Lambda function
       run: |
         echo "Testing Lambda function..."
+        echo '{"httpMethod": "GET", "path": "/health"}' > payload.json
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload '{"httpMethod": "GET", "path": "/health"}' \
+          --payload file://payload.json \
           --region ${{ env.AWS_REGION }} \
           response.json
         
