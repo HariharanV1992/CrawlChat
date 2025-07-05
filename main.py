@@ -379,18 +379,28 @@ app.include_router(documents_router, prefix="/api/v1/documents")
 app.include_router(vector_store_router, prefix="/api/v1")
 
 # Mount static files - handle Lambda environment gracefully
-if os.path.exists("static") and not os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
-    # Only mount static files in non-Lambda environments where the directory exists
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+# Determine the correct static directory path based on environment
+STATIC_DIR = "/var/task/static" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else "static"
+
+logger.info(f"Static directory path: {STATIC_DIR}")
+logger.info(f"Static directory exists: {os.path.exists(STATIC_DIR)}")
+
+if os.path.exists(STATIC_DIR):
+    # Mount static files using the correct path
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    logger.info(f"Static files mounted from: {STATIC_DIR}")
 else:
-    # Create a simple static handler for Lambda or when static directory doesn't exist
+    # Create a fallback static handler when static directory doesn't exist
     @app.get("/static/{path:path}")
     async def static_files(path: str):
         """Serve static files from the static directory."""
-        static_path = os.path.join("static", path)
+        static_path = os.path.join(STATIC_DIR, path)
+        logger.info(f"Attempting to serve static file: {static_path}")
+        
         if os.path.exists(static_path) and os.path.isfile(static_path):
             return FileResponse(static_path)
         else:
+            logger.warning(f"Static file not found: {static_path}")
             raise HTTPException(status_code=404, detail="Static file not found")
 
 # Main entry point
