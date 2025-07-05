@@ -270,6 +270,7 @@ async def root(request: Request):
     else:
         # Non-Lambda environment - verify token
         try:
+            auth_service = get_auth_service_lazy()
             user = await auth_service.get_current_user(token)
             if not user:
                 return RedirectResponse(url="/login")
@@ -311,6 +312,7 @@ async def chat_interface(request: Request):
     else:
         # Non-Lambda environment - verify token
         try:
+            auth_service = get_auth_service_lazy()
             user = await auth_service.get_current_user(token)
             if not user:
                 return RedirectResponse(url="/login")
@@ -341,6 +343,7 @@ async def crawler_interface(request: Request):
     
     # Verify token
     try:
+        auth_service = get_auth_service_lazy()
         user = await auth_service.get_current_user(token)
         if not user:
             # Token invalid, serve the page but let client-side handle auth
