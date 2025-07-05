@@ -13,7 +13,6 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from jinja2.exceptions import TemplateNotFound
 import uvicorn
 
 from src.core.config import config
@@ -132,36 +131,13 @@ if config.is_production:
         allowed_hosts=["*"]  # Configure with actual allowed hosts
     )
 
-# Template not found exception handler
-@app.exception_handler(TemplateNotFound)
-async def template_not_found_handler(request: Request, exc: TemplateNotFound):
-    """Handle template not found errors gracefully."""
-    logger.warning(f"Template not found: {exc}")
-    return JSONResponse(
-        status_code=404,
-        content={
-            "error": "Template not found",
-            "message": "The requested template is not available in this environment. Please use the API endpoints directly.",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    )
+
 
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
-    # Handle template not found errors gracefully
-    if isinstance(exc, TemplateNotFound) or "TemplateNotFound" in str(exc) or "not found in search path" in str(exc):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Template not found",
-                "message": "The requested template is not available in this environment. Please use the API endpoints directly.",
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
     
     return JSONResponse(
         status_code=500,
@@ -243,16 +219,8 @@ async def health_check():
             }
         )
 
-# Setup Jinja2 templates - handle missing templates gracefully
-try:
-    if os.path.exists("templates"):
-        templates = Jinja2Templates(directory="templates")
-    else:
-        templates = None
-        logger.warning("Templates directory does not exist")
-except Exception as e:
-    templates = None
-    logger.warning(f"Failed to setup templates: {e}")
+# Setup Jinja2 templates
+templates = Jinja2Templates(directory="/var/task/templates")
 
 # Root endpoint - redirect to chat interface
 @app.get("/")
@@ -322,21 +290,6 @@ async def chat_interface(request: Request):
     # The frontend will handle authentication
     if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
         # User has token, serve chat interface (let frontend validate)
-        if templates is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "Web interface not available",
-                    "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                    "endpoints": {
-                        "login": "/api/v1/auth/login",
-                        "register": "/api/v1/auth/register",
-                        "chat": "/api/v1/chat/",
-                        "crawler": "/api/v1/crawler/"
-                    },
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
         return templates.TemplateResponse("chat.html", {"request": request})
     else:
         # Non-Lambda environment - verify token
@@ -346,21 +299,6 @@ async def chat_interface(request: Request):
                 return RedirectResponse(url="/login")
             
             # User is authenticated, serve chat interface
-            if templates is None:
-                return JSONResponse(
-                    status_code=404,
-                    content={
-                        "error": "Web interface not available",
-                        "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                        "endpoints": {
-                            "login": "/api/v1/auth/login",
-                            "register": "/api/v1/auth/register",
-                            "chat": "/api/v1/chat/",
-                            "crawler": "/api/v1/crawler/"
-                        },
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                )
             return templates.TemplateResponse("chat.html", {"request": request})
         except Exception as e:
             logger.error(f"Error verifying token in chat route: {e}")
@@ -382,21 +320,6 @@ async def crawler_interface(request: Request):
     
     # If no token, serve the page but let client-side handle auth
     if not token:
-        if templates is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "Web interface not available",
-                    "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                    "endpoints": {
-                        "login": "/api/v1/auth/login",
-                        "register": "/api/v1/auth/register",
-                        "chat": "/api/v1/chat/",
-                        "crawler": "/api/v1/crawler/"
-                    },
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
         return templates.TemplateResponse("crawler.html", {"request": request})
     
     # Verify token
@@ -404,136 +327,31 @@ async def crawler_interface(request: Request):
         user = await auth_service.get_current_user(token)
         if not user:
             # Token invalid, serve the page but let client-side handle auth
-            if templates is None:
-                return JSONResponse(
-                    status_code=404,
-                    content={
-                        "error": "Web interface not available",
-                        "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                        "endpoints": {
-                            "login": "/api/v1/auth/login",
-                            "register": "/api/v1/auth/register",
-                            "chat": "/api/v1/chat/",
-                            "crawler": "/api/v1/crawler/"
-                        },
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                )
             return templates.TemplateResponse("crawler.html", {"request": request})
         
         # User is authenticated, serve crawler interface
-        if templates is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "Web interface not available",
-                    "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                    "endpoints": {
-                        "login": "/api/v1/auth/login",
-                        "register": "/api/v1/auth/register",
-                        "chat": "/api/v1/chat/",
-                        "crawler": "/api/v1/crawler/"
-                    },
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
         return templates.TemplateResponse("crawler.html", {"request": request})
     except Exception as e:
         logger.error(f"Error verifying token in crawler route: {e}")
         # On error, serve the page but let client-side handle auth
-        if templates is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "Web interface not available",
-                    "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                    "endpoints": {
-                        "login": "/api/v1/auth/login",
-                        "register": "/api/v1/auth/register",
-                        "chat": "/api/v1/chat/",
-                        "crawler": "/api/v1/crawler/"
-                    },
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-            )
         return templates.TemplateResponse("crawler.html", {"request": request})
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_interface(request: Request):
-    if templates is None:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Web interface not available",
-                "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                "endpoints": {
-                    "login": "/api/v1/auth/login",
-                    "register": "/api/v1/auth/register",
-                    "chat": "/api/v1/chat/",
-                    "crawler": "/api/v1/crawler/"
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/register", response_class=HTMLResponse)
 async def register_interface(request: Request):
-    if templates is None:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Web interface not available",
-                "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                "endpoints": {
-                    "login": "/api/v1/auth/login",
-                    "register": "/api/v1/auth/register",
-                    "chat": "/api/v1/chat/",
-                    "crawler": "/api/v1/crawler/"
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
     return templates.TemplateResponse("register.html", {"request": request})
 
 @app.get("/confirm-email", response_class=HTMLResponse)
 async def confirm_email_interface(request: Request):
     """Email confirmation interface."""
-    if templates is None:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Web interface not available",
-                "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                "endpoints": {
-                    "login": "/api/v1/auth/login",
-                    "register": "/api/v1/auth/register",
-                    "chat": "/api/v1/chat/",
-                    "crawler": "/api/v1/crawler/"
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
     return templates.TemplateResponse("confirm_email.html", {"request": request})
 
 @app.get("/test-mobile", response_class=HTMLResponse)
 async def mobile_test_interface(request: Request):
     """Mobile responsiveness test interface."""
-    if templates is None:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "error": "Web interface not available",
-                "message": "Please use the API endpoints directly. Web interface templates are not available in this environment.",
-                "endpoints": {
-                    "login": "/api/v1/auth/login",
-                    "register": "/api/v1/auth/register",
-                    "chat": "/api/v1/chat/",
-                    "crawler": "/api/v1/crawler/"
-                },
-                "timestamp": datetime.utcnow().isoformat()
-            }
-        )
     return templates.TemplateResponse("test_mobile.html", {"request": request})
 
 # Include API routers
