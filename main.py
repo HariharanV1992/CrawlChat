@@ -220,7 +220,24 @@ async def health_check():
         )
 
 # Setup Jinja2 templates
+import os
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Lambda environment: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME')}")
+
+# Test template paths
+template_paths = ["templates", "/var/task/templates", os.path.join(os.getcwd(), "templates")]
+for path in template_paths:
+    exists = os.path.exists(path)
+    logger.info(f"Template path '{path}': {'EXISTS' if exists else 'NOT FOUND'}")
+    if exists:
+        try:
+            files = os.listdir(path)
+            logger.info(f"Files in {path}: {files}")
+        except Exception as e:
+            logger.error(f"Error listing {path}: {e}")
+
 templates = Jinja2Templates(directory="/var/task/templates")
+logger.info("Jinja2Templates created with /var/task/templates")
 
 # Root endpoint - redirect to chat interface
 @app.get("/")
