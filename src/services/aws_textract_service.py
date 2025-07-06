@@ -104,39 +104,58 @@ class AWSTextractService:
             logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
             raise DocumentProcessingError(f"Textract extraction failed: {e}")
 
-    async def _detect_document_text_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
+    async def _wait_for_s3_object(self, s3_bucket: str, s3_key: str, max_wait: int = 10) -> bool:
         """
-        Retry DetectDocumentText with exponential backoff for S3 availability issues.
+        Wait for S3 object to be available before calling Textract.
+        This is the proper fix for S3 eventual consistency.
         """
-        for attempt in range(max_retries):
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
             try:
-                return await self._detect_document_text(s3_bucket, s3_key)
-            except DocumentProcessingError as e:
-                if "S3 object not available" in str(e) and attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 3s, 5s
-                    logger.warning(f"S3 object not available, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(wait_time)
+                # Use head_object to check if the object exists and is accessible
+                self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                logger.info(f"S3 object {s3_key} is available after {time.time() - start_time:.2f}s")
+                return True
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == '404' or error_code == 'NoSuchKey':
+                    # Object not found yet, wait and retry
+                    await asyncio.sleep(0.5)  # Check every 500ms
                     continue
                 else:
-                    raise e
-        raise DocumentProcessingError(f"Failed to process document after {max_retries} attempts")
+                    # Other S3 error, don't retry
+                    logger.error(f"S3 error checking object {s3_key}: {error_code}")
+                    return False
+            except Exception as e:
+                logger.error(f"Unexpected error checking S3 object {s3_key}: {e}")
+                return False
+        
+        logger.warning(f"S3 object {s3_key} not available after {max_wait}s")
+        return False
+
+    async def _detect_document_text_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
+        """
+        Wait for S3 object availability, then call DetectDocumentText.
+        This is the proper production solution.
+        """
+        # First, wait for S3 object to be available
+        if not await self._wait_for_s3_object(s3_bucket, s3_key):
+            raise DocumentProcessingError(f"S3 object not available: {s3_key}")
+        
+        # Now call Textract (should work immediately)
+        return await self._detect_document_text(s3_bucket, s3_key)
 
     async def _analyze_document_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
         """
-        Retry AnalyzeDocument with exponential backoff for S3 availability issues.
+        Wait for S3 object availability, then call AnalyzeDocument.
+        This is the proper production solution.
         """
-        for attempt in range(max_retries):
-            try:
-                return await self._analyze_document(s3_bucket, s3_key)
-            except DocumentProcessingError as e:
-                if "S3 object not available" in str(e) and attempt < max_retries - 1:
-                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 3s, 5s
-                    logger.warning(f"S3 object not available, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    raise e
-        raise DocumentProcessingError(f"Failed to process document after {max_retries} attempts")
+        # First, wait for S3 object to be available
+        if not await self._wait_for_s3_object(s3_bucket, s3_key):
+            raise DocumentProcessingError(f"S3 object not available: {s3_key}")
+        
+        # Now call Textract (should work immediately)
+        return await self._analyze_document(s3_bucket, s3_key)
     
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
