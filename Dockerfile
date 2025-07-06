@@ -1,12 +1,9 @@
 # ---------- FINAL LAMBDA IMAGE ----------
 FROM public.ecr.aws/lambda/python:3.10
 
-# Install system dependencies including Tesseract
+# Install system dependencies for PDF processing
 RUN yum update -y && \
     yum install -y \
-    tesseract \
-    tesseract-langpack-eng \
-    poppler-utils \
     && yum clean all
 
 # Copy your app code

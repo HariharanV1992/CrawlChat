@@ -58,6 +58,7 @@
                     </button>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <h1 class="chat-title">AI Document Analysis</h1>
+                        <span id="pageUsage" style="margin-left: 1rem; font-size: 0.95em; color: #888; background: #f3f3f3; border-radius: 6px; padding: 2px 8px;">Loading usage...</span>
                     </div>
                     <div class="header-actions">
                         <button id="themeToggle" class="theme-toggle" title="Toggle theme">🌙</button>
@@ -202,8 +203,6 @@
             }
         }
 
-
-
         // Export chat function
         document.getElementById('exportChatBtn')?.addEventListener('click', () => {
             const messages = document.querySelectorAll('.message');
@@ -266,10 +265,31 @@
             }
         }
 
+        // Fetch and display user page usage
+        function fetchPageUsage() {
+            const token = localStorage.getItem('access_token');
+            if (!token) return;
+            fetch('/api/v1/documents/page-usage', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data && typeof data.total_pages !== 'undefined' && typeof data.page_limit !== 'undefined') {
+                    document.getElementById('pageUsage').textContent = `Usage: ${data.total_pages} / ${data.page_limit} pages`;
+                } else {
+                    document.getElementById('pageUsage').textContent = 'Usage: unavailable';
+                }
+            })
+            .catch(() => {
+                document.getElementById('pageUsage').textContent = 'Usage: unavailable';
+            });
+        }
+
         // Initialize app when DOM is loaded
         document.addEventListener('DOMContentLoaded', () => {
             checkAuth();
             setupMobileNavigation();
+            fetchPageUsage();
         });
     </script>
 </body>

@@ -800,6 +800,8 @@ class CrawlChatApp {
                 this.addMainStatus(`✅ ${files.length} documents uploaded and processed successfully`, 'success');
             }
             await this.loadAllSessions();
+            // Refresh page usage after successful upload
+            this.fetchPageUsage();
         } catch (error) {
             console.error('Upload failed:', error);
             this.hideStatusBanner();
@@ -1095,6 +1097,25 @@ class CrawlChatApp {
         };
     }
 
+    fetchPageUsage() {
+        const token = localStorage.getItem('access_token');
+        if (!token) return;
+        
+        fetch('/api/v1/documents/page-usage', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        })
+        .then(res => res.json())
+        .then(data => {
+            const pageUsageElement = document.getElementById('pageUsage');
+            if (pageUsageElement && data && typeof data.total_pages !== 'undefined' && typeof data.page_limit !== 'undefined') {
+                pageUsageElement.textContent = `Usage: ${data.total_pages} / ${data.page_limit} pages`;
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching page usage:', error);
+        });
+    }
+
     async processCrawlTaskFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
         const crawlTaskId = urlParams.get('crawl_task');
@@ -1145,6 +1166,8 @@ class CrawlChatApp {
                     }
                     
                     await this.loadAllSessions();
+                    // Refresh page usage after successful crawl document processing
+                    this.fetchPageUsage();
                     // Remove the param from the URL
                     window.history.replaceState({}, document.title, window.location.pathname);
                 } else {

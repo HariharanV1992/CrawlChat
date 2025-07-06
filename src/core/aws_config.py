@@ -38,6 +38,9 @@ class AWSConfig:
                         "bucket_name": os.getenv("S3_BUCKET_NAME", "stock-market-crawler-data"),
                         "documents_prefix": "documents/",
                         "crawled_data_prefix": "crawled_data/"
+                    },
+                    "textract": {
+                        "region": os.getenv("TEXTRACT_REGION", "us-east-1")
                     }
                 }
         except Exception as e:
@@ -83,6 +86,11 @@ class AWSConfig:
     def s3_crawled_data_prefix(self) -> str:
         """Get S3 crawled data prefix."""
         return self.config.get("s3", {}).get("crawled_data_prefix", "crawled_data/")
+    
+    @property
+    def textract_region(self) -> str:
+        """Get Textract region."""
+        return self.config.get("textract", {}).get("region", "us-east-1")
     
     def get_sqs_queue_url(self) -> str:
         """Get SQS queue URL."""

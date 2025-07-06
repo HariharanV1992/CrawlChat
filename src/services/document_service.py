@@ -18,6 +18,7 @@ from src.models.documents import (
 from src.core.exceptions import DocumentProcessingError
 from src.services.storage_service import get_storage_service
 from src.core.database import mongodb
+from src.core.aws_config import aws_config
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,32 @@ class DocumentService:
             )
 
             # Extract content
+            self._last_page_count = None
             content = await self._extract_content(document)
+            
+            # Check page limit before storing the document
+            page_count = getattr(self, '_last_page_count', None)
+            if page_count is not None:
+                # Check if this would exceed the user's page limit
+                if not await self.check_page_limit_for_user(document.user_id, page_count):
+                    # Revert status back to uploaded
+                    await mongodb.get_collection("documents").update_one(
+                        {"document_id": document.document_id},
+                        {"$set": {"status": DocumentStatus.UPLOADED}}
+                    )
+                    current_total = await self.get_total_pages_for_user(document.user_id)
+                    raise DocumentProcessingError(
+                        f"You have already processed {current_total} pages. "
+                        f"This document has {page_count} pages, which would exceed your 100-page limit. "
+                        f"Please upgrade your plan to process more pages."
+                    )
+                
+                # Store page count in metadata
+                document.metadata['page_count'] = page_count
+                await mongodb.get_collection("documents").update_one(
+                    {"document_id": document.document_id},
+                    {"$set": {"metadata.page_count": page_count}}
+                )
             
             # Generate summary and key points in parallel
             summary_task = self._generate_summary(content, user_query)
@@ -305,16 +331,16 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"pdfminer.six failed for {filename}: {e}")
         
-        # Try OCR for scanned PDFs
+        # Try AWS Textract for scanned PDFs
         try:
-            ocr_text = await self._extract_text_with_ocr(content, filename)
-            if ocr_text and ocr_text.strip():
-                logger.info(f"Successfully extracted text using OCR: {filename}")
-                return ocr_text
+            textract_text = await self._extract_text_with_ocr(content, filename)
+            if textract_text and textract_text.strip():
+                logger.info(f"Successfully extracted text using AWS Textract: {filename}")
+                return textract_text
             else:
-                logger.warning(f"OCR extracted no text from {filename}")
+                logger.warning(f"AWS Textract extracted no text from {filename}")
         except Exception as e:
-            logger.warning(f"OCR failed for {filename}: {e}")
+            logger.warning(f"AWS Textract failed for {filename}: {e}")
         
         # Final fallback - try to decode as text
         try:
@@ -326,129 +352,46 @@ class DocumentService:
             logger.error(f"Final fallback failed for {filename}: {e}")
         
         logger.error(f"All PDF extraction methods failed for {filename}")
-        return f"Could not extract text from PDF: {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n\nPlease try uploading a text-based PDF or a different document format."
+        return f"Could not extract text from PDF: {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n- AWS Textract is not available or configured\n\nPlease try uploading a text-based PDF or a different document format."
     
     async def _extract_text_with_ocr(self, content: bytes, filename: str) -> str:
-        """Extract text from PDF using OCR for scanned documents."""
+        """Extract text from PDF using AWS Textract for scanned documents."""
         try:
-            import pytesseract
-            from pdf2image import convert_from_bytes
-            from PIL import Image
-            import tempfile
-            import os
+            from src.services.aws_textract_service import textract_service, DocumentType
             
-            logger.info(f"Starting OCR extraction for: {filename}")
+            logger.info(f"Starting AWS Textract extraction for: {filename}")
             
-            # Check if Tesseract is available
-            try:
-                # Try to get Tesseract version to check if it's installed
-                tesseract_version = pytesseract.get_tesseract_version()
-                logger.info(f"Tesseract version: {tesseract_version}")
-            except Exception as e:
-                logger.error(f"Tesseract not available: {e}")
-                # Try to find tesseract binary manually
-            import subprocess
-            import os
-            try:
-                # Check common Tesseract locations
-                tesseract_paths = [
-                    '/usr/local/bin/tesseract',
-                    '/usr/bin/tesseract',
-                    '/opt/homebrew/bin/tesseract'
-                ]
-                
-                tesseract_found = False
-                for path in tesseract_paths:
-                    if os.path.exists(path):
-                        logger.info(f"Tesseract found at: {path}")
-                        pytesseract.pytesseract.tesseract_cmd = path
-                        tesseract_version = pytesseract.get_tesseract_version()
-                        logger.info(f"Tesseract version: {tesseract_version}")
-                        tesseract_found = True
-                        break
-                
-                if not tesseract_found:
-                    # Try which command
-                    result = subprocess.run(['which', 'tesseract'], capture_output=True, text=True)
-                    if result.returncode == 0:
-                        logger.info(f"Tesseract found at: {result.stdout.strip()}")
-                        pytesseract.pytesseract.tesseract_cmd = result.stdout.strip()
-                        tesseract_version = pytesseract.get_tesseract_version()
-                        logger.info(f"Tesseract version: {tesseract_version}")
-                        tesseract_found = True
-                
-                if not tesseract_found:
-                    logger.error("Tesseract binary not found in any location")
-                    return f"Could not extract text from PDF: {filename}. This appears to be an image-based (scanned) document, but OCR is not available in this environment. Please try uploading a text-based PDF or contact support for OCR capabilities."
-                    
-            except Exception as sub_e:
-                logger.error(f"Error checking tesseract binary: {sub_e}")
-                return f"Could not extract text from PDF: {filename}. This appears to be an image-based (scanned) document, but OCR is not available in this environment. Please try uploading a text-based PDF or contact support for OCR capabilities."
+            # Determine document type (default to general)
+            document_type = DocumentType.GENERAL
             
-            # Check if Poppler is available by testing pdf2image
-            try:
-                # This will fail if poppler-utils is not installed
-                from pdf2image.exceptions import PDFPageCountError
-                logger.info("Poppler utilities are available")
-                
-                # Also check if pdftoppm is available
-                import subprocess
-                result = subprocess.run(['which', 'pdftoppm'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    logger.info(f"pdftoppm found at: {result.stdout.strip()}")
-                else:
-                    logger.error("pdftoppm binary not found in PATH")
-                    return "OCR is not available. Please contact support or try again later."
-            except ImportError:
-                logger.error("Poppler utilities not available")
-                return "OCR is not available. Please contact support or try again later."
+            # Simple heuristic to detect form/invoice documents
+            # In a production system, you might want more sophisticated detection
+            filename_lower = filename.lower()
+            if any(keyword in filename_lower for keyword in ['form', 'invoice', 'receipt', 'tax', 'w2', '1099']):
+                document_type = DocumentType.FORM
+                logger.info(f"Detected form/invoice document: {filename}")
             
-            # Convert PDF pages to images
-            try:
-                images = convert_from_bytes(content, dpi=300)  # Higher DPI for better OCR accuracy
-                logger.info(f"Successfully converted PDF to {len(images)} images")
-            except Exception as e:
-                logger.error(f"Failed to convert PDF to images: {e}")
-                return f"OCR failed: Could not convert PDF to images. Error: {e}"
+            # Use the new Textract service
+            text_content, page_count = await textract_service.upload_to_s3_and_extract(
+                content, 
+                filename, 
+                document_type
+            )
             
-            if not images:
-                logger.warning(f"No images extracted from PDF: {filename}")
-                return ""
-            
-            text_content = []
-            
-            for i, image in enumerate(images):
-                try:
-                    # Preprocess image for better OCR
-                    # Convert to grayscale
-                    gray_image = image.convert('L')
-                    
-                    # Use pytesseract to extract text
-                    page_text = pytesseract.image_to_string(gray_image, lang='eng')
-                    
-                    if page_text and page_text.strip():
-                        text_content.append(f"Page {i+1} (OCR): {page_text}")
-                        logger.info(f"OCR successful for page {i+1}")
-                    else:
-                        logger.warning(f"OCR extracted no text from page {i+1}")
-                        
-                except Exception as e:
-                    logger.warning(f"OCR failed for page {i+1}: {e}")
-            
-            if text_content:
-                result = '\n\n'.join(text_content)
-                logger.info(f"OCR extraction completed for {filename} ({len(images)} pages)")
-                return result
+            self._last_page_count = page_count  # Store for later use
+            if text_content and text_content.strip():
+                logger.info(f"Successfully extracted text using AWS Textract: {filename}")
+                return text_content
             else:
-                logger.warning(f"OCR extracted no text from any page in {filename}")
+                logger.warning(f"AWS Textract extracted no text from {filename}")
                 return ""
                 
         except ImportError as e:
-            logger.warning(f"OCR dependencies not available: {e}")
-            return "OCR not available: Required dependencies (pytesseract, pdf2image, PIL) are not installed. Please use a container-based Lambda function with OCR support."
+            logger.warning(f"Textract service not available: {e}")
+            return "Textract not available: Required dependencies are not installed. Please install AWS SDK."
         except Exception as e:
-            logger.error(f"OCR extraction failed for {filename}: {e}")
-            return f"OCR extraction failed: {e}"
+            logger.error(f"Textract extraction failed for {filename}: {e}")
+            return f"Textract extraction failed: {e}"
 
     async def _generate_summary(self, content: str, user_query: Optional[str]) -> str:
         """Generate summary of document content."""
@@ -692,6 +635,37 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error creating document record: {e}")
             raise DocumentProcessingError(f"Failed to create document record: {e}")
+
+    async def get_total_pages_for_user(self, user_id: str) -> int:
+        """Get total number of pages processed by a user across all documents."""
+        try:
+            await mongodb.connect()
+            # Sum up page_count from all processed documents for this user
+            pipeline = [
+                {"$match": {"user_id": user_id, "status": "processed"}},
+                {"$group": {"_id": None, "total_pages": {"$sum": "$metadata.page_count"}}}
+            ]
+            cursor = mongodb.get_collection("documents").aggregate(pipeline)
+            result = await cursor.to_list(length=None)
+            total_pages = result[0]["total_pages"] if result else 0
+            logger.info(f"User {user_id} has processed {total_pages} total pages")
+            return total_pages
+        except Exception as e:
+            logger.error(f"Error getting total pages for user {user_id}: {e}")
+            return 0
+
+    async def check_page_limit_for_user(self, user_id: str, new_page_count: int) -> bool:
+        """Check if processing a document with new_page_count would exceed the 100-page limit."""
+        try:
+            current_total = await self.get_total_pages_for_user(user_id)
+            new_total = current_total + new_page_count
+            if new_total > 100:
+                logger.warning(f"User {user_id} would exceed 100-page limit: {current_total} + {new_page_count} = {new_total}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"Error checking page limit for user {user_id}: {e}")
+            return False
 
 # Global instance
 document_service = DocumentService() 
