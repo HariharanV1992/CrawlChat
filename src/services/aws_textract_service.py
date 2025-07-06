@@ -236,6 +236,10 @@ class AWSTextractService:
     
     async def _detect_document_text(self, s3_bucket: str, s3_key: str) -> (str, int):
         try:
+            import os
+            extension = os.path.splitext(s3_key)[1].lower()
+            content_type = self._get_content_type(s3_key)
+            logger.info(f"DEBUG: About to call DetectDocumentText for {s3_key} (extension: {extension}, content_type: {content_type})")
             logger.info(f"Calling DetectDocumentText for {s3_bucket}/{s3_key}")
             response = self.textract_client.detect_document_text(
                 Document={
@@ -263,6 +267,7 @@ class AWSTextractService:
             elif error_code == 'DocumentTooLargeException':
                 raise DocumentProcessingError(f"Document too large for Textract: {s3_key}")
             elif error_code == 'UnsupportedDocumentException':
+                logger.error(f"DEBUG: UnsupportedDocumentException for {s3_key} (extension: {extension}, content_type: {content_type}) - {e}")
                 raise DocumentProcessingError(f"Unsupported document type: {s3_key}")
             elif error_code == 'InvalidS3ObjectException':
                 raise DocumentProcessingError(f"S3 object not available or invalid: {s3_key}. Please try again in a few seconds.")

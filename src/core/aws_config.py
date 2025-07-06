@@ -102,7 +102,7 @@ class AWSConfig:
     @property
     def textract_region(self) -> str:
         """Get Textract region."""
-        return self.config.get("textract", {}).get("region", "us-east-1")
+        return self.config.get("textract", {}).get("region", "ap-south-1")
     
     def get_sqs_queue_url(self) -> str:
         """Get SQS queue URL."""
