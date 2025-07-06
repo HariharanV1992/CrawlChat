@@ -441,6 +441,7 @@ class AWSTextractService:
             logger.info(f"DEBUG: S3 Bucket: {s3_bucket}")
             logger.info(f"DEBUG: S3 Key: {s3_key}")
             logger.info(f"DEBUG: Full S3 Path: s3://{s3_bucket}/{s3_key}")
+            logger.info(f"DEBUG: Deployment timestamp: {time.time()}")
             
             logger.info(f"Uploading {filename} to S3 as {s3_key}")
             self.s3_client.put_object(
