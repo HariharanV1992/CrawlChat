@@ -8,6 +8,10 @@ RUN yum update -y && yum clean all
 COPY requirements-lambda.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
+# Copy the common package
+COPY common/ ${LAMBDA_TASK_ROOT}/common/
+
+# Copy lambda service files
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
 COPY main.py ${LAMBDA_TASK_ROOT}/
 COPY src/ ${LAMBDA_TASK_ROOT}/src/

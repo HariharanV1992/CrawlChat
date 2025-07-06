@@ -33,7 +33,7 @@ def get_chat_service_lazy():
     return chat_service
 
 def get_document_service_lazy():
-    from src.services.document_service import document_service
+    from common.src.services.document_service import document_service
     return document_service
 
 def get_auth_service_lazy():
@@ -225,7 +225,7 @@ logger.info(f"Current working directory: {os.getcwd()}")
 logger.info(f"Lambda environment: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME')}")
 
 # Test template paths
-template_paths = ["templates", "/var/task/templates", os.path.join(os.getcwd(), "templates"), "../templates"]
+template_paths = ["templates", "/var/task/templates", os.path.join(os.getcwd(), "templates")]
 for path in template_paths:
     exists = os.path.exists(path)
     logger.info(f"Template path '{path}': {'EXISTS' if exists else 'NOT FOUND'}")
@@ -236,10 +236,8 @@ for path in template_paths:
         except Exception as e:
             logger.error(f"Error listing {path}: {e}")
 
-# Use the correct template directory
-template_dir = "/var/task/templates" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else "templates"
-templates = Jinja2Templates(directory=template_dir)
-logger.info(f"Jinja2Templates created with {template_dir}")
+templates = Jinja2Templates(directory="/var/task/templates")
+logger.info("Jinja2Templates created with /var/task/templates")
 
 # Root endpoint - redirect to chat interface
 @app.get("/")

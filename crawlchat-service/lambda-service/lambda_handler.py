@@ -24,7 +24,7 @@ try:
     if not os.path.exists("templates"):
         logger.warning("Templates directory does not exist")
     
-    # Import the FastAPI app
+    # Import the FastAPI app from the local main.py
     from main import app
     logger.info("Successfully imported FastAPI app")
     

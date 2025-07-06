@@ -28,7 +28,7 @@ def test_lambda_service_imports():
         # Test service imports
         from src.services.auth_service import auth_service
         from src.services.chat_service import chat_service
-        from src.services.document_service import document_service
+        from common.src.services.document_service import document_service
         from src.services.crawler_service import crawler_service
         print("✅ Service imports successful")
         

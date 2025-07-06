@@ -38,7 +38,7 @@ def get_chat_service_lazy():
     return chat_service
 
 def get_document_service_lazy():
-    from src.services.document_service import document_service
+    from common.src.services.document_service import document_service
     return document_service
 
 def get_auth_service_lazy():
