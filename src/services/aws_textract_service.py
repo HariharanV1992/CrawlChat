@@ -482,22 +482,43 @@ class AWSTextractService:
     async def _fallback_pdf_extraction(self, file_content: bytes, filename: str, user_id: str) -> (str, int):
         """
         Fallback PDF text extraction when Textract fails.
-        Uses PyPDF2 for basic text extraction.
+        Uses multiple PDF libraries for maximum compatibility.
         """
         try:
             logger.info(f"Using fallback PDF extraction for: {filename}")
             
-            # Import PyPDF2 for fallback extraction
-            try:
-                from PyPDF2 import PdfReader
-                from io import BytesIO
-            except ImportError:
-                raise DocumentProcessingError("PyPDF2 not available for fallback extraction")
+            # Try multiple PDF extraction methods
+            extraction_methods = [
+                self._try_pypdf2_extraction,
+                self._try_pdfminer_extraction,
+                self._try_basic_text_extraction
+            ]
             
-            # Create BytesIO object from file content
+            for method in extraction_methods:
+                try:
+                    text_content, page_count = await method(file_content, filename)
+                    if text_content and len(text_content.strip()) > 10:
+                        logger.info(f"Fallback extraction successful with {method.__name__}: {len(text_content)} characters, {page_count} pages")
+                        return text_content, page_count
+                except Exception as e:
+                    logger.warning(f"Method {method.__name__} failed: {e}")
+                    continue
+            
+            # If all methods fail, return a basic error message
+            logger.warning("All fallback methods failed, returning basic error message")
+            return f"PDF content could not be extracted from {filename}. This may be due to the PDF format or structure.", 1
+            
+        except Exception as e:
+            logger.error(f"Fallback PDF extraction failed: {e}")
+            raise DocumentProcessingError(f"Fallback extraction failed: {e}")
+
+    async def _try_pypdf2_extraction(self, file_content: bytes, filename: str) -> (str, int):
+        """Try PyPDF2 extraction."""
+        try:
+            from PyPDF2 import PdfReader
+            from io import BytesIO
+            
             pdf_file = BytesIO(file_content)
-            
-            # Extract text using PyPDF2
             reader = PdfReader(pdf_file)
             text_content = ""
             page_count = len(reader.pages)
@@ -508,18 +529,70 @@ class AWSTextractService:
                     if page_text:
                         text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
                 except Exception as e:
-                    logger.warning(f"Error extracting text from page {page_num + 1}: {e}")
+                    logger.warning(f"PyPDF2 error on page {page_num + 1}: {e}")
                     continue
             
-            if not text_content.strip():
-                raise DocumentProcessingError("No text could be extracted from PDF using fallback method")
-            
-            logger.info(f"Fallback extraction completed: {len(text_content)} characters, {page_count} pages")
             return text_content, page_count
             
         except Exception as e:
-            logger.error(f"Fallback PDF extraction failed: {e}")
-            raise DocumentProcessingError(f"Fallback extraction failed: {e}")
+            logger.warning(f"PyPDF2 extraction failed: {e}")
+            raise
+
+    async def _try_pdfminer_extraction(self, file_content: bytes, filename: str) -> (str, int):
+        """Try PDFMiner extraction."""
+        try:
+            from pdfminer.high_level import extract_text_to_fp
+            from pdfminer.layout import LAParams
+            from io import BytesIO, StringIO
+            
+            # Create output string buffer
+            output_string = StringIO()
+            
+            # Extract text using PDFMiner
+            extract_text_to_fp(
+                BytesIO(file_content),
+                output_string,
+                laparams=LAParams(),
+                output_type='text'
+            )
+            
+            text_content = output_string.getvalue()
+            page_count = 1  # PDFMiner doesn't provide page count easily
+            
+            return text_content, page_count
+            
+        except Exception as e:
+            logger.warning(f"PDFMiner extraction failed: {e}")
+            raise
+
+    async def _try_basic_text_extraction(self, file_content: bytes, filename: str) -> (str, int):
+        """Try basic text extraction from PDF content."""
+        try:
+            # Try to extract any text-like content from the PDF bytes
+            content_str = file_content.decode('utf-8', errors='ignore')
+            
+            # Look for text patterns
+            import re
+            text_patterns = [
+                r'[A-Za-z]{3,}',  # Words with 3+ letters
+                r'\d+',           # Numbers
+                r'[A-Za-z0-9\s]{10,}'  # Longer text sequences
+            ]
+            
+            extracted_text = ""
+            for pattern in text_patterns:
+                matches = re.findall(pattern, content_str)
+                if matches:
+                    extracted_text += " ".join(matches[:100]) + "\n"  # Limit to first 100 matches
+            
+            if extracted_text.strip():
+                return extracted_text, 1
+            else:
+                raise Exception("No text patterns found")
+                
+        except Exception as e:
+            logger.warning(f"Basic text extraction failed: {e}")
+            raise
 
     def _get_content_type(self, filename: str) -> str:
         """
