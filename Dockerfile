@@ -2,9 +2,7 @@
 FROM public.ecr.aws/lambda/python:3.10
 
 # Install system dependencies for PDF processing
-RUN yum update -y && \
-    yum install -y \
-    && yum clean all
+RUN yum update -y && yum clean all
 
 # Copy your app code
 COPY requirements.txt ${LAMBDA_TASK_ROOT}/
