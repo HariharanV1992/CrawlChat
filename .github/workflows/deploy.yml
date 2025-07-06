@@ -62,14 +62,10 @@ jobs:
           --region ${{ env.AWS_REGION }}
     
     - name: Update Lambda environment variables
+      # Removed: aws lambda update-function-configuration --environment file://lambda_env.json
+      # Manage Lambda environment variables manually in AWS Console or using GitHub Secrets.
       run: |
-        # Update Lambda function configuration with environment variables from lambda_env.json
-        aws lambda update-function-configuration \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --environment file://lambda_env.json \
-          --region ${{ env.AWS_REGION }}
-        
-        echo "✅ Environment variables updated successfully!"
+        echo "⚠️ Skipping environment variable update from lambda_env.json. Manage env vars manually or via secrets."
     
     - name: Deployment complete
       run: |
