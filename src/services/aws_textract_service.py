@@ -109,28 +109,32 @@ class AWSTextractService:
         Wait for S3 object to be available before calling Textract.
         This is the proper fix for S3 eventual consistency.
         """
+        logger.info(f"DEBUG: Waiting for S3 object s3://{s3_bucket}/{s3_key}")
         start_time = time.time()
         while time.time() - start_time < max_wait:
             try:
                 # Use head_object to check if the object exists and is accessible
                 self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
-                logger.info(f"S3 object {s3_key} is available after {time.time() - start_time:.2f}s")
+                wait_time = time.time() - start_time
+                logger.info(f"DEBUG: S3 object {s3_key} is available after {wait_time:.2f}s")
                 return True
             except ClientError as e:
                 error_code = e.response['Error']['Code']
                 if error_code == '404' or error_code == 'NoSuchKey':
                     # Object not found yet, wait and retry
+                    elapsed = time.time() - start_time
+                    logger.info(f"DEBUG: S3 object not found yet, waiting... (elapsed: {elapsed:.2f}s)")
                     await asyncio.sleep(0.5)  # Check every 500ms
                     continue
                 else:
                     # Other S3 error, don't retry
-                    logger.error(f"S3 error checking object {s3_key}: {error_code}")
+                    logger.error(f"DEBUG: S3 error checking object {s3_key}: {error_code}")
                     return False
             except Exception as e:
-                logger.error(f"Unexpected error checking S3 object {s3_key}: {e}")
+                logger.error(f"DEBUG: Unexpected error checking S3 object {s3_key}: {e}")
                 return False
         
-        logger.warning(f"S3 object {s3_key} not available after {max_wait}s")
+        logger.warning(f"DEBUG: S3 object {s3_key} not available after {max_wait}s")
         return False
 
     async def _detect_document_text_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
@@ -432,22 +436,33 @@ class AWSTextractService:
             import uuid
             file_id = str(uuid.uuid4())
             s3_key = f"documents/{file_id}/{filename}"
+            s3_bucket = aws_config.s3_bucket_name
+            
+            logger.info(f"DEBUG: S3 Bucket: {s3_bucket}")
+            logger.info(f"DEBUG: S3 Key: {s3_key}")
+            logger.info(f"DEBUG: Full S3 Path: s3://{s3_bucket}/{s3_key}")
+            
             logger.info(f"Uploading {filename} to S3 as {s3_key}")
             self.s3_client.put_object(
-                Bucket=aws_config.s3_bucket_name,
+                Bucket=s3_bucket,
                 Key=s3_key,
                 Body=file_content,
                 ContentType=self._get_content_type(filename)
             )
+            logger.info(f"DEBUG: File uploaded successfully to S3")
+            
             await asyncio.sleep(1)
+            logger.info(f"DEBUG: Starting Textract extraction for s3://{s3_bucket}/{s3_key}")
+            
             text_content, page_count = await self.extract_text_from_s3_pdf(
-                aws_config.s3_bucket_name,
+                s3_bucket,
                 s3_key,
                 document_type
             )
+            
             try:
                 self.s3_client.delete_object(
-                    Bucket=aws_config.s3_bucket_name,
+                    Bucket=s3_bucket,
                     Key=s3_key
                 )
                 logger.info(f"Cleaned up S3 file: {s3_key}")
