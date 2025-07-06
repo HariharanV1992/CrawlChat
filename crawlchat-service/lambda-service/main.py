@@ -37,7 +37,7 @@ def get_document_service_lazy():
     return document_service
 
 def get_auth_service_lazy():
-    from src.services.auth_service import auth_service
+    from common.src.services.auth_service import auth_service
     return auth_service
 
 # Import API routers
