@@ -56,6 +56,7 @@ log/
 .env.development.local
 .env.test.local
 .env.production.local
+lambda_env.json
 
 # AWS
 .aws/
