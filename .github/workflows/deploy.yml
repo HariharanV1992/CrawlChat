@@ -1,4 +1,4 @@
-name: Build and Deploy Lambda Container
+name: Build and Deploy Both Services
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-  ECR_REPOSITORY: crawlchat-api
+  LAMBDA_ECR_REPOSITORY: crawlchat-api
+  PREPROCESSOR_ECR_REPOSITORY: crawlchat-preprocessor
   LAMBDA_FUNCTION_NAME: crawlchat-api-function
 
 jobs:
@@ -32,27 +33,53 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
-    - name: Build, tag, and push image to Amazon ECR
-      id: build
+    - name: Create ECR repositories
+      run: |
+        # Create Lambda ECR repository
+        aws ecr describe-repositories --repository-names ${{ env.LAMBDA_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null || \
+        aws ecr create-repository --repository-name ${{ env.LAMBDA_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
+        
+        # Create Preprocessor ECR repository
+        aws ecr describe-repositories --repository-names ${{ env.PREPROCESSOR_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null || \
+        aws ecr create-repository --repository-name ${{ env.PREPROCESSOR_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
+    
+    - name: Build, tag, and push Lambda image to Amazon ECR
+      id: build-lambda
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Build the Docker image
-        docker build --no-cache -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        # Build the Lambda Docker image
+        docker build --no-cache -f Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
         
         # Push to ECR
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG
+        docker push $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
         
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "lambda-image=$ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
     
-    - name: Update Lambda function
+    - name: Build, tag, and push Preprocessor image to Amazon ECR
+      id: build-preprocessor
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Build the Preprocessor Docker image
+        docker build --no-cache -f Dockerfile.preprocessor -t $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:latest
+        
+        # Push to ECR
+        docker push $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG
+        docker push $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:latest
+        
+        echo "preprocessor-image=$ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
+    
+    - name: Update Lambda function code
       run: |
         aws lambda update-function-code \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --image-uri ${{ steps.build.outputs.image }} \
+          --image-uri ${{ steps.build-lambda.outputs.lambda-image }} \
           --region ${{ env.AWS_REGION }}
     
     - name: Wait for Lambda update
@@ -66,10 +93,17 @@ jobs:
       # Manage Lambda environment variables manually in AWS Console or using GitHub Secrets.
       run: |
         echo "⚠️ Skipping environment variable update from lambda_env.json. Manage env vars manually or via secrets."
-    
+
     - name: Deployment complete
       run: |
-        echo "✅ Lambda function updated successfully!"
-        echo "🔗 Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
-        echo "🖼️  Image: ${{ steps.build.outputs.image }}"
-        echo "🚀 OCR capabilities are now available for document processing" 
+        echo "✅ Both services deployed successfully!"
+        echo "🔗 Lambda Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+        echo "🖼️  Lambda Image: ${{ steps.build-lambda.outputs.lambda-image }}"
+        echo "🖼️  Preprocessor Image: ${{ steps.build-preprocessor.outputs.preprocessor-image }}"
+        echo "🚀 OCR capabilities are now available for document processing"
+        echo ""
+        echo "📋 Next Steps:"
+        echo "   1. Test your Lambda function endpoints"
+        echo "   2. Monitor CloudWatch logs for any issues"
+        echo "   3. Deploy preprocessing service to ECS/Fargate when needed"
+        echo "   4. Update Lambda environment variables manually in AWS Console" 
