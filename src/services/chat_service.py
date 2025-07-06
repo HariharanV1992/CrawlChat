@@ -942,20 +942,35 @@ Please provide a helpful response:"""
                     # Process the document to extract text content
                     logger.info(f"[EMBEDDING] Processing document content for: {document.filename}")
                     
-                    # For PDFs, we need to extract text using the document service
+                    # For PDFs, we need to extract text using AWS Textract directly
                     if document.filename.lower().endswith('.pdf'):
                         try:
-                            # Use the document service to extract text from PDF
-                            processed_response = await document_service.process_document(document.file_path)
-                            if processed_response and processed_response.content:
-                                content = processed_response.content
-                                logger.info(f"[EMBEDDING] Successfully extracted {len(content)} characters from PDF: {document.filename}")
-                                logger.info(f"[EMBEDDING] PDF content preview: {content[:200]}...")
+                            # Use AWS Textract service directly for better reliability
+                            from src.services.aws_textract_service import textract_service, DocumentType
+                            
+                            logger.info(f"[EMBEDDING] Using AWS Textract for PDF: {document.filename}")
+                            
+                            # Get the file content from S3
+                            file_content = await storage_service.get_file_content(s3_key)
+                            if file_content:
+                                # Use Textract service directly
+                                text_content, page_count = await textract_service.upload_to_s3_and_extract(
+                                    file_content, 
+                                    document.filename, 
+                                    DocumentType.GENERAL
+                                )
+                                if text_content and text_content.strip():
+                                    content = text_content
+                                    logger.info(f"[EMBEDDING] Successfully extracted {len(content)} characters from PDF using Textract: {document.filename}")
+                                    logger.info(f"[EMBEDDING] PDF content preview: {content[:200]}...")
+                                else:
+                                    logger.warning(f"[EMBEDDING] No content extracted from PDF using Textract: {document.filename}")
+                                    content = f"Could not extract text from PDF: {document.filename}"
                             else:
-                                logger.warning(f"[EMBEDDING] No content extracted from PDF: {document.filename}")
-                                content = f"Could not extract text from PDF: {document.filename}"
+                                logger.warning(f"[EMBEDDING] Could not read file content for PDF: {document.filename}")
+                                content = f"Could not read file content: {document.filename}"
                         except Exception as e:
-                            logger.error(f"[EMBEDDING] Error processing PDF {document.filename}: {e}")
+                            logger.error(f"[EMBEDDING] Error processing PDF with Textract {document.filename}: {e}")
                             content = f"Error processing PDF: {e}"
                     else:
                         # For other file types, decode bytes

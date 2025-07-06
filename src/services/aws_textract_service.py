@@ -498,6 +498,15 @@ class AWSTextractService:
             logger.info(f"DEBUG: File size: {len(file_content)} bytes")
             logger.info(f"DEBUG: Content type: {self._get_content_type(filename)}")
             logger.info(f"DEBUG: Deployment timestamp: {time.time()}")
+            logger.info(f"DEBUG: S3 client region: {self.s3_client.meta.region_name}")
+            
+            # Test S3 bucket access
+            try:
+                self.s3_client.head_bucket(Bucket=s3_bucket)
+                logger.info(f"DEBUG: S3 bucket {s3_bucket} is accessible")
+            except Exception as e:
+                logger.error(f"DEBUG: S3 bucket {s3_bucket} access failed: {e}")
+                raise DocumentProcessingError(f"S3 bucket not accessible: {e}")
             
             logger.info(f"Uploading {filename} to S3 as {s3_key}")
             try:
@@ -516,7 +525,7 @@ class AWSTextractService:
             
             # Wait for S3 object to be available before calling Textract
             logger.info(f"DEBUG: Waiting for S3 object availability before Textract extraction")
-            if not await self._wait_for_s3_object(s3_bucket, s3_key, max_wait=20):
+            if not await self._wait_for_s3_object(s3_bucket, s3_key, max_wait=30):
                 raise DocumentProcessingError(f"S3 object not available after upload: {s3_key}")
             
             logger.info(f"DEBUG: Starting Textract extraction for s3://{s3_bucket}/{s3_key}")
