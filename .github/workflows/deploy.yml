@@ -50,7 +50,8 @@ jobs:
         IMAGE_TAG: ${{ github.sha }}
       run: |
         # Build the Lambda Docker image from the crawlchat-service directory context
-        docker build --no-cache -f lambda-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG crawlchat-service/
+        cd crawlchat-service
+        docker build --no-cache -f lambda-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
         docker tag $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
         
         # Push to ECR
@@ -66,7 +67,8 @@ jobs:
         IMAGE_TAG: ${{ github.sha }}
       run: |
         # Build the Preprocessor Docker image from the crawlchat-service directory context
-        docker build --no-cache -f preprocessor-service/Dockerfile -t $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG crawlchat-service/
+        cd crawlchat-service
+        docker build --no-cache -f preprocessor-service/Dockerfile -t $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG .
         docker tag $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:latest
         
         # Push to ECR
