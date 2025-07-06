@@ -14,8 +14,9 @@ from enum import Enum
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
-from src.core.aws_config import aws_config
-from src.core.exceptions import DocumentProcessingError
+from ..core.aws_config import aws_config
+from ..core.exceptions import TextractError
+from services.storage_service import get_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -93,13 +94,13 @@ class AWSTextractService:
         """
         try:
             if not self.textract_client:
-                raise DocumentProcessingError("AWS Textract client not available")
+                raise TextractError("AWS Textract client not available")
             if not self.s3_client:
-                raise DocumentProcessingError("AWS S3 client not available")
+                raise TextractError("AWS S3 client not available")
             
             # Wait for S3 object to be available
             if not await self._wait_for_s3_object(s3_bucket, s3_key):
-                raise DocumentProcessingError(f"S3 object {s3_key} not available after waiting")
+                raise TextractError(f"S3 object {s3_key} not available after waiting")
             
             # Process with Textract
             logger.info(f"Processing document {s3_key} with Textract")
@@ -116,11 +117,11 @@ class AWSTextractService:
                 logger.info(f"✅ Textract succeeded: {len(text_content)} characters extracted")
                 return text_content, page_count
             else:
-                raise DocumentProcessingError("Textract returned empty or minimal text")
+                raise TextractError("Textract returned empty or minimal text")
                     
         except Exception as e:
             logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
-            raise DocumentProcessingError(f"Textract extraction failed: {e}")
+            raise TextractError(f"Textract extraction failed: {e}")
 
     async def _wait_for_s3_object(self, s3_bucket: str, s3_key: str, max_wait: int = 10) -> bool:
         """
@@ -213,14 +214,14 @@ class AWSTextractService:
             logger.error(f"Textract DetectDocumentText failed: {error_code} - {error_message}")
             
             if error_code == 'UnsupportedDocumentException':
-                raise DocumentProcessingError(f"Unsupported document type: {error_message}")
+                raise TextractError(f"Unsupported document type: {error_message}")
             elif error_code == 'InvalidS3ObjectException':
-                raise DocumentProcessingError(f"Invalid S3 object: {error_message}")
+                raise TextractError(f"Invalid S3 object: {error_message}")
             else:
-                raise DocumentProcessingError(f"Textract error: {error_code} - {error_message}")
+                raise TextractError(f"Textract error: {error_code} - {error_message}")
         except Exception as e:
             logger.error(f"Unexpected error in DetectDocumentText: {e}")
-            raise DocumentProcessingError(f"Unexpected error: {e}")
+            raise TextractError(f"Unexpected error: {e}")
 
     async def _analyze_document(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
@@ -252,14 +253,14 @@ class AWSTextractService:
             logger.error(f"Textract AnalyzeDocument failed: {error_code} - {error_message}")
             
             if error_code == 'UnsupportedDocumentException':
-                raise DocumentProcessingError(f"Unsupported document type: {error_message}")
+                raise TextractError(f"Unsupported document type: {error_message}")
             elif error_code == 'InvalidS3ObjectException':
-                raise DocumentProcessingError(f"Invalid S3 object: {error_message}")
+                raise TextractError(f"Invalid S3 object: {error_message}")
             else:
-                raise DocumentProcessingError(f"Textract error: {error_code} - {error_message}")
+                raise TextractError(f"Textract error: {error_code} - {error_message}")
         except Exception as e:
             logger.error(f"Unexpected error in AnalyzeDocument: {e}")
-            raise DocumentProcessingError(f"Unexpected error: {e}")
+            raise TextractError(f"Unexpected error: {e}")
 
     def _extract_text_from_blocks(self, blocks: List[Dict[str, Any]]) -> str:
         """
@@ -430,7 +431,7 @@ class AWSTextractService:
             
         except Exception as e:
             logger.error(f"Error processing preprocessed document {s3_key}: {e}")
-            raise DocumentProcessingError(f"Preprocessed document processing failed: {e}")
+            raise TextractError(f"Preprocessed document processing failed: {e}")
 
     async def upload_to_s3_and_extract(
         self, 
@@ -446,7 +447,7 @@ class AWSTextractService:
         """
         try:
             if not self.s3_client:
-                raise DocumentProcessingError("AWS S3 client not available")
+                raise TextractError("AWS S3 client not available")
             
             # Determine S3 path - use consistent path format with document service
             bucket_name = aws_config.s3_bucket
@@ -473,7 +474,7 @@ class AWSTextractService:
             
         except Exception as e:
             logger.error(f"Error in upload_to_s3_and_extract: {e}")
-            raise DocumentProcessingError(f"Upload and extraction failed: {e}")
+            raise TextractError(f"Upload and extraction failed: {e}")
 
     async def _hybrid_pdf_extraction(
         self, 
@@ -534,7 +535,7 @@ class AWSTextractService:
             
         except Exception as e:
             logger.error(f"Hybrid PDF extraction failed: {e}")
-            raise DocumentProcessingError(f"Hybrid extraction failed: {e}")
+            raise TextractError(f"Hybrid extraction failed: {e}")
 
     async def _fallback_pdf_extraction(self, file_content: bytes, filename: str, user_id: str) -> (str, int):
         """
@@ -602,7 +603,7 @@ class AWSTextractService:
             
         except Exception as e:
             logger.error(f"Fallback PDF extraction failed: {e}")
-            raise DocumentProcessingError(f"Fallback extraction failed: {e}")
+            raise TextractError(f"Fallback extraction failed: {e}")
 
     async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try very aggressive text extraction from PDF bytes."""

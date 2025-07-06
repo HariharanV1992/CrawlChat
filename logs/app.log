@@ -500,3 +500,86 @@ Results
 Explore More
 
 cr...
+2025-07-06 19:02:29,085 - root - INFO - Logging configured - Level: INFO, File: ./logs/app.log
+2025-07-06 19:02:29,085 - src.services.aws_textract_service - INFO - Running locally, using provided AWS credentials
+2025-07-06 19:02:29,096 - src.services.aws_textract_service - INFO - Textract client initialized successfully in region: ap-south-1
+2025-07-06 19:02:29,096 - src.services.aws_textract_service - INFO - S3 client initialized successfully in region: ap-south-1
+2025-07-06 19:02:29,096 - __main__ - INFO - Testing hybrid extraction with Namecheap.pdf
+2025-07-06 19:02:29,105 - __main__ - INFO - PDF file size: 361791 bytes
+2025-07-06 19:02:29,105 - __main__ - INFO - Testing hybrid PDF extraction...
+2025-07-06 19:02:29,105 - __main__ - ERROR - Test failed: 'AWSTextractService' object has no attribute 'DocumentType'
+2025-07-06 19:02:29,107 - root - INFO - Logging configured - Level: INFO, File: ./logs/app.log
+2025-07-06 19:02:29,107 - src.services.aws_textract_service - INFO - Running locally, using provided AWS credentials
+2025-07-06 19:02:29,120 - src.services.aws_textract_service - INFO - Textract client initialized successfully in region: ap-south-1
+2025-07-06 19:02:29,121 - src.services.aws_textract_service - INFO - S3 client initialized successfully in region: ap-south-1
+2025-07-06 19:02:29,129 - __main__ - INFO - Testing aggressive text extraction with Namecheap.pdf
+2025-07-06 19:02:29,460 - src.services.aws_textract_service - INFO - Aggressive extraction found 49244 text elements
+2025-07-06 19:02:29,461 - __main__ - INFO - ✅ Aggressive extraction successful: 1207 characters
+2025-07-06 19:02:29,461 - __main__ - INFO - Sample text: PDF obj Title Namecheap Creator Mozilla Linux AppleWebKit KHTML like Gecko Chrome Safari Producer Skia PDF CreationDate ModDate endobj obj ca BM Normal endobj obj Type Pattern PatternType Matrix Shadi...
+2025-07-06 19:03:35,443 - root - INFO - Logging configured - Level: INFO, File: ./logs/app.log
+2025-07-06 19:03:35,443 - src.services.aws_textract_service - INFO - Running locally, using provided AWS credentials
+2025-07-06 19:03:35,451 - src.services.aws_textract_service - INFO - Textract client initialized successfully in region: ap-south-1
+2025-07-06 19:03:35,451 - src.services.aws_textract_service - INFO - S3 client initialized successfully in region: ap-south-1
+2025-07-06 19:03:35,451 - __main__ - INFO - Testing hybrid extraction with Namecheap.pdf
+2025-07-06 19:03:35,463 - __main__ - INFO - PDF file size: 361791 bytes
+2025-07-06 19:03:35,463 - __main__ - INFO - Testing hybrid PDF extraction...
+2025-07-06 19:03:35,463 - src.services.aws_textract_service - INFO - Starting hybrid PDF extraction for Namecheap.pdf
+2025-07-06 19:03:35,463 - src.services.aws_textract_service - INFO - Starting aggressive PDF extraction for: Namecheap.pdf
+2025-07-06 19:03:35,547 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P10' is an invalid float value
+2025-07-06 19:03:35,548 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P10' is an invalid float value
+2025-07-06 19:03:35,549 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P15' is an invalid float value
+2025-07-06 19:03:35,549 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P15' is an invalid float value
+2025-07-06 19:03:35,594 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P34' is an invalid float value
+2025-07-06 19:03:35,595 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P34' is an invalid float value
+2025-07-06 19:03:35,612 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P35' is an invalid float value
+2025-07-06 19:03:35,612 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P35' is an invalid float value
+2025-07-06 19:03:35,613 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P36' is an invalid float value
+2025-07-06 19:03:35,614 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P36' is an invalid float value
+2025-07-06 19:03:35,614 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P37' is an invalid float value
+2025-07-06 19:03:35,614 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P37' is an invalid float value
+2025-07-06 19:03:35,614 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P38' is an invalid float value
+2025-07-06 19:03:35,615 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P38' is an invalid float value
+2025-07-06 19:03:35,615 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P39' is an invalid float value
+2025-07-06 19:03:35,615 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P39' is an invalid float value
+2025-07-06 19:03:35,616 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P41' is an invalid float value
+2025-07-06 19:03:35,616 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P41' is an invalid float value
+2025-07-06 19:03:35,616 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P43' is an invalid float value
+2025-07-06 19:03:35,616 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P43' is an invalid float value
+2025-07-06 19:03:35,617 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P44' is an invalid float value
+2025-07-06 19:03:35,617 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P44' is an invalid float value
+2025-07-06 19:03:35,617 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P45' is an invalid float value
+2025-07-06 19:03:35,617 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P45' is an invalid float value
+2025-07-06 19:03:35,618 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P46' is an invalid float value
+2025-07-06 19:03:35,618 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P46' is an invalid float value
+2025-07-06 19:03:35,629 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P48' is an invalid float value
+2025-07-06 19:03:35,630 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P48' is an invalid float value
+2025-07-06 19:03:35,630 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P49' is an invalid float value
+2025-07-06 19:03:35,630 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P49' is an invalid float value
+2025-07-06 19:03:35,631 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P50' is an invalid float value
+2025-07-06 19:03:35,631 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P50' is an invalid float value
+2025-07-06 19:03:35,632 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P51' is an invalid float value
+2025-07-06 19:03:35,632 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P51' is an invalid float value
+2025-07-06 19:03:35,633 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P52' is an invalid float value
+2025-07-06 19:03:35,633 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P52' is an invalid float value
+2025-07-06 19:03:35,643 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P54' is an invalid float value
+2025-07-06 19:03:35,643 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P54' is an invalid float value
+2025-07-06 19:03:35,994 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P109' is an invalid float value
+2025-07-06 19:03:35,994 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P109' is an invalid float value
+2025-07-06 19:03:35,996 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P114' is an invalid float value
+2025-07-06 19:03:35,996 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P114' is an invalid float value
+2025-07-06 19:03:36,019 - src.services.aws_textract_service - INFO - Method _try_pdfminer_extraction extracted 2450 characters
+2025-07-06 19:03:36,361 - src.services.aws_textract_service - INFO - Method _try_basic_text_extraction extracted 2723 characters
+2025-07-06 19:03:36,361 - src.services.aws_textract_service - INFO - ✅ Best extraction result: 2723 characters, 1 pages
+2025-07-06 19:03:36,361 - src.services.aws_textract_service - INFO - ✅ Local extraction successful: 2725 characters
+2025-07-06 19:03:36,362 - __main__ - INFO - Hybrid extraction completed in 0.90 seconds
+2025-07-06 19:03:36,362 - __main__ - INFO - Extracted 2725 characters, 1 pages
+2025-07-06 19:03:36,362 - __main__ - INFO - Text preview: PDF obj Title Namecheap Creator Mozilla Linux AppleWebKit KHTML like Gecko Chrome Safari Producer Skia PDF CreationDate ModDate endobj obj Normal endobj obj Type Pattern PatternType Matrix Shading Function Domain FunctionType Encode Bounds Functions Domain FunctionType Domain FunctionType Domain FunctionType Domain FunctionType Domain FunctionType Domain FunctionType Domain FunctionType Domain FunctionType Extend true true Coords ShadingType ColorSpace DeviceRGB endobj obj Type Pattern PatternTy...
+2025-07-06 19:03:36,362 - __main__ - INFO - ✅ Hybrid extraction successful!
+2025-07-06 19:03:36,364 - root - INFO - Logging configured - Level: INFO, File: ./logs/app.log
+2025-07-06 19:03:36,365 - src.services.aws_textract_service - INFO - Running locally, using provided AWS credentials
+2025-07-06 19:03:36,377 - src.services.aws_textract_service - INFO - Textract client initialized successfully in region: ap-south-1
+2025-07-06 19:03:36,377 - src.services.aws_textract_service - INFO - S3 client initialized successfully in region: ap-south-1
+2025-07-06 19:03:36,386 - __main__ - INFO - Testing aggressive text extraction with Namecheap.pdf
+2025-07-06 19:03:36,713 - src.services.aws_textract_service - INFO - Aggressive extraction found 49244 text elements
+2025-07-06 19:03:36,713 - __main__ - INFO - ✅ Aggressive extraction successful: 1207 characters
+2025-07-06 19:03:36,714 - __main__ - INFO - Sample text: PDF obj Title Namecheap Creator Mozilla Linux AppleWebKit KHTML like Gecko Chrome Safari Producer Skia PDF CreationDate ModDate endobj obj ca BM Normal endobj obj Type Pattern PatternType Matrix Shadi...

@@ -1,3 +1,6 @@
+# Common package (local)
+-e ../common
+
 # PDF Processing dependencies
 pdf2image>=1.16.0
 PyMuPDF>=1.23.0
