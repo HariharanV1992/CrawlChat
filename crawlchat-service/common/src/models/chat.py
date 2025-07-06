@@ -35,6 +35,18 @@ class ChatSession(BaseModel):
     uploaded_documents: List[str] = Field(default=[], description="List of associated uploaded document IDs")
 
 
+class ChatHistory(BaseModel):
+    """Chat history model - represents user conversation history."""
+    session_id: str = Field(..., description="Session ID")
+    user_id: str = Field(..., description="User ID")
+    created_at: datetime = Field(..., description="Session creation timestamp")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Session last update timestamp")
+    messages: List[ChatMessage] = Field(default=[], description="Session messages")
+    document_count: int = Field(default=0, description="Number of documents in session")
+    crawl_tasks: List[str] = Field(default=[], description="List of associated crawl task IDs")
+    uploaded_documents: List[str] = Field(default=[], description="List of associated uploaded document IDs")
+
+
 class ChatRequest(BaseModel):
     """Chat request model."""
     message: str = Field(..., description="User message")
