@@ -7,6 +7,7 @@ import logging
 import os
 import io
 import asyncio
+import time
 from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import boto3
@@ -96,12 +97,46 @@ class AWSTextractService:
             api_type = self._select_api_type(document_type)
             logger.info(f"Processing document {s3_key} with API: {api_type.value}")
             if api_type == TextractAPI.DETECT_DOCUMENT_TEXT:
-                return await self._detect_document_text(s3_bucket, s3_key)
+                return await self._detect_document_text_with_retry(s3_bucket, s3_key)
             else:
-                return await self._analyze_document(s3_bucket, s3_key)
+                return await self._analyze_document_with_retry(s3_bucket, s3_key)
         except Exception as e:
             logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
             raise DocumentProcessingError(f"Textract extraction failed: {e}")
+
+    async def _detect_document_text_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
+        """
+        Retry DetectDocumentText with exponential backoff for S3 availability issues.
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self._detect_document_text(s3_bucket, s3_key)
+            except DocumentProcessingError as e:
+                if "S3 object not available" in str(e) and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 3s, 5s
+                    logger.warning(f"S3 object not available, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    raise e
+        raise DocumentProcessingError(f"Failed to process document after {max_retries} attempts")
+
+    async def _analyze_document_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
+        """
+        Retry AnalyzeDocument with exponential backoff for S3 availability issues.
+        """
+        for attempt in range(max_retries):
+            try:
+                return await self._analyze_document(s3_bucket, s3_key)
+            except DocumentProcessingError as e:
+                if "S3 object not available" in str(e) and attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + 1  # Exponential backoff: 2s, 3s, 5s
+                    logger.warning(f"S3 object not available, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    raise e
+        raise DocumentProcessingError(f"Failed to process document after {max_retries} attempts")
     
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
