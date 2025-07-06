@@ -8,6 +8,7 @@ import os
 import io
 import asyncio
 import time
+import tempfile
 from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import boto3
@@ -87,6 +88,7 @@ class AWSTextractService:
     ) -> (str, int):
         """
         Extract text from PDF stored in S3 using AWS Textract.
+        Implements fallback: PDF → Textract → PDF to Images → Textract on Images
         Returns (text_content, page_count)
         """
         try:
@@ -94,18 +96,36 @@ class AWSTextractService:
                 raise DocumentProcessingError("AWS Textract client not available")
             if not self.s3_client:
                 raise DocumentProcessingError("AWS S3 client not available")
-            api_type = self._select_api_type(document_type)
-            logger.info(f"Processing document {s3_key} with API: {api_type.value}")
-            if api_type == TextractAPI.DETECT_DOCUMENT_TEXT:
-                return await self._detect_document_text_with_retry(s3_bucket, s3_key)
-            else:
-                return await self._analyze_document_with_retry(s3_bucket, s3_key)
-        except DocumentProcessingError as e:
-            if "Unsupported document type" in str(e):
-                logger.warning(f"Textract failed with UnsupportedDocumentException for {s3_key}. This usually means the PDF format is not compatible with Textract.")
-                logger.info(f"Consider using a different PDF file or converting the document to a supported format.")
-                logger.info(f"Supported formats: PDF, PNG, JPEG, TIFF files that are not encrypted, corrupted, or in unusual formats.")
-            raise e
+            
+            # Step 1: Try Textract on PDF directly
+            logger.info(f"Step 1: Attempting Textract on PDF {s3_key}")
+            try:
+                api_type = self._select_api_type(document_type)
+                logger.info(f"Processing document {s3_key} with API: {api_type.value}")
+                if api_type == TextractAPI.DETECT_DOCUMENT_TEXT:
+                    text_content, page_count = await self._detect_document_text_with_retry(s3_bucket, s3_key)
+                else:
+                    text_content, page_count = await self._analyze_document_with_retry(s3_bucket, s3_key)
+                
+                # Check if we got meaningful text
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ Textract succeeded on PDF: {len(text_content)} characters extracted")
+                    return text_content, page_count
+                else:
+                    logger.warning(f"Textract returned empty or minimal text for {s3_key}, trying fallback")
+                    raise DocumentProcessingError("Textract returned empty text")
+                    
+            except DocumentProcessingError as e:
+                if "Unsupported document type" in str(e) or "empty text" in str(e):
+                    logger.warning(f"Textract failed on PDF {s3_key}: {e}")
+                    logger.info(f"Step 2: Attempting PDF to image conversion fallback")
+                    
+                    # Step 2: Fallback - Convert PDF to images and process with Textract
+                    return await self._fallback_pdf_to_images(s3_bucket, s3_key, document_type)
+                else:
+                    # Re-raise other DocumentProcessingError
+                    raise e
+                    
         except Exception as e:
             logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
             raise DocumentProcessingError(f"Textract extraction failed: {e}")
@@ -674,6 +694,144 @@ class AWSTextractService:
             "estimated_cost": estimated_cost,
             "currency": "USD"
         }
+
+    async def _fallback_pdf_to_images(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
+        """
+        Fallback method: Convert PDF to images and process with Textract.
+        This handles browser-generated PDFs and other problematic formats.
+        """
+        logger.info(f"🔄 Starting PDF to image conversion fallback for {s3_key}")
+        
+        try:
+            # Download PDF from S3
+            logger.info(f"Downloading PDF from S3: s3://{s3_bucket}/{s3_key}")
+            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            pdf_content = response['Body'].read()
+            
+            # Convert PDF to images
+            image_files = await self._convert_pdf_to_images(pdf_content, s3_key)
+            logger.info(f"Converted PDF to {len(image_files)} images")
+            
+            # Process each image with Textract
+            all_text = []
+            page_count = 0
+            
+            for i, (image_content, image_filename) in enumerate(image_files):
+                logger.info(f"Processing image {i+1}/{len(image_files)}: {image_filename}")
+                
+                # Upload image to S3 temporarily
+                temp_s3_key = f"temp_images/{s3_key.replace('/', '_')}_{i+1}.png"
+                
+                try:
+                    # Upload image
+                    self.s3_client.put_object(
+                        Bucket=s3_bucket,
+                        Key=temp_s3_key,
+                        Body=image_content,
+                        ContentType='image/png'
+                    )
+                    
+                    # Process with Textract
+                    image_text, _ = await self._detect_document_text(s3_bucket, temp_s3_key)
+                    if image_text and image_text.strip():
+                        all_text.append(image_text)
+                        page_count += 1
+                        logger.info(f"✅ Extracted {len(image_text)} characters from image {i+1}")
+                    else:
+                        logger.warning(f"No text extracted from image {i+1}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing image {i+1}: {e}")
+                finally:
+                    # Clean up temporary image
+                    try:
+                        self.s3_client.delete_object(Bucket=s3_bucket, Key=temp_s3_key)
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up temp image {temp_s3_key}: {e}")
+            
+            # Combine all text
+            combined_text = '\n\n--- Page Break ---\n\n'.join(all_text)
+            
+            if combined_text.strip():
+                logger.info(f"✅ Fallback successful: {len(combined_text)} characters extracted from {page_count} pages")
+                return combined_text, page_count
+            else:
+                raise DocumentProcessingError("No text could be extracted even with image conversion fallback")
+                
+        except Exception as e:
+            logger.error(f"Fallback PDF to image conversion failed: {e}")
+            raise DocumentProcessingError(f"PDF to image fallback failed: {e}")
+
+    async def _convert_pdf_to_images(self, pdf_content: bytes, original_filename: str) -> List[Tuple[bytes, str]]:
+        """
+        Convert PDF content to a list of PNG images.
+        Returns list of (image_content, filename) tuples.
+        """
+        logger.info(f"Converting PDF to images: {original_filename}")
+        
+        try:
+            # Try using pdf2image if available
+            try:
+                from pdf2image import convert_from_bytes
+                
+                # Convert PDF to images
+                images = convert_from_bytes(
+                    pdf_content,
+                    dpi=200,  # Good balance between quality and size
+                    fmt='PNG',
+                    thread_count=1  # Single thread for Lambda
+                )
+                
+                image_files = []
+                for i, image in enumerate(images):
+                    # Convert PIL image to bytes
+                    img_buffer = io.BytesIO()
+                    image.save(img_buffer, format='PNG', optimize=True)
+                    img_content = img_buffer.getvalue()
+                    
+                    filename = f"{original_filename}_page_{i+1}.png"
+                    image_files.append((img_content, filename))
+                    
+                logger.info(f"Successfully converted PDF to {len(image_files)} images using pdf2image")
+                return image_files
+                
+            except ImportError:
+                logger.warning("pdf2image not available, trying alternative methods")
+                
+            # Fallback: Try using PyMuPDF if available
+            try:
+                import fitz  # PyMuPDF
+                
+                doc = fitz.open(stream=pdf_content, filetype="pdf")
+                image_files = []
+                
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    
+                    # Render page to image
+                    mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
+                    pix = page.get_pixmap(matrix=mat)
+                    
+                    # Convert to PNG bytes
+                    img_data = pix.tobytes("png")
+                    
+                    filename = f"{original_filename}_page_{page_num+1}.png"
+                    image_files.append((img_data, filename))
+                
+                doc.close()
+                logger.info(f"Successfully converted PDF to {len(image_files)} images using PyMuPDF")
+                return image_files
+                
+            except ImportError:
+                logger.warning("PyMuPDF not available")
+                
+            # Final fallback: Use system tools if available
+            logger.warning("No PDF conversion libraries available. Please install pdf2image or PyMuPDF.")
+            raise DocumentProcessingError("PDF to image conversion not available - missing dependencies")
+            
+        except Exception as e:
+            logger.error(f"PDF to image conversion failed: {e}")
+            raise DocumentProcessingError(f"Failed to convert PDF to images: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 

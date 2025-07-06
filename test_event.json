@@ -1,18 +1,36 @@
 {
-    "resource": "/{proxy+}",
-    "path": "/health",
-    "httpMethod": "GET",
-    "headers": {},
-    "multiValueHeaders": {},
-    "queryStringParameters": null,
-    "multiValueQueryStringParameters": null,
-    "pathParameters": null,
-    "stageVariables": null,
-    "requestContext": {
-      "resourcePath": "/{proxy+}",
-      "httpMethod": "GET",
-      "path": "/health"
+  "version": "2.0",
+  "routeKey": "GET /static/css/main.css",
+  "rawPath": "/static/css/main.css",
+  "rawQueryString": "",
+  "cookies": [],
+  "headers": {
+    "accept": "text/css,*/*;q=0.1",
+    "accept-encoding": "gzip, deflate, br",
+    "accept-language": "en-US,en;q=0.9",
+    "host": "api.crawlchat.site",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "x-forwarded-proto": "https",
+    "x-forwarded-port": "443"
+  },
+  "requestContext": {
+    "accountId": "169164939839",
+    "apiId": "test-api-id",
+    "domainName": "api.crawlchat.site",
+    "domainPrefix": "api",
+    "http": {
+      "method": "GET",
+      "path": "/static/css/main.css",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     },
-    "body": null,
-    "isBase64Encoded": false
-  }
+    "requestId": "test-request-id",
+    "routeKey": "GET /static/css/main.css",
+    "stage": "$default",
+    "time": "05/Jul/2025:10:35:00 +0000",
+    "timeEpoch": 1730716500000
+  },
+  "body": "",
+  "isBase64Encoded": false
+}
