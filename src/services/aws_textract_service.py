@@ -487,6 +487,11 @@ class AWSTextractService:
         try:
             logger.info(f"Using fallback PDF extraction for: {filename}")
             
+            # First, try to detect if the PDF is severely corrupted
+            if self._is_pdf_severely_corrupted(file_content):
+                logger.warning(f"PDF {filename} appears to be severely corrupted, skipping extraction attempts")
+                return f"PDF content could not be extracted from {filename}. This PDF appears to be corrupted or damaged. Please try uploading a different copy of the document.", 1
+            
             # Try multiple PDF extraction methods in order of reliability
             extraction_methods = [
                 self._try_pdfminer_extraction,  # Most robust for corrupted PDFs
@@ -521,6 +526,38 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"Fallback PDF extraction failed: {e}")
             raise DocumentProcessingError(f"Fallback extraction failed: {e}")
+
+    def _is_pdf_severely_corrupted(self, file_content: bytes) -> bool:
+        """
+        Check if PDF is severely corrupted before attempting extraction.
+        """
+        try:
+            # Check for basic PDF structure
+            if not file_content.startswith(b'%PDF-'):
+                logger.warning("File does not start with PDF header")
+                return True
+            
+            # Check for end-of-file marker
+            if b'%%EOF' not in file_content[-1000:]:
+                logger.warning("PDF does not contain proper EOF marker")
+                return True
+            
+            # Check for reasonable file size (at least 1KB)
+            if len(file_content) < 1024:
+                logger.warning("PDF file is too small, likely corrupted")
+                return True
+            
+            # Check for excessive null bytes (indicates corruption)
+            null_ratio = file_content.count(b'\x00') / len(file_content)
+            if null_ratio > 0.5:
+                logger.warning(f"PDF contains too many null bytes ({null_ratio:.2%})")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error checking PDF corruption: {e}")
+            return True
 
     async def _try_raw_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try to extract any readable text from PDF bytes using multiple encodings."""
@@ -571,25 +608,43 @@ class AWSTextractService:
     async def _try_pypdf2_extraction(self, file_content: bytes, filename: str) -> (str, int):
         """Try PyPDF2 extraction."""
         try:
+            import asyncio
             from PyPDF2 import PdfReader
             from io import BytesIO
             
-            pdf_file = BytesIO(file_content)
-            reader = PdfReader(pdf_file)
-            text_content = ""
-            page_count = len(reader.pages)
-            
-            for page_num, page in enumerate(reader.pages):
+            def extract_with_timeout():
                 try:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
+                    pdf_file = BytesIO(file_content)
+                    reader = PdfReader(pdf_file)
+                    text_content = ""
+                    page_count = len(reader.pages)
+                    
+                    for page_num, page in enumerate(reader.pages):
+                        try:
+                            page_text = page.extract_text()
+                            if page_text:
+                                text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
+                        except Exception as e:
+                            logger.warning(f"PyPDF2 error on page {page_num + 1}: {e}")
+                            continue
+                    
+                    return text_content, page_count
                 except Exception as e:
-                    logger.warning(f"PyPDF2 error on page {page_num + 1}: {e}")
-                    continue
+                    logger.warning(f"PyPDF2 extraction error: {e}")
+                    raise
             
-            return text_content, page_count
+            # Run with 5-second timeout
+            loop = asyncio.get_event_loop()
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, extract_with_timeout),
+                timeout=5.0
+            )
             
+            return result
+            
+        except asyncio.TimeoutError:
+            logger.warning("PyPDF2 extraction timed out (likely corrupted PDF)")
+            raise Exception("Extraction timed out")
         except Exception as e:
             logger.warning(f"PyPDF2 extraction failed: {e}")
             raise
@@ -597,6 +652,7 @@ class AWSTextractService:
     async def _try_pdfminer_extraction(self, file_content: bytes, filename: str) -> (str, int):
         """Try PDFMiner extraction."""
         try:
+            import asyncio
             from pdfminer.high_level import extract_text_to_fp
             from pdfminer.layout import LAParams
             from io import BytesIO, StringIO
@@ -604,19 +660,34 @@ class AWSTextractService:
             # Create output string buffer
             output_string = StringIO()
             
-            # Extract text using PDFMiner
-            extract_text_to_fp(
-                BytesIO(file_content),
-                output_string,
-                laparams=LAParams(),
-                output_type='text'
+            # Run PDFMiner extraction with timeout to prevent hanging on corrupted PDFs
+            def extract_with_timeout():
+                try:
+                    extract_text_to_fp(
+                        BytesIO(file_content),
+                        output_string,
+                        laparams=LAParams(),
+                        output_type='text'
+                    )
+                    return output_string.getvalue()
+                except Exception as e:
+                    logger.warning(f"PDFMiner extraction error: {e}")
+                    raise
+            
+            # Run with 10-second timeout
+            loop = asyncio.get_event_loop()
+            text_content = await asyncio.wait_for(
+                loop.run_in_executor(None, extract_with_timeout),
+                timeout=10.0
             )
             
-            text_content = output_string.getvalue()
             page_count = 1  # PDFMiner doesn't provide page count easily
             
             return text_content, page_count
             
+        except asyncio.TimeoutError:
+            logger.warning("PDFMiner extraction timed out (likely corrupted PDF)")
+            raise Exception("Extraction timed out")
         except Exception as e:
             logger.warning(f"PDFMiner extraction failed: {e}")
             raise

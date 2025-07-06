@@ -354,3 +354,149 @@ AttributeError: module 'bcrypt' has no attribute '__about__'
 2025-07-03 22:34:20,412 - src.services.vector_store_service - INFO - [VECTOR_STORE] Results data type: <class 'list'>
 2025-07-03 22:34:20,415 - src.services.vector_store_service - INFO - [VECTOR_STORE] First result keys: ['attributes', 'content', 'file_id', 'filename', 'score']
 2025-07-03 22:34:23,558 - src.api.v1.chat - INFO - [API] Chat completed for session: 2e24abde-b110-4bc3-9e93-503a03cd8173
+2025-07-06 18:56:12,261 - root - INFO - Logging configured - Level: INFO, File: ./logs/app.log
+2025-07-06 18:56:12,261 - src.services.aws_textract_service - INFO - Running locally, using provided AWS credentials
+2025-07-06 18:56:12,274 - src.services.aws_textract_service - INFO - Textract client initialized successfully in region: ap-south-1
+2025-07-06 18:56:12,275 - src.services.aws_textract_service - INFO - S3 client initialized successfully in region: ap-south-1
+2025-07-06 18:56:12,275 - src.services.aws_textract_service - WARNING - PDF file is too small, likely corrupted
+2025-07-06 18:56:12,275 - __main__ - INFO - valid_pdf_header: True (size: 14 bytes)
+2025-07-06 18:56:12,275 - src.services.aws_textract_service - WARNING - File does not start with PDF header
+2025-07-06 18:56:12,275 - __main__ - INFO - missing_pdf_header: True (size: 14 bytes)
+2025-07-06 18:56:12,275 - src.services.aws_textract_service - WARNING - PDF does not contain proper EOF marker
+2025-07-06 18:56:12,276 - __main__ - INFO - missing_eof: True (size: 21 bytes)
+2025-07-06 18:56:12,276 - src.services.aws_textract_service - WARNING - PDF file is too small, likely corrupted
+2025-07-06 18:56:12,276 - __main__ - INFO - too_small: True (size: 14 bytes)
+2025-07-06 18:56:12,276 - src.services.aws_textract_service - WARNING - PDF file is too small, likely corrupted
+2025-07-06 18:56:12,276 - __main__ - INFO - many_nulls: True (size: 1014 bytes)
+2025-07-06 18:56:12,276 - __main__ - INFO - normal_pdf: False (size: 1515 bytes)
+2025-07-06 18:56:12,279 - root - INFO - Logging configured - Level: INFO, File: ./logs/app.log
+2025-07-06 18:56:12,279 - src.services.aws_textract_service - INFO - Running locally, using provided AWS credentials
+2025-07-06 18:56:12,294 - src.services.aws_textract_service - INFO - Textract client initialized successfully in region: ap-south-1
+2025-07-06 18:56:12,295 - src.services.aws_textract_service - INFO - S3 client initialized successfully in region: ap-south-1
+2025-07-06 18:56:12,295 - __main__ - INFO - Testing improved fallback with Namecheap.pdf
+2025-07-06 18:56:12,309 - __main__ - INFO - PDF file size: 361791 bytes
+2025-07-06 18:56:12,310 - __main__ - INFO - PDF corruption check result: False
+2025-07-06 18:56:12,310 - __main__ - INFO - Testing fallback extraction...
+2025-07-06 18:56:12,310 - src.services.aws_textract_service - INFO - Using fallback PDF extraction for: Namecheap.pdf
+2025-07-06 18:56:12,460 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P10' is an invalid float value
+2025-07-06 18:56:12,461 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P10' is an invalid float value
+2025-07-06 18:56:12,463 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P15' is an invalid float value
+2025-07-06 18:56:12,463 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P15' is an invalid float value
+2025-07-06 18:56:12,534 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P34' is an invalid float value
+2025-07-06 18:56:12,535 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P34' is an invalid float value
+2025-07-06 18:56:12,561 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P35' is an invalid float value
+2025-07-06 18:56:12,562 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P35' is an invalid float value
+2025-07-06 18:56:12,563 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P36' is an invalid float value
+2025-07-06 18:56:12,563 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P36' is an invalid float value
+2025-07-06 18:56:12,564 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P37' is an invalid float value
+2025-07-06 18:56:12,564 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P37' is an invalid float value
+2025-07-06 18:56:12,565 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P38' is an invalid float value
+2025-07-06 18:56:12,565 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P38' is an invalid float value
+2025-07-06 18:56:12,566 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P39' is an invalid float value
+2025-07-06 18:56:12,566 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P39' is an invalid float value
+2025-07-06 18:56:12,567 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P41' is an invalid float value
+2025-07-06 18:56:12,567 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P41' is an invalid float value
+2025-07-06 18:56:12,568 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P43' is an invalid float value
+2025-07-06 18:56:12,568 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P43' is an invalid float value
+2025-07-06 18:56:12,568 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P44' is an invalid float value
+2025-07-06 18:56:12,568 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P44' is an invalid float value
+2025-07-06 18:56:12,569 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P45' is an invalid float value
+2025-07-06 18:56:12,569 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P45' is an invalid float value
+2025-07-06 18:56:12,570 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P46' is an invalid float value
+2025-07-06 18:56:12,570 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P46' is an invalid float value
+2025-07-06 18:56:12,587 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P48' is an invalid float value
+2025-07-06 18:56:12,588 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P48' is an invalid float value
+2025-07-06 18:56:12,589 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P49' is an invalid float value
+2025-07-06 18:56:12,589 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P49' is an invalid float value
+2025-07-06 18:56:12,590 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P50' is an invalid float value
+2025-07-06 18:56:12,590 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P50' is an invalid float value
+2025-07-06 18:56:12,591 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P51' is an invalid float value
+2025-07-06 18:56:12,591 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P51' is an invalid float value
+2025-07-06 18:56:12,592 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P52' is an invalid float value
+2025-07-06 18:56:12,592 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P52' is an invalid float value
+2025-07-06 18:56:12,605 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P54' is an invalid float value
+2025-07-06 18:56:12,605 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P54' is an invalid float value
+2025-07-06 18:56:13,147 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P109' is an invalid float value
+2025-07-06 18:56:13,147 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P109' is an invalid float value
+2025-07-06 18:56:13,149 - pdfminer.pdfinterp - WARNING - Cannot set gray stroke color because /'P114' is an invalid float value
+2025-07-06 18:56:13,149 - pdfminer.pdfinterp - WARNING - Cannot set gray non-stroke color because /'P114' is an invalid float value
+2025-07-06 18:56:13,188 - src.services.aws_textract_service - INFO - Fallback extraction successful with _try_pdfminer_extraction: 2453 characters, 1 pages
+2025-07-06 18:56:13,189 - __main__ - INFO - Fallback extraction completed in 0.88 seconds
+2025-07-06 18:56:13,189 - __main__ - INFO - Extracted 2453 characters, 1 pages
+2025-07-06 18:56:13,189 - __main__ - INFO - Text preview: 01/07/2025, 16:27
+
+Namecheap
+
+CONTACT US
+
+SIGN IN
+
+SIGN UP
+
+crawlchat
+
+crawlchat.com
+
+PREMIUM
+
+
+
+USD
+
+
+
+$3,895.00
+Renews at $16.98/yr
+
+Domains
+
+Auctions
+
+Handshake
+
+Generator
+
+Beast Mode
+
+Suggested Results Hide
+
+crawlchat.com
+
+PREMIUM
+
+crawlchat.chat
+
+83% OFF
+
+crawlchat.to
+
+25% OFF
+
+crawlchat.org
+
+42% OFF
+
+crawlchat.net
+
+13% OFF
+
+$3,895.00
+Renews at $16.98/yr
+
+$5.98/yr
+Retail $34.98/yr
+
+$29.98/yr
+Retail $39.98/yr
+
+$7.48/yr
+Retail $12.98/yr
+
+$12.98/yr
+Retail $14.98/yr
+
+Results
+
+Explore More
+
+cr...
