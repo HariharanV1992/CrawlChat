@@ -20,8 +20,8 @@ from common.src.services.document_service import DocumentService
 
 # Import crawler modules from lambda-service (these are service-specific)
 try:
-    from lambda_service.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-    from lambda_service.src.crawler.settings_manager import SettingsManager
+    from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+    from src.crawler.settings_manager import SettingsManager
 except ImportError:
     # Fallback for when crawler modules are not available
     AdvancedCrawler = None
