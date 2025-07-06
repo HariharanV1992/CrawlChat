@@ -25,11 +25,11 @@ def get_storage_service_lazy():
     return get_storage_service()
 
 def get_crawler_service_lazy():
-    from src.services.crawler_service import crawler_service
+    from common.src.services.crawler_service import crawler_service
     return crawler_service
 
 def get_chat_service_lazy():
-    from src.services.chat_service import chat_service
+    from common.src.services.chat_service import chat_service
     return chat_service
 
 def get_document_service_lazy():
@@ -41,11 +41,11 @@ def get_auth_service_lazy():
     return auth_service
 
 # Import API routers
-from src.api.v1.auth import router as auth_router
-from src.api.v1.chat import router as chat_router
-from src.api.v1.crawler import router as crawler_router
-from src.api.v1.documents import router as documents_router
-from src.api.v1.vector_store import router as vector_store_router
+from common.src.api.v1.auth import router as auth_router
+from common.src.api.v1.chat import router as chat_router
+from common.src.api.v1.crawler import router as crawler_router
+from common.src.api.v1.documents import router as documents_router
+from common.src.api.v1.vector_store import router as vector_store_router
 
 # Setup logger
 logger = logging.getLogger(__name__)
