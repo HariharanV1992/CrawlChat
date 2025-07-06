@@ -973,6 +973,13 @@ Please provide a helpful response:"""
                         except Exception as e:
                             logger.error(f"[EMBEDDING] Error processing PDF with Textract {document.filename}: {e}")
                             content = f"Error processing PDF: {e}"
+                    
+                    # TODO: In production, use preprocessing service for better reliability
+                    # For now, we continue with direct Textract processing
+                    # In the future, this should be:
+                    # 1. Upload to preprocessing service
+                    # 2. Wait for preprocessing completion
+                    # 3. Use preprocessed document with Textract
                     else:
                         # For other file types, decode bytes
                         if isinstance(content, bytes):

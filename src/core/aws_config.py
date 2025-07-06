@@ -80,6 +80,11 @@ class AWSConfig:
         return self.config.get("s3", {}).get("bucket_name", "stock-market-crawler-data")
     
     @property
+    def s3_bucket(self) -> str:
+        """Get S3 bucket name (alias for s3_bucket_name for compatibility)."""
+        return self.s3_bucket_name
+    
+    @property
     def s3_documents_prefix(self) -> str:
         """Get S3 documents prefix."""
         return self.config.get("s3", {}).get("documents_prefix", "documents/")

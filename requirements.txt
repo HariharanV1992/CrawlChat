@@ -38,9 +38,6 @@ python-pptx>=0.6.21  # For PowerPoint files
 html2text>=2020.1.16
 python-dateutil>=2.8.2
 
-# PDF to Image conversion (for Textract fallback)
-pdf2image>=1.16.3  # Primary PDF to image converter
-PyMuPDF>=1.23.0    # Alternative PDF to image converter (smaller than pdf2image)
 
 # AWS Textract dependencies
 Pillow>=10.0.0  # Image processing (for fallback scenarios)
