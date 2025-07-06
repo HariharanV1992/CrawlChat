@@ -441,7 +441,7 @@ class AWSTextractService:
     ) -> (str, int):
         """
         Upload file to S3 and extract text using Textract.
-        Assumes preprocessing has been done separately.
+        Includes fallback for unsupported PDFs.
         """
         try:
             if not self.s3_client:
@@ -461,16 +461,65 @@ class AWSTextractService:
                 ContentType=self._get_content_type(filename)
             )
             
-            # Extract text using Textract
-            text_content, page_count = await self.extract_text_from_s3_pdf(
-                bucket_name, s3_key, document_type
-            )
-            
-            return text_content, page_count
+            try:
+                # Try Textract first
+                text_content, page_count = await self.extract_text_from_s3_pdf(
+                    bucket_name, s3_key, document_type
+                )
+                return text_content, page_count
+                
+            except DocumentProcessingError as e:
+                if "Unsupported document type" in str(e) and filename.lower().endswith('.pdf'):
+                    logger.warning(f"Textract failed for PDF {filename}, attempting fallback extraction")
+                    return await self._fallback_pdf_extraction(file_content, filename, user_id)
+                else:
+                    raise e
             
         except Exception as e:
             logger.error(f"Error in upload_to_s3_and_extract: {e}")
             raise DocumentProcessingError(f"Upload and extraction failed: {e}")
+
+    async def _fallback_pdf_extraction(self, file_content: bytes, filename: str, user_id: str) -> (str, int):
+        """
+        Fallback PDF text extraction when Textract fails.
+        Uses PyPDF2 for basic text extraction.
+        """
+        try:
+            logger.info(f"Using fallback PDF extraction for: {filename}")
+            
+            # Import PyPDF2 for fallback extraction
+            try:
+                from PyPDF2 import PdfReader
+                from io import BytesIO
+            except ImportError:
+                raise DocumentProcessingError("PyPDF2 not available for fallback extraction")
+            
+            # Create BytesIO object from file content
+            pdf_file = BytesIO(file_content)
+            
+            # Extract text using PyPDF2
+            reader = PdfReader(pdf_file)
+            text_content = ""
+            page_count = len(reader.pages)
+            
+            for page_num, page in enumerate(reader.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
+                except Exception as e:
+                    logger.warning(f"Error extracting text from page {page_num + 1}: {e}")
+                    continue
+            
+            if not text_content.strip():
+                raise DocumentProcessingError("No text could be extracted from PDF using fallback method")
+            
+            logger.info(f"Fallback extraction completed: {len(text_content)} characters, {page_count} pages")
+            return text_content, page_count
+            
+        except Exception as e:
+            logger.error(f"Fallback PDF extraction failed: {e}")
+            raise DocumentProcessingError(f"Fallback extraction failed: {e}")
 
     def _get_content_type(self, filename: str) -> str:
         """
