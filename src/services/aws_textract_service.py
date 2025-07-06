@@ -663,7 +663,8 @@ class AWSTextractService:
                 "If you get 'Unsupported document type', try a different PDF file",
                 "Convert browser-generated PDFs to standard PDFs",
                 "Use image files (PNG/JPEG) as an alternative",
-                "Check if the PDF is encrypted or corrupted"
+                "Check if the PDF is encrypted or corrupted",
+                "PDF to image conversion uses PyMuPDF for Lambda compatibility"
             ]
         }
     
@@ -764,71 +765,38 @@ class AWSTextractService:
 
     async def _convert_pdf_to_images(self, pdf_content: bytes, original_filename: str) -> List[Tuple[bytes, str]]:
         """
-        Convert PDF content to a list of PNG images.
+        Convert PDF content to a list of PNG images using PyMuPDF.
         Returns list of (image_content, filename) tuples.
         """
         logger.info(f"Converting PDF to images: {original_filename}")
         
         try:
-            # Try using pdf2image if available
-            try:
-                from pdf2image import convert_from_bytes
-                
-                # Convert PDF to images
-                images = convert_from_bytes(
-                    pdf_content,
-                    dpi=200,  # Good balance between quality and size
-                    fmt='PNG',
-                    thread_count=1  # Single thread for Lambda
-                )
-                
-                image_files = []
-                for i, image in enumerate(images):
-                    # Convert PIL image to bytes
-                    img_buffer = io.BytesIO()
-                    image.save(img_buffer, format='PNG', optimize=True)
-                    img_content = img_buffer.getvalue()
-                    
-                    filename = f"{original_filename}_page_{i+1}.png"
-                    image_files.append((img_content, filename))
-                    
-                logger.info(f"Successfully converted PDF to {len(image_files)} images using pdf2image")
-                return image_files
-                
-            except ImportError:
-                logger.warning("pdf2image not available, trying alternative methods")
-                
-            # Fallback: Try using PyMuPDF if available
-            try:
-                import fitz  # PyMuPDF
-                
-                doc = fitz.open(stream=pdf_content, filetype="pdf")
-                image_files = []
-                
-                for page_num in range(len(doc)):
-                    page = doc.load_page(page_num)
-                    
-                    # Render page to image
-                    mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
-                    pix = page.get_pixmap(matrix=mat)
-                    
-                    # Convert to PNG bytes
-                    img_data = pix.tobytes("png")
-                    
-                    filename = f"{original_filename}_page_{page_num+1}.png"
-                    image_files.append((img_data, filename))
-                
-                doc.close()
-                logger.info(f"Successfully converted PDF to {len(image_files)} images using PyMuPDF")
-                return image_files
-                
-            except ImportError:
-                logger.warning("PyMuPDF not available")
-                
-            # Final fallback: Use system tools if available
-            logger.warning("No PDF conversion libraries available. Please install pdf2image or PyMuPDF.")
-            raise DocumentProcessingError("PDF to image conversion not available - missing dependencies")
+            # Use PyMuPDF for PDF to image conversion (Lambda compatible)
+            import fitz  # PyMuPDF
             
+            doc = fitz.open(stream=pdf_content, filetype="pdf")
+            image_files = []
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                
+                # Render page to image with good quality
+                mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert to PNG bytes
+                img_data = pix.tobytes("png")
+                
+                filename = f"{original_filename}_page_{page_num+1}.png"
+                image_files.append((img_data, filename))
+            
+            doc.close()
+            logger.info(f"Successfully converted PDF to {len(image_files)} images using PyMuPDF")
+            return image_files
+            
+        except ImportError:
+            logger.error("PyMuPDF not available - required for PDF to image conversion")
+            raise DocumentProcessingError("PDF to image conversion not available - PyMuPDF not installed")
         except Exception as e:
             logger.error(f"PDF to image conversion failed: {e}")
             raise DocumentProcessingError(f"Failed to convert PDF to images: {e}")
