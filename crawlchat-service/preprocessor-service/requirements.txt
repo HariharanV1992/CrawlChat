@@ -1,5 +1,5 @@
 # Common package (local)
--e ../common
+-e ./common
 
 # PDF Processing dependencies
 pdf2image>=1.16.0
