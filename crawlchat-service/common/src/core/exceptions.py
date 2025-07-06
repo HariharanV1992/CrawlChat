@@ -80,6 +80,11 @@ class ChatError(StockCrawlerException):
     pass
 
 
+class TextractError(StockCrawlerException):
+    """AWS Textract related errors."""
+    pass
+
+
 class VectorStoreError(Exception):
     """Vector store related errors."""
     pass

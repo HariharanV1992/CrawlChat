@@ -16,7 +16,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 
 from ..core.aws_config import aws_config
 from ..core.exceptions import TextractError
-from services.storage_service import get_storage_service
+from .storage_service import get_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -448,13 +448,11 @@ class AWSTextractService:
         try:
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
-            
-            # Determine S3 path - use consistent path format with document service
+
             bucket_name = aws_config.s3_bucket
             file_id = str(uuid.uuid4())
             s3_key = f"uploaded_documents/{user_id}/{file_id}/{filename}"
-            
-            # Upload to S3
+
             logger.info(f"Uploading {filename} to s3://{bucket_name}/{s3_key}")
             self.s3_client.put_object(
                 Bucket=bucket_name,
@@ -462,18 +460,18 @@ class AWSTextractService:
                 Body=file_content,
                 ContentType=self._get_content_type(filename)
             )
-            
-            # For PDFs, try local extraction first (more reliable)
+
             if filename.lower().endswith('.pdf'):
                 logger.info(f"Processing PDF {filename} with hybrid approach")
                 return await self._hybrid_pdf_extraction(file_content, filename, bucket_name, s3_key, document_type, user_id)
             else:
-                # For images, use Textract directly
                 logger.info(f"Processing image {filename} with Textract")
-                return await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
-            
+                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
+                logger.info(f"✅ Final extracted text length: {len(text_content)}")
+                return text_content, page_count
+
         except Exception as e:
-            logger.error(f"Error in upload_to_s3_and_extract: {e}")
+            logger.error(f"❌ Upload and extraction failed: {e}")
             raise TextractError(f"Upload and extraction failed: {e}")
 
     async def _hybrid_pdf_extraction(
@@ -488,54 +486,54 @@ class AWSTextractService:
         """
         Hybrid PDF extraction: Try local methods first, then Textract as fallback.
         """
+        logger.info(f"Starting hybrid PDF extraction for {filename}")
+
+        # Step 1: Local extraction
         try:
-            logger.info(f"Starting hybrid PDF extraction for {filename}")
-            
-            # Step 1: Try local extraction first (faster, more reliable for most PDFs)
-            try:
-                text_content, page_count = await self._fallback_pdf_extraction(file_content, filename, user_id)
-                
-                # Check if we got meaningful content
-                if text_content and len(text_content.strip()) > 50:
-                    logger.info(f"✅ Local extraction successful: {len(text_content)} characters")
-                    return text_content, page_count
-                else:
-                    logger.warning(f"Local extraction returned minimal content, trying Textract")
-                    
-            except Exception as e:
-                logger.warning(f"Local extraction failed: {e}, trying Textract")
-            
-            # Step 2: Try Textract as fallback
-            try:
-                logger.info(f"Trying Textract as fallback for {filename}")
-                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
-                
-                if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ Textract fallback successful: {len(text_content)} characters")
-                    return text_content, page_count
-                else:
-                    logger.warning(f"Textract returned minimal content")
-                    
-            except Exception as e:
-                logger.warning(f"Textract fallback failed: {e}")
-            
-            # Step 3: Final fallback - try raw text extraction
-            logger.warning(f"All methods failed for {filename}, attempting raw text extraction")
-            try:
-                raw_text = await self._try_raw_text_extraction(file_content, filename)
-                if raw_text and len(raw_text.strip()) > 10:
-                    logger.info(f"✅ Raw text extraction successful: {len(raw_text)} characters")
-                    return raw_text, 1
-            except Exception as e:
-                logger.warning(f"Raw text extraction failed: {e}")
-            
-            # Step 4: Return helpful error message
-            logger.error(f"All extraction methods failed for {filename}")
-            return f"PDF content could not be extracted from {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n\nPlease try uploading a text-based PDF or a different document format.", 1
-            
+            logger.info(f"🔄 Step 1: Attempting local extraction for {filename}")
+            text_content, page_count = await self._fallback_pdf_extraction(file_content, filename, user_id)
+            if text_content and len(text_content.strip()) > 50:
+                logger.info(f"✅ Local extraction successful: {len(text_content)} characters")
+                logger.info(f"📄 First 100 chars: {text_content[:100]}")
+                return text_content, page_count
+            else:
+                logger.warning(f"⚠ Local extraction minimal content ({len(text_content.strip())} chars), trying Textract")
         except Exception as e:
-            logger.error(f"Hybrid PDF extraction failed: {e}")
-            raise TextractError(f"Hybrid extraction failed: {e}")
+            logger.warning(f"⚠ Local extraction failed: {e}, trying Textract")
+
+        # Step 2: Textract fallback
+        try:
+            logger.info(f"🔄 Step 2: Attempting Textract fallback for {filename}")
+            text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
+            if text_content and len(text_content.strip()) > 10:
+                logger.info(f"✅ Textract fallback successful: {len(text_content)} characters")
+                logger.info(f"📄 First 100 chars: {text_content[:100]}")
+                return text_content, page_count
+            else:
+                logger.warning(f"⚠ Textract returned minimal content ({len(text_content.strip())} chars)")
+        except Exception as e:
+            logger.warning(f"⚠ Textract fallback failed: {e}")
+
+        # Step 3: Raw aggressive text decoding
+        try:
+            logger.info(f"🔄 Step 3: Attempting raw text extraction for {filename}")
+            text_content = await self._try_raw_text_extraction(file_content, filename)
+            if text_content and len(text_content.strip()) > 10:
+                logger.info(f"✅ Raw text extraction successful: {len(text_content)} characters")
+                logger.info(f"📄 First 100 chars: {text_content[:100]}")
+                return text_content, 1
+        except Exception as e:
+            logger.warning(f"⚠ Raw text extraction failed: {e}")
+
+        logger.error(f"❌ All extraction methods failed for {filename}")
+        return (
+            f"PDF content could not be extracted from {filename}. Possible reasons:\n"
+            "- The PDF is image-based (scanned document)\n"
+            "- The PDF is corrupted or damaged\n"
+            "- The PDF has no embedded text content\n"
+            "Please try uploading a text-based PDF or a different document format.",
+            1
+        )
 
     async def _fallback_pdf_extraction(self, file_content: bytes, filename: str, user_id: str) -> (str, int):
         """
@@ -552,53 +550,58 @@ class AWSTextractService:
             
             # Try multiple PDF extraction methods in order of reliability
             extraction_methods = [
-                self._try_pdfminer_extraction,  # Most robust for corrupted PDFs
-                self._try_pypdf2_extraction,    # Good for standard PDFs
-                self._try_basic_text_extraction # Last resort
+                ("PDFMiner", self._try_pdfminer_extraction),  # Most robust for corrupted PDFs
+                ("PyPDF2", self._try_pypdf2_extraction),      # Good for standard PDFs
+                ("Basic Text", self._try_basic_text_extraction) # Last resort
             ]
             
             best_result = None
             best_length = 0
+            best_method = None
             
-            for method in extraction_methods:
+            for method_name, method in extraction_methods:
                 try:
+                    logger.info(f"🔄 Trying {method_name} extraction for {filename}")
                     text_content, page_count = await method(file_content, filename)
                     if text_content and len(text_content.strip()) > best_length:
                         best_result = (text_content, page_count)
                         best_length = len(text_content.strip())
-                        logger.info(f"Method {method.__name__} extracted {best_length} characters")
+                        best_method = method_name
+                        logger.info(f"✅ {method_name} extracted {best_length} characters")
+                    else:
+                        logger.warning(f"⚠ {method_name} returned minimal content ({len(text_content.strip())} chars)")
                 except Exception as e:
-                    logger.warning(f"Method {method.__name__} failed: {e}")
+                    logger.warning(f"⚠ {method_name} failed: {e}")
                     continue
             
             # If we got any meaningful content, return it
             if best_result and best_length > 5:
                 text_content, page_count = best_result
-                logger.info(f"✅ Best extraction result: {best_length} characters, {page_count} pages")
+                logger.info(f"✅ Best extraction result ({best_method}): {best_length} characters, {page_count} pages")
                 return text_content, page_count
             
             # If all methods fail, try to extract any readable text from the PDF bytes
-            logger.warning("All extraction methods failed, attempting raw text extraction")
+            logger.warning("🔄 All extraction methods failed, attempting raw text extraction")
             try:
                 raw_text = await self._try_raw_text_extraction(file_content, filename)
                 if raw_text and len(raw_text.strip()) > 5:
-                    logger.info(f"Raw text extraction successful: {len(raw_text)} characters")
+                    logger.info(f"✅ Raw text extraction successful: {len(raw_text)} characters")
                     return raw_text, 1
             except Exception as e:
-                logger.warning(f"Raw text extraction failed: {e}")
+                logger.warning(f"⚠ Raw text extraction failed: {e}")
             
             # Try one more aggressive approach - decode as text with multiple encodings
-            logger.warning("Trying aggressive text decoding")
+            logger.warning("🔄 Trying aggressive text decoding")
             try:
                 aggressive_text = await self._try_aggressive_text_extraction(file_content, filename)
                 if aggressive_text and len(aggressive_text.strip()) > 5:
-                    logger.info(f"Aggressive text extraction successful: {len(aggressive_text)} characters")
+                    logger.info(f"✅ Aggressive text extraction successful: {len(aggressive_text)} characters")
                     return aggressive_text, 1
             except Exception as e:
-                logger.warning(f"Aggressive text extraction failed: {e}")
+                logger.warning(f"⚠ Aggressive text extraction failed: {e}")
             
             # Final fallback - return a descriptive message
-            logger.warning("All extraction methods failed, returning descriptive message")
+            logger.warning("❌ All extraction methods failed, returning descriptive message")
             return f"PDF content could not be extracted from {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n\nPlease try uploading a text-based PDF or a different document format.", 1
             
         except Exception as e:
@@ -760,15 +763,21 @@ class AWSTextractService:
                     text_content = ""
                     page_count = len(reader.pages)
                     
+                    logger.info(f"PyPDF2: Processing {page_count} pages")
+                    
                     for page_num, page in enumerate(reader.pages):
                         try:
                             page_text = page.extract_text()
                             if page_text:
                                 text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
+                                logger.debug(f"PyPDF2: Page {page_num + 1} extracted {len(page_text)} characters")
+                            else:
+                                logger.debug(f"PyPDF2: Page {page_num + 1} returned no text")
                         except Exception as e:
                             logger.warning(f"PyPDF2 error on page {page_num + 1}: {e}")
                             continue
                     
+                    logger.info(f"PyPDF2: Total extracted {len(text_content)} characters from {page_count} pages")
                     return text_content, page_count
                 except Exception as e:
                     logger.warning(f"PyPDF2 extraction error: {e}")
@@ -804,13 +813,16 @@ class AWSTextractService:
             # Run PDFMiner extraction with timeout to prevent hanging on corrupted PDFs
             def extract_with_timeout():
                 try:
+                    logger.info(f"PDFMiner: Starting extraction for {filename}")
                     extract_text_to_fp(
                         BytesIO(file_content),
                         output_string,
                         laparams=LAParams(),
                         output_type='text'
                     )
-                    return output_string.getvalue()
+                    text_content = output_string.getvalue()
+                    logger.info(f"PDFMiner: Extracted {len(text_content)} characters")
+                    return text_content
                 except Exception as e:
                     logger.warning(f"PDFMiner extraction error: {e}")
                     raise
