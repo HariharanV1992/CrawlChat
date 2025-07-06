@@ -481,15 +481,16 @@ class AWSTextractService:
         self, 
         file_content: bytes, 
         filename: str, 
-        document_type: DocumentType = DocumentType.GENERAL
+        document_type: DocumentType = DocumentType.GENERAL,
+        user_id: str = "anonymous"
     ) -> (str, int):
         try:
             if not self.s3_client:
                 raise DocumentProcessingError("S3 client not available")
             import uuid
             file_id = str(uuid.uuid4())
-            # Use the same S3 path structure as crawled documents for consistency
-            s3_key = f"crawled_documents/textract_processing/{file_id}/{filename}"
+            # Use user-specific path for security and organization
+            s3_key = f"crawled_documents/textract_processing/{user_id}/{file_id}/{filename}"
             s3_bucket = aws_config.s3_bucket_name
             
             logger.info(f"DEBUG: S3 Bucket: {s3_bucket}")

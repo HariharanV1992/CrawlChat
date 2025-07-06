@@ -957,7 +957,8 @@ Please provide a helpful response:"""
                                 text_content, page_count = await textract_service.upload_to_s3_and_extract(
                                     file_content, 
                                     document.filename, 
-                                    DocumentType.GENERAL
+                                    DocumentType.GENERAL,
+                                    user_id
                                 )
                                 if text_content and text_content.strip():
                                     content = text_content

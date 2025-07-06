@@ -373,7 +373,8 @@ class DocumentService:
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
                 content, 
                 filename, 
-                document_type
+                document_type,
+                "document_service"  # Use a generic user_id for document service calls
             )
             
             self._last_page_count = page_count  # Store for later use
