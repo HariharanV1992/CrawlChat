@@ -116,10 +116,13 @@ class AWSTextractService:
             attempt += 1
             try:
                 # Use head_object to check if the object exists and is accessible
+                logger.info(f"DEBUG: Attempt {attempt} - checking S3 object availability")
                 response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
                 wait_time = time.time() - start_time
                 logger.info(f"DEBUG: S3 object {s3_key} is available after {wait_time:.2f}s (attempt {attempt})")
                 logger.info(f"DEBUG: S3 object size: {response.get('ContentLength', 'unknown')} bytes")
+                logger.info(f"DEBUG: S3 object ETag: {response.get('ETag', 'unknown')}")
+                logger.info(f"DEBUG: S3 object LastModified: {response.get('LastModified', 'unknown')}")
                 return True
             except ClientError as e:
                 error_code = e.response['Error']['Code']
@@ -550,6 +553,14 @@ class AWSTextractService:
                 raise DocumentProcessingError(f"S3 object not available after upload: {s3_key}")
             
             logger.info(f"DEBUG: Starting Textract extraction for s3://{s3_bucket}/{s3_key}")
+            
+            # Final verification that S3 object exists before calling Textract
+            try:
+                final_check = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                logger.info(f"DEBUG: Final S3 verification successful - Size: {final_check.get('ContentLength', 'unknown')} bytes")
+            except Exception as final_error:
+                logger.error(f"DEBUG: Final S3 verification failed: {final_error}")
+                raise DocumentProcessingError(f"S3 object verification failed before Textract: {final_error}")
             
             # Use retry mechanism for Textract calls
             text_content, page_count = await self._extract_with_retry(
