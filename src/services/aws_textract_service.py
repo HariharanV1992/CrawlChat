@@ -109,56 +109,49 @@ class AWSTextractService:
         Wait for S3 object to be available before calling Textract.
         This is the proper fix for S3 eventual consistency.
         """
-        logger.info(f"DEBUG: Waiting for S3 object s3://{s3_bucket}/{s3_key}")
+        logger.info(f"DEBUG: Waiting for S3 object s3://{s3_bucket}/{s3_key} (max wait: {max_wait}s)")
         start_time = time.time()
+        attempt = 0
         while time.time() - start_time < max_wait:
+            attempt += 1
             try:
                 # Use head_object to check if the object exists and is accessible
-                self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
                 wait_time = time.time() - start_time
-                logger.info(f"DEBUG: S3 object {s3_key} is available after {wait_time:.2f}s")
+                logger.info(f"DEBUG: S3 object {s3_key} is available after {wait_time:.2f}s (attempt {attempt})")
+                logger.info(f"DEBUG: S3 object size: {response.get('ContentLength', 'unknown')} bytes")
                 return True
             except ClientError as e:
                 error_code = e.response['Error']['Code']
                 if error_code == '404' or error_code == 'NoSuchKey':
                     # Object not found yet, wait and retry
                     elapsed = time.time() - start_time
-                    logger.info(f"DEBUG: S3 object not found yet, waiting... (elapsed: {elapsed:.2f}s)")
-                    await asyncio.sleep(0.5)  # Check every 500ms
+                    logger.info(f"DEBUG: S3 object not found yet, waiting... (elapsed: {elapsed:.2f}s, attempt {attempt})")
+                    await asyncio.sleep(1.0)  # Check every 1 second
                     continue
                 else:
                     # Other S3 error, don't retry
-                    logger.error(f"DEBUG: S3 error checking object {s3_key}: {error_code}")
+                    logger.error(f"DEBUG: S3 error checking object {s3_key}: {error_code} - {e.response['Error'].get('Message', '')}")
                     return False
             except Exception as e:
                 logger.error(f"DEBUG: Unexpected error checking S3 object {s3_key}: {e}")
                 return False
         
-        logger.warning(f"DEBUG: S3 object {s3_key} not available after {max_wait}s")
+        logger.warning(f"DEBUG: S3 object {s3_key} not available after {max_wait}s ({attempt} attempts)")
         return False
 
     async def _detect_document_text_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
         """
-        Wait for S3 object availability, then call DetectDocumentText.
-        This is the proper production solution.
+        Call DetectDocumentText with retry logic.
+        S3 object availability is checked before calling this method.
         """
-        # First, wait for S3 object to be available
-        if not await self._wait_for_s3_object(s3_bucket, s3_key):
-            raise DocumentProcessingError(f"S3 object not available: {s3_key}")
-        
-        # Now call Textract (should work immediately)
         return await self._detect_document_text(s3_bucket, s3_key)
 
     async def _analyze_document_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
         """
-        Wait for S3 object availability, then call AnalyzeDocument.
-        This is the proper production solution.
+        Call AnalyzeDocument with retry logic.
+        S3 object availability is checked before calling this method.
         """
-        # First, wait for S3 object to be available
-        if not await self._wait_for_s3_object(s3_bucket, s3_key):
-            raise DocumentProcessingError(f"S3 object not available: {s3_key}")
-        
-        # Now call Textract (should work immediately)
         return await self._analyze_document(s3_bucket, s3_key)
     
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
@@ -452,7 +445,11 @@ class AWSTextractService:
             )
             logger.info(f"DEBUG: File uploaded successfully to S3")
             
-            await asyncio.sleep(1)
+            # Wait for S3 object to be available before calling Textract
+            logger.info(f"DEBUG: Waiting for S3 object availability before Textract extraction")
+            if not await self._wait_for_s3_object(s3_bucket, s3_key, max_wait=15):
+                raise DocumentProcessingError(f"S3 object not available after upload: {s3_key}")
+            
             logger.info(f"DEBUG: Starting Textract extraction for s3://{s3_bucket}/{s3_key}")
             
             text_content, page_count = await self.extract_text_from_s3_pdf(
