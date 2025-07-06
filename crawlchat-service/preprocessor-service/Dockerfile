@@ -12,6 +12,9 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY preprocessor-service/requirements.txt .
 
+# Copy the common package before pip install
+COPY common/ ./common/
+
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
