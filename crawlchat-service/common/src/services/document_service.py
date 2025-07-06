@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 import io
 from functools import lru_cache
+import hashlib
 
 from common.src.models.documents import (
     Document, DocumentType, DocumentStatus, DocumentUpload, 
@@ -31,45 +32,66 @@ class DocumentService:
         self._content_type_cache = {}
     
     async def upload_document(self, upload_data: DocumentUpload) -> Document:
-        """Upload and store a document with optimized performance."""
+        """Upload a document with enhanced file integrity checking."""
         try:
-            await mongodb.connect()
+            logger.info(f"📤 DOCUMENT UPLOAD START: {upload_data.filename}")
             
+            # 🔍 FILE INTEGRITY CHECK - Log file details at upload
+            file_content = upload_data.file_content
+            logger.info(f"🔍 UPLOAD FILE INTEGRITY CHECK:")
+            logger.info(f"   📏 File size: {len(file_content):,} bytes")
+            logger.info(f"   🔢 File hash (MD5): {hashlib.md5(file_content).hexdigest()}")
+            logger.info(f"   📄 First 20 bytes: {file_content[:20]}")
+            logger.info(f"   📄 Last 20 bytes: {file_content[-20:]}")
+            
+            # Check if it's a valid PDF
+            if upload_data.filename.lower().endswith('.pdf'):
+                if file_content.startswith(b'%PDF-'):
+                    logger.info(f"   ✅ Valid PDF header detected")
+                else:
+                    logger.warning(f"   ❌ Invalid PDF header: {file_content[:10]}")
+                
+                if b'%%EOF' in file_content[-1000:]:
+                    logger.info(f"   ✅ PDF EOF marker found")
+                else:
+                    logger.warning(f"   ❌ PDF EOF marker missing")
+            
+            # Determine document type
+            file_extension = Path(upload_data.filename).suffix.lower()
+            document_type = self._get_document_type(file_extension)
+            
+            # Generate unique document ID
             document_id = str(uuid.uuid4())
-            extension = Path(upload_data.filename).suffix.lower()
-            document_type = self._get_document_type(extension)
-            storage_service = get_storage_service()
             
-            # Generate S3 key using centralized path generation
-            s3_key = aws_config.generate_document_s3_key(upload_data.user_id, upload_data.filename, document_id)
-
-            # Create document record first to avoid waiting for S3 upload
+            # Store file using storage service
+            storage_service = get_storage_service()
+            file_path = await storage_service.store_file(
+                file_content, 
+                upload_data.filename, 
+                upload_data.user_id
+            )
+            
+            # Create document record
             document = Document(
                 document_id=document_id,
                 user_id=upload_data.user_id,
                 filename=upload_data.filename,
-                file_path=s3_key,  # Use S3 key directly
-                file_size=len(upload_data.content),  # Use actual size
+                file_path=file_path,
                 document_type=document_type,
+                file_size=len(file_content),
                 status=DocumentStatus.UPLOADED,
-                uploaded_at=datetime.utcnow(),
-                task_id=upload_data.task_id
+                uploaded_at=datetime.utcnow()
             )
             
-            # Parallel operations: S3 upload and database insert
-            upload_task = storage_service.upload_file_from_bytes(
-                upload_data.content, s3_key, content_type=self._get_content_type(extension)
-            )
-            db_task = mongodb.get_collection("documents").insert_one(document.dict())
+            # Save to database
+            await mongodb.connect()
+            await mongodb.get_collection("documents").insert_one(document.dict())
             
-            # Wait for both operations to complete
-            await asyncio.gather(upload_task, db_task)
-            
-            logger.info(f"Uploaded document {document_id}: {upload_data.filename}")
+            logger.info(f"✅ DOCUMENT UPLOAD COMPLETE: {document_id}")
             return document
             
         except Exception as e:
-            logger.error(f"Error uploading document: {e}")
+            logger.error(f"❌ Document upload failed: {e}")
             raise DocumentProcessingError(f"Failed to upload document: {e}")
     
     async def process_preprocessed_document(self, document_id: str, user_id: str, preprocessed_s3_key: str) -> DocumentProcessResponse:

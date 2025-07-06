@@ -9,6 +9,7 @@ import io
 import asyncio
 import time
 import uuid
+import hashlib
 from typing import Optional, Dict, Any, List
 from enum import Enum
 import boto3
@@ -449,17 +450,65 @@ class AWSTextractService:
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
 
+            # 🔍 FILE INTEGRITY CHECK - Log file details before processing
+            logger.info(f"🔍 FILE INTEGRITY CHECK for {filename}:")
+            logger.info(f"   📏 File size: {len(file_content):,} bytes")
+            logger.info(f"   🔢 File hash (MD5): {hashlib.md5(file_content).hexdigest()}")
+            logger.info(f"   📄 First 20 bytes: {file_content[:20]}")
+            logger.info(f"   📄 Last 20 bytes: {file_content[-20:]}")
+            
+            # Check if it's a valid PDF
+            if filename.lower().endswith('.pdf'):
+                if file_content.startswith(b'%PDF-'):
+                    logger.info(f"   ✅ Valid PDF header detected")
+                else:
+                    logger.warning(f"   ❌ Invalid PDF header: {file_content[:10]}")
+                
+                if b'%%EOF' in file_content[-1000:]:
+                    logger.info(f"   ✅ PDF EOF marker found")
+                else:
+                    logger.warning(f"   ❌ PDF EOF marker missing")
+
             bucket_name = aws_config.s3_bucket
             file_id = str(uuid.uuid4())
             s3_key = f"uploaded_documents/{user_id}/{file_id}/{filename}"
 
-            logger.info(f"Uploading {filename} to s3://{bucket_name}/{s3_key}")
+            logger.info(f"📤 Uploading {filename} to s3://{bucket_name}/{s3_key}")
             self.s3_client.put_object(
                 Bucket=bucket_name,
                 Key=s3_key,
                 Body=file_content,
                 ContentType=self._get_content_type(filename)
             )
+
+            # 🔍 S3 UPLOAD VERIFICATION - Download and verify the uploaded file
+            logger.info(f"🔍 S3 UPLOAD VERIFICATION:")
+            try:
+                download_response = self.s3_client.get_object(Bucket=bucket_name, Key=s3_key)
+                downloaded_content = download_response['Body'].read()
+                downloaded_size = len(downloaded_content)
+                downloaded_hash = hashlib.md5(downloaded_content).hexdigest()
+                
+                logger.info(f"   📏 S3 file size: {downloaded_size:,} bytes")
+                logger.info(f"   🔢 S3 file hash: {downloaded_hash}")
+                logger.info(f"   📄 S3 first 20 bytes: {downloaded_content[:20]}")
+                
+                # Compare with original
+                if len(file_content) == downloaded_size:
+                    logger.info(f"   ✅ File size matches original")
+                else:
+                    logger.error(f"   ❌ File size mismatch! Original: {len(file_content)}, S3: {downloaded_size}")
+                
+                if hashlib.md5(file_content).hexdigest() == downloaded_hash:
+                    logger.info(f"   ✅ File hash matches original")
+                else:
+                    logger.error(f"   ❌ File hash mismatch! File corrupted during upload!")
+                
+                # Use the downloaded content for processing to ensure we're working with what's actually in S3
+                file_content = downloaded_content
+                
+            except Exception as e:
+                logger.error(f"   ❌ S3 verification failed: {e}")
 
             if filename.lower().endswith('.pdf'):
                 logger.info(f"Processing PDF {filename} with hybrid approach")
