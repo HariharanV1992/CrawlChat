@@ -9,7 +9,7 @@ import os
 from typing import Dict, Any, Optional
 from ..core.aws_config import aws_config
 from ..core.exceptions import BackgroundServiceError
-from services.storage_service import get_storage_service
+from ..services.storage_service import get_storage_service
 import time
 
 logger = logging.getLogger(__name__)

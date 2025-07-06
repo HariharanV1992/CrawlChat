@@ -92,4 +92,9 @@ class VectorStoreError(Exception):
 
 class EmailError(Exception):
     """Custom exception for email-related errors."""
+    pass
+
+
+class BackgroundServiceError(StockCrawlerException):
+    """Background service related errors."""
     pass 
