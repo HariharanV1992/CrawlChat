@@ -18,17 +18,27 @@ from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
 from common.src.services.document_service import DocumentService
 
+logger = logging.getLogger(__name__)
+
 # Import crawler modules from lambda-service (these are service-specific)
 try:
-    from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-    from src.crawler.settings_manager import SettingsManager
-except ImportError:
+    # Try to import from lambda-service crawler directory
+    import sys
+    import os
+    # Add lambda-service src to path
+    lambda_src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src')
+    if lambda_src_path not in sys.path:
+        sys.path.insert(0, lambda_src_path)
+    
+    from crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+    from crawler.settings_manager import SettingsManager
+    logger.info("Successfully imported AdvancedCrawler and related modules")
+except ImportError as e:
     # Fallback for when crawler modules are not available
+    logger.error(f"Failed to import crawler modules: {e}")
     AdvancedCrawler = None
     CrawlConfig = None
     SettingsManager = None
-
-logger = logging.getLogger(__name__)
 
 class CrawlerService:
     """Crawler service for managing crawl tasks using MongoDB."""

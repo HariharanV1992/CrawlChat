@@ -593,9 +593,8 @@ class AWSTextractService:
             logger.info(f"Starting aggressive PDF extraction for: {filename}")
             
             # First, try to detect if the PDF is severely corrupted
-            if self._is_pdf_severely_corrupted(file_content):
-                logger.warning(f"PDF {filename} appears to be severely corrupted, but will still attempt extraction")
-                # Don't return early - try extraction anyway
+            corruption_level = self._analyze_pdf_corruption(file_content)
+            logger.info(f"PDF corruption analysis: {corruption_level}")
             
             # Try multiple PDF extraction methods in order of reliability
             extraction_methods = [
@@ -649,13 +648,107 @@ class AWSTextractService:
             except Exception as e:
                 logger.warning(f"⚠ Aggressive text extraction failed: {e}")
             
-            # Final fallback - return a descriptive message
+            # Final fallback - return a descriptive message based on corruption level
             logger.warning("❌ All extraction methods failed, returning descriptive message")
-            return f"PDF content could not be extracted from {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n\nPlease try uploading a text-based PDF or a different document format.", 1
+            return self._generate_fallback_message(filename, corruption_level), 1
             
         except Exception as e:
             logger.error(f"Fallback PDF extraction failed: {e}")
             raise TextractError(f"Fallback extraction failed: {e}")
+
+    def _analyze_pdf_corruption(self, file_content: bytes) -> str:
+        """
+        Analyze PDF corruption level and return descriptive message.
+        """
+        try:
+            issues = []
+            
+            # Check for basic PDF structure
+            if not file_content.startswith(b'%PDF-'):
+                issues.append("Missing PDF header")
+            
+            # Check for end-of-file marker
+            if b'%%EOF' not in file_content[-1000:]:
+                issues.append("Missing EOF marker")
+            
+            # Check for reasonable file size (at least 1KB)
+            if len(file_content) < 1024:
+                issues.append("File too small")
+            
+            # Check for excessive null bytes (indicates corruption)
+            null_ratio = file_content.count(b'\x00') / len(file_content)
+            if null_ratio > 0.5:
+                issues.append(f"High null byte ratio ({null_ratio:.1%})")
+            
+            # Check for PDF structure keywords
+            pdf_keywords = [b'obj', b'endobj', b'stream', b'endstream', b'xref', b'trailer']
+            found_keywords = sum(1 for keyword in pdf_keywords if keyword in file_content)
+            if found_keywords < 3:
+                issues.append("Missing PDF structure elements")
+            
+            if not issues:
+                return "PDF appears structurally sound"
+            elif len(issues) <= 2:
+                return f"Minor issues: {', '.join(issues)}"
+            else:
+                return f"Severely corrupted: {', '.join(issues)}"
+                
+        except Exception as e:
+            return f"Error analyzing PDF: {e}"
+
+    def _generate_fallback_message(self, filename: str, corruption_level: str) -> str:
+        """
+        Generate a helpful fallback message based on corruption level.
+        """
+        if "Severely corrupted" in corruption_level:
+            return f"""The PDF file '{filename}' appears to be severely corrupted or damaged and could not be processed.
+
+Corruption Analysis: {corruption_level}
+
+Recommendations:
+1. Try uploading the original source file (Word, Excel, etc.) instead of the PDF
+2. Re-generate the PDF using a different method (Adobe Acrobat, Microsoft Word, etc.)
+3. Avoid browser-generated PDFs (Chrome "Save as PDF" often creates problematic files)
+4. Check if the file was corrupted during upload or transfer
+5. Try converting the file to an image format (PNG/JPEG) and upload that instead
+
+If you continue having issues, please contact support with the original source file."""
+        
+        elif "Minor issues" in corruption_level:
+            return f"""The PDF file '{filename}' has some structural issues that prevented text extraction.
+
+Analysis: {corruption_level}
+
+This could be due to:
+- Browser-generated PDF (Chrome/Firefox "Save as PDF")
+- Non-standard PDF creation method
+- Minor file corruption
+
+Try:
+1. Re-generating the PDF using Adobe Acrobat or Microsoft Word
+2. Converting to image format (PNG/JPEG) and uploading that
+3. Using the preprocessing service to normalize the PDF
+
+The document may still be readable visually, but text extraction failed."""
+        
+        else:
+            return f"""The PDF file '{filename}' could not be processed for text extraction.
+
+Analysis: {corruption_level}
+
+Possible reasons:
+- Image-based PDF (scanned document)
+- Non-standard PDF format
+- Browser-generated PDF with unusual structure
+- PDF with embedded images instead of text
+
+Solutions:
+1. Upload the original source file (Word, Excel, etc.)
+2. Convert to image format (PNG/JPEG) and upload that
+3. Use the preprocessing service to convert the PDF to images
+4. Re-generate the PDF using standard tools (Adobe Acrobat, Word, etc.)
+
+The document content may still be accessible through the preprocessing service."""
 
     async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try very aggressive text extraction from PDF bytes."""
@@ -719,38 +812,6 @@ class AWSTextractService:
         except Exception as e:
             logger.warning(f"Aggressive text extraction failed: {e}")
             return ""
-
-    def _is_pdf_severely_corrupted(self, file_content: bytes) -> bool:
-        """
-        Check if PDF is severely corrupted before attempting extraction.
-        """
-        try:
-            # Check for basic PDF structure
-            if not file_content.startswith(b'%PDF-'):
-                logger.warning("File does not start with PDF header")
-                return True
-            
-            # Check for end-of-file marker
-            if b'%%EOF' not in file_content[-1000:]:
-                logger.warning("PDF does not contain proper EOF marker")
-                return True
-            
-            # Check for reasonable file size (at least 1KB)
-            if len(file_content) < 1024:
-                logger.warning("PDF file is too small, likely corrupted")
-                return True
-            
-            # Check for excessive null bytes (indicates corruption)
-            null_ratio = file_content.count(b'\x00') / len(file_content)
-            if null_ratio > 0.5:
-                logger.warning(f"PDF contains too many null bytes ({null_ratio:.2%})")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.warning(f"Error checking PDF corruption: {e}")
-            return True
 
     async def _try_raw_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try to extract any readable text from PDF bytes using multiple encodings."""
@@ -863,24 +924,60 @@ class AWSTextractService:
             def extract_with_timeout():
                 try:
                     logger.info(f"PDFMiner: Starting extraction for {filename}")
+                    
+                    # Try with different LAParams for corrupted PDFs
+                    laparams_options = [
+                        LAParams(),  # Default
+                        LAParams(line_margin=0.5, word_margin=0.1),  # More lenient
+                        LAParams(line_margin=1.0, word_margin=0.2, char_margin=2.0)  # Very lenient
+                    ]
+                    
+                    for i, laparams in enumerate(laparams_options):
+                        try:
+                            output_string.seek(0)
+                            output_string.truncate(0)
+                            
+                            extract_text_to_fp(
+                                BytesIO(file_content),
+                                output_string,
+                                laparams=laparams,
+                                output_type='text'
+                            )
+                            text_content = output_string.getvalue()
+                            
+                            if text_content and len(text_content.strip()) > 10:
+                                logger.info(f"PDFMiner: Success with params {i+1}, extracted {len(text_content)} characters")
+                                return text_content
+                            else:
+                                logger.debug(f"PDFMiner: Params {i+1} returned minimal content")
+                                
+                        except Exception as e:
+                            logger.debug(f"PDFMiner: Params {i+1} failed: {e}")
+                            continue
+                    
+                    # If all params failed, try one more time with the most lenient settings
+                    output_string.seek(0)
+                    output_string.truncate(0)
+                    
                     extract_text_to_fp(
                         BytesIO(file_content),
                         output_string,
-                        laparams=LAParams(),
+                        laparams=LAParams(line_margin=2.0, word_margin=0.5, char_margin=5.0),
                         output_type='text'
                     )
                     text_content = output_string.getvalue()
-                    logger.info(f"PDFMiner: Extracted {len(text_content)} characters")
+                    logger.info(f"PDFMiner: Final attempt extracted {len(text_content)} characters")
                     return text_content
+                    
                 except Exception as e:
                     logger.warning(f"PDFMiner extraction error: {e}")
                     raise
             
-            # Run with 10-second timeout
+            # Run with 15-second timeout (increased for multiple attempts)
             loop = asyncio.get_event_loop()
             text_content = await asyncio.wait_for(
                 loop.run_in_executor(None, extract_with_timeout),
-                timeout=10.0
+                timeout=15.0
             )
             
             page_count = 1  # PDFMiner doesn't provide page count easily
