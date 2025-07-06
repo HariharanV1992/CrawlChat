@@ -488,8 +488,8 @@ class AWSTextractService:
                 raise DocumentProcessingError("S3 client not available")
             import uuid
             file_id = str(uuid.uuid4())
-            # Use centralized S3 path generation for consistency
-            s3_key = aws_config.generate_temp_s3_key(filename, file_id)
+            # Use the same S3 path structure as crawled documents for consistency
+            s3_key = f"crawled_documents/textract_processing/{file_id}/{filename}"
             s3_bucket = aws_config.s3_bucket_name
             
             logger.info(f"DEBUG: S3 Bucket: {s3_bucket}")
@@ -499,17 +499,28 @@ class AWSTextractService:
             logger.info(f"DEBUG: Content type: {self._get_content_type(filename)}")
             logger.info(f"DEBUG: Deployment timestamp: {time.time()}")
             logger.info(f"DEBUG: S3 client region: {self.s3_client.meta.region_name}")
+            logger.info(f"DEBUG: Textract client region: {self.textract_client.meta.region_name}")
+            logger.info(f"DEBUG: AWS config region: {aws_config.region}")
             
             # Test S3 bucket access
             try:
                 self.s3_client.head_bucket(Bucket=s3_bucket)
                 logger.info(f"DEBUG: S3 bucket {s3_bucket} is accessible")
+                
+                # List objects in the bucket to verify access
+                try:
+                    response = self.s3_client.list_objects_v2(Bucket=s3_bucket, MaxKeys=5)
+                    logger.info(f"DEBUG: S3 bucket listing successful, found {len(response.get('Contents', []))} objects")
+                except Exception as list_error:
+                    logger.warning(f"DEBUG: S3 bucket listing failed: {list_error}")
+                    
             except Exception as e:
                 logger.error(f"DEBUG: S3 bucket {s3_bucket} access failed: {e}")
                 raise DocumentProcessingError(f"S3 bucket not accessible: {e}")
             
             logger.info(f"Uploading {filename} to S3 as {s3_key}")
             try:
+                logger.info(f"DEBUG: Starting S3 upload - Bucket: {s3_bucket}, Key: {s3_key}, Size: {len(file_content)} bytes")
                 response = self.s3_client.put_object(
                     Bucket=s3_bucket,
                     Key=s3_key,
@@ -519,6 +530,15 @@ class AWSTextractService:
                 logger.info(f"DEBUG: File uploaded successfully to S3")
                 logger.info(f"DEBUG: S3 upload response ETag: {response.get('ETag', 'none')}")
                 logger.info(f"DEBUG: S3 upload response VersionId: {response.get('VersionId', 'none')}")
+                logger.info(f"DEBUG: S3 upload response RequestId: {response.get('ResponseMetadata', {}).get('RequestId', 'none')}")
+                
+                # Immediately verify the upload
+                try:
+                    head_response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                    logger.info(f"DEBUG: Immediate S3 object verification successful - Size: {head_response.get('ContentLength', 'unknown')}")
+                except Exception as verify_error:
+                    logger.warning(f"DEBUG: Immediate S3 object verification failed: {verify_error}")
+                    
             except Exception as e:
                 logger.error(f"DEBUG: S3 upload failed: {e}")
                 raise DocumentProcessingError(f"S3 upload failed: {e}")
