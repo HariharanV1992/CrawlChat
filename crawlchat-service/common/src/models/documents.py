@@ -99,4 +99,34 @@ class DocumentSearchResult(BaseModel):
     filename: str = Field(..., description="Document filename")
     relevance_score: float = Field(..., description="Relevance score")
     matched_content: str = Field(..., description="Matched content snippet")
-    document_type: DocumentType = Field(..., description="Document type") 
+    document_type: DocumentType = Field(..., description="Document type")
+
+
+class DocumentCreate(BaseModel):
+    """Document creation model."""
+    filename: str = Field(..., description="Original filename")
+    content: bytes = Field(..., description="File content")
+    user_id: str = Field(..., description="User ID")
+    task_id: Optional[str] = Field(None, description="Associated task ID")
+
+
+class DocumentUpdate(BaseModel):
+    """Document update model."""
+    document_id: str = Field(..., description="Document ID")
+    user_query: Optional[str] = Field(None, description="User query for processing")
+
+
+class DocumentResponse(BaseModel):
+    """Document response model."""
+    document_id: str = Field(..., description="Document ID")
+    status: DocumentStatus = Field(..., description="Processing status")
+    content: Optional[str] = Field(None, description="Extracted content")
+    summary: Optional[str] = Field(None, description="Document summary")
+    key_points: List[str] = Field(default=[], description="Key points")
+    processing_time: float = Field(..., description="Processing time in seconds")
+
+
+class DocumentListResponse(BaseModel):
+    """Document list response model."""
+    documents: List[Document] = Field(..., description="List of documents")
+    total_count: int = Field(..., description="Total number of documents") 

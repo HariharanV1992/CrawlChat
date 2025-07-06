@@ -32,6 +32,9 @@ try:
     handler = Mangum(app, lifespan="off")
     logger.info("Successfully created Mangum handler")
     
+    # Export the handler for Lambda
+    lambda_handler = handler
+    
 except Exception as e:
     logger.error(f"Error during Lambda initialization: {e}")
     logger.error(f"Current working directory: {os.getcwd()}")

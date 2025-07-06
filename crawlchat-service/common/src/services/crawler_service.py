@@ -16,16 +16,14 @@ from common.src.services.storage_service import get_storage_service
 from common.src.core.config import config
 from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
-from common.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-from common.src.crawler.settings_manager import SettingsManager
 from common.src.services.document_service import DocumentService
 
-# Import crawler modules (these will need to be moved to src/crawler/ later)
+# Import crawler modules from lambda-service (these are service-specific)
 try:
-    from common.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-    from common.src.crawler.settings_manager import SettingsManager
+    from lambda_service.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+    from lambda_service.src.crawler.settings_manager import SettingsManager
 except ImportError:
-    # Fallback for when crawler modules are not yet migrated
+    # Fallback for when crawler modules are not available
     AdvancedCrawler = None
     CrawlConfig = None
     SettingsManager = None

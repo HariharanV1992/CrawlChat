@@ -131,4 +131,41 @@ class CrawlResult(BaseModel):
     total_documents: int = Field(..., description="Total documents downloaded")
     errors: List[str] = Field(default=[], description="List of errors")
     files: List[str] = Field(default=[], description="List of downloaded files")
-    completed_at: datetime = Field(..., description="Completion timestamp") 
+    completed_at: datetime = Field(..., description="Completion timestamp")
+
+
+class CrawlTaskCreate(BaseModel):
+    """Crawl task creation model."""
+    url: HttpUrl = Field(..., description="Target URL to crawl")
+    max_documents: int = Field(default=5, ge=1, le=100, description="Maximum documents to download")
+    max_pages: int = Field(default=50, ge=1, le=1000, description="Maximum pages to crawl")
+    max_workers: int = Field(default=3, ge=1, le=50, description="Maximum concurrent workers")
+    delay: float = Field(default=0.05, ge=0, le=10, description="Delay between requests in seconds")
+    total_timeout: int = Field(default=1800, ge=60, le=7200, description="Total timeout in seconds")
+    page_timeout: int = Field(default=60, ge=10, le=300, description="Page timeout in seconds")
+    request_timeout: int = Field(default=30, ge=5, le=120, description="Request timeout in seconds")
+
+
+class CrawlTaskUpdate(BaseModel):
+    """Crawl task update model."""
+    status: Optional[TaskStatus] = Field(None, description="Task status")
+    max_documents: Optional[int] = Field(None, ge=1, le=100, description="Maximum documents to download")
+    max_pages: Optional[int] = Field(None, ge=1, le=1000, description="Maximum pages to crawl")
+    max_workers: Optional[int] = Field(None, ge=1, le=50, description="Maximum concurrent workers")
+    delay: Optional[float] = Field(None, ge=0, le=10, description="Delay between requests in seconds")
+
+
+class CrawlTaskResponse(BaseModel):
+    """Crawl task response model."""
+    task_id: str = Field(..., description="Task ID")
+    status: TaskStatus = Field(..., description="Task status")
+    message: str = Field(..., description="Response message")
+    url: str = Field(..., description="Target URL")
+    max_documents: int = Field(..., description="Maximum documents to download")
+    created_at: datetime = Field(..., description="Task creation timestamp")
+
+
+class CrawlTaskListResponse(BaseModel):
+    """Crawl task list response model."""
+    tasks: List[CrawlTask] = Field(..., description="List of crawl tasks")
+    total_count: int = Field(..., description="Total number of tasks") 
