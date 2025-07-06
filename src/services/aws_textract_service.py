@@ -487,11 +487,11 @@ class AWSTextractService:
         try:
             logger.info(f"Using fallback PDF extraction for: {filename}")
             
-            # Try multiple PDF extraction methods
+            # Try multiple PDF extraction methods in order of reliability
             extraction_methods = [
-                self._try_pypdf2_extraction,
-                self._try_pdfminer_extraction,
-                self._try_basic_text_extraction
+                self._try_pdfminer_extraction,  # Most robust for corrupted PDFs
+                self._try_pypdf2_extraction,    # Good for standard PDFs
+                self._try_basic_text_extraction # Last resort
             ]
             
             for method in extraction_methods:
@@ -504,13 +504,69 @@ class AWSTextractService:
                     logger.warning(f"Method {method.__name__} failed: {e}")
                     continue
             
-            # If all methods fail, return a basic error message
-            logger.warning("All fallback methods failed, returning basic error message")
-            return f"PDF content could not be extracted from {filename}. This may be due to the PDF format or structure.", 1
+            # If all methods fail, try to extract any readable text from the PDF bytes
+            logger.warning("All extraction methods failed, attempting raw text extraction")
+            try:
+                raw_text = await self._try_raw_text_extraction(file_content, filename)
+                if raw_text and len(raw_text.strip()) > 10:
+                    logger.info(f"Raw text extraction successful: {len(raw_text)} characters")
+                    return raw_text, 1
+            except Exception as e:
+                logger.warning(f"Raw text extraction failed: {e}")
+            
+            # Final fallback - return a descriptive message
+            logger.warning("All fallback methods failed, returning descriptive message")
+            return f"PDF content could not be extracted from {filename}. This appears to be a browser-generated PDF with internal structure issues. Consider using a PDF created by standard tools like Adobe Acrobat or Microsoft Word.", 1
             
         except Exception as e:
             logger.error(f"Fallback PDF extraction failed: {e}")
             raise DocumentProcessingError(f"Fallback extraction failed: {e}")
+
+    async def _try_raw_text_extraction(self, file_content: bytes, filename: str) -> str:
+        """Try to extract any readable text from PDF bytes using multiple encodings."""
+        try:
+            # Try different encodings and text extraction methods
+            encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+            
+            for encoding in encodings:
+                try:
+                    content_str = file_content.decode(encoding, errors='ignore')
+                    
+                    # Look for text patterns that indicate readable content
+                    import re
+                    
+                    # Find words (3+ letters)
+                    words = re.findall(r'\b[A-Za-z]{3,}\b', content_str)
+                    
+                    # Find numbers and prices
+                    numbers = re.findall(r'\$\d+\.?\d*', content_str)
+                    
+                    # Find domain names
+                    domains = re.findall(r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', content_str)
+                    
+                    # Combine all found text
+                    extracted_parts = []
+                    if words:
+                        extracted_parts.extend(words[:50])  # Limit to first 50 words
+                    if numbers:
+                        extracted_parts.extend(numbers[:20])  # Limit to first 20 numbers
+                    if domains:
+                        extracted_parts.extend(domains[:10])  # Limit to first 10 domains
+                    
+                    if extracted_parts:
+                        result = " ".join(extracted_parts)
+                        logger.info(f"Raw text extraction found {len(extracted_parts)} text elements using {encoding}")
+                        return result
+                        
+                except Exception as e:
+                    logger.debug(f"Encoding {encoding} failed: {e}")
+                    continue
+            
+            return ""
+            
+        except Exception as e:
+            logger.warning(f"Raw text extraction failed: {e}")
+            return ""
 
     async def _try_pypdf2_extraction(self, file_content: bytes, filename: str) -> (str, int):
         """Try PyPDF2 extraction."""
