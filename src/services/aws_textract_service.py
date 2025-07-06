@@ -100,6 +100,12 @@ class AWSTextractService:
                 return await self._detect_document_text_with_retry(s3_bucket, s3_key)
             else:
                 return await self._analyze_document_with_retry(s3_bucket, s3_key)
+        except DocumentProcessingError as e:
+            if "Unsupported document type" in str(e):
+                logger.warning(f"Textract failed with UnsupportedDocumentException for {s3_key}. This usually means the PDF format is not compatible with Textract.")
+                logger.info(f"Consider using a different PDF file or converting the document to a supported format.")
+                logger.info(f"Supported formats: PDF, PNG, JPEG, TIFF files that are not encrypted, corrupted, or in unusual formats.")
+            raise e
         except Exception as e:
             logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
             raise DocumentProcessingError(f"Textract extraction failed: {e}")
@@ -603,6 +609,43 @@ class AWSTextractService:
         }
         
         return content_types.get(extension, 'application/octet-stream')
+    
+    def get_textract_compatibility_guide(self) -> Dict[str, Any]:
+        """
+        Get guidance on Textract compatibility for different document types.
+        
+        Returns:
+            Dictionary with compatibility information
+        """
+        return {
+            "supported_formats": [
+                "PDF (unencrypted, standard format)",
+                "PNG (image files)",
+                "JPEG (image files)", 
+                "TIFF (image files)"
+            ],
+            "unsupported_formats": [
+                "Encrypted or password-protected PDFs",
+                "Corrupted or damaged files",
+                "Browser-generated PDFs (Chrome 'Save as PDF')",
+                "PDFs with unusual internal structures",
+                "Very large files (>5MB for synchronous, >500MB for asynchronous)",
+                "Files with non-standard encoding"
+            ],
+            "recommendations": [
+                "Use PDFs created by standard PDF generators (Adobe, Word, etc.)",
+                "Avoid browser-generated PDFs",
+                "Ensure files are not encrypted",
+                "Keep file sizes reasonable (<5MB for best results)",
+                "Test with simple, text-based documents first"
+            ],
+            "troubleshooting": [
+                "If you get 'Unsupported document type', try a different PDF file",
+                "Convert browser-generated PDFs to standard PDFs",
+                "Use image files (PNG/JPEG) as an alternative",
+                "Check if the PDF is encrypted or corrupted"
+            ]
+        }
     
     def estimate_cost(self, document_type: DocumentType, page_count: int = 1) -> Dict[str, Any]:
         """
