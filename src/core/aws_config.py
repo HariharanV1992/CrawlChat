@@ -37,7 +37,9 @@ class AWSConfig:
                     "s3": {
                         "bucket_name": os.getenv("S3_BUCKET_NAME", "stock-market-crawler-data"),
                         "documents_prefix": "documents/",
-                        "crawled_data_prefix": "crawled_data/"
+                        "crawled_data_prefix": "crawled_data/",
+                        "uploaded_documents_prefix": "uploaded_documents/",
+                        "temp_prefix": "temp/"
                     },
                     "textract": {
                         "region": os.getenv("TEXTRACT_REGION", "us-east-1")
@@ -88,6 +90,16 @@ class AWSConfig:
         return self.config.get("s3", {}).get("crawled_data_prefix", "crawled_data/")
     
     @property
+    def s3_uploaded_documents_prefix(self) -> str:
+        """Get S3 uploaded documents prefix."""
+        return self.config.get("s3", {}).get("uploaded_documents_prefix", "uploaded_documents/")
+    
+    @property
+    def s3_temp_prefix(self) -> str:
+        """Get S3 temp prefix."""
+        return self.config.get("s3", {}).get("temp_prefix", "temp/")
+    
+    @property
     def textract_region(self) -> str:
         """Get Textract region."""
         return self.config.get("textract", {}).get("region", "us-east-1")
@@ -101,6 +113,24 @@ class AWSConfig:
     def get_lambda_function_arn(self) -> str:
         """Get Lambda function ARN."""
         return f"arn:aws:lambda:{self.region}:*:function:{self.lambda_function_name}"
+    
+    def generate_document_s3_key(self, user_id: str, filename: str, file_id: str = None) -> str:
+        """Generate consistent S3 key for uploaded documents."""
+        if not file_id:
+            import uuid
+            file_id = str(uuid.uuid4())
+        return f"{self.s3_uploaded_documents_prefix}{user_id}/{file_id}/{filename}"
+    
+    def generate_temp_s3_key(self, filename: str, file_id: str = None) -> str:
+        """Generate S3 key for temporary files (like Textract processing)."""
+        if not file_id:
+            import uuid
+            file_id = str(uuid.uuid4())
+        return f"{self.s3_temp_prefix}{file_id}/{filename}"
+    
+    def generate_crawled_data_s3_key(self, task_id: str, filename: str) -> str:
+        """Generate S3 key for crawled data."""
+        return f"{self.s3_crawled_data_prefix}{task_id}/{filename}"
 
 # Global AWS config instance
 aws_config = AWSConfig() 

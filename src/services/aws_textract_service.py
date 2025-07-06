@@ -153,6 +153,66 @@ class AWSTextractService:
         S3 object availability is checked before calling this method.
         """
         return await self._analyze_document(s3_bucket, s3_key)
+
+    async def _extract_with_retry(
+        self, 
+        s3_bucket: str, 
+        s3_key: str, 
+        document_type: DocumentType, 
+        max_retries: int = 3
+    ) -> (str, int):
+        """
+        Extract text with retry logic for S3 object availability issues.
+        """
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"DEBUG: Textract extraction attempt {attempt + 1}/{max_retries}")
+                
+                # Re-check S3 object availability before each attempt
+                if not await self._wait_for_s3_object(s3_bucket, s3_key, max_wait=5):
+                    logger.warning(f"DEBUG: S3 object not available on attempt {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2)  # Wait 2 seconds before retry
+                        continue
+                    else:
+                        raise DocumentProcessingError(f"S3 object not available after {max_retries} attempts")
+                
+                # Call the appropriate Textract API
+                api_type = self._select_api_type(document_type)
+                if api_type == TextractAPI.DETECT_DOCUMENT_TEXT:
+                    return await self._detect_document_text(s3_bucket, s3_key)
+                else:
+                    return await self._analyze_document(s3_bucket, s3_key)
+                    
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'InvalidS3ObjectException':
+                    last_error = e
+                    logger.warning(f"DEBUG: InvalidS3ObjectException on attempt {attempt + 1}: {e.response['Error'].get('Message', '')}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(3)  # Wait 3 seconds before retry
+                        continue
+                    else:
+                        raise DocumentProcessingError(f"S3 object not available or invalid after {max_retries} attempts: {s3_key}")
+                else:
+                    # Other AWS errors, don't retry
+                    raise DocumentProcessingError(f"AWS Textract error: {error_code}")
+            except Exception as e:
+                last_error = e
+                logger.error(f"DEBUG: Unexpected error on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    raise DocumentProcessingError(f"Textract processing failed after {max_retries} attempts: {e}")
+        
+        # This should never be reached, but just in case
+        if last_error:
+            raise DocumentProcessingError(f"Textract extraction failed: {last_error}")
+        else:
+            raise DocumentProcessingError("Textract extraction failed for unknown reason")
     
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
@@ -428,34 +488,45 @@ class AWSTextractService:
                 raise DocumentProcessingError("S3 client not available")
             import uuid
             file_id = str(uuid.uuid4())
-            s3_key = f"documents/{file_id}/{filename}"
+            # Use centralized S3 path generation for consistency
+            s3_key = aws_config.generate_temp_s3_key(filename, file_id)
             s3_bucket = aws_config.s3_bucket_name
             
             logger.info(f"DEBUG: S3 Bucket: {s3_bucket}")
             logger.info(f"DEBUG: S3 Key: {s3_key}")
             logger.info(f"DEBUG: Full S3 Path: s3://{s3_bucket}/{s3_key}")
+            logger.info(f"DEBUG: File size: {len(file_content)} bytes")
+            logger.info(f"DEBUG: Content type: {self._get_content_type(filename)}")
             logger.info(f"DEBUG: Deployment timestamp: {time.time()}")
             
             logger.info(f"Uploading {filename} to S3 as {s3_key}")
-            self.s3_client.put_object(
-                Bucket=s3_bucket,
-                Key=s3_key,
-                Body=file_content,
-                ContentType=self._get_content_type(filename)
-            )
-            logger.info(f"DEBUG: File uploaded successfully to S3")
+            try:
+                response = self.s3_client.put_object(
+                    Bucket=s3_bucket,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=self._get_content_type(filename)
+                )
+                logger.info(f"DEBUG: File uploaded successfully to S3")
+                logger.info(f"DEBUG: S3 upload response ETag: {response.get('ETag', 'none')}")
+                logger.info(f"DEBUG: S3 upload response VersionId: {response.get('VersionId', 'none')}")
+            except Exception as e:
+                logger.error(f"DEBUG: S3 upload failed: {e}")
+                raise DocumentProcessingError(f"S3 upload failed: {e}")
             
             # Wait for S3 object to be available before calling Textract
             logger.info(f"DEBUG: Waiting for S3 object availability before Textract extraction")
-            if not await self._wait_for_s3_object(s3_bucket, s3_key, max_wait=15):
+            if not await self._wait_for_s3_object(s3_bucket, s3_key, max_wait=20):
                 raise DocumentProcessingError(f"S3 object not available after upload: {s3_key}")
             
             logger.info(f"DEBUG: Starting Textract extraction for s3://{s3_bucket}/{s3_key}")
             
-            text_content, page_count = await self.extract_text_from_s3_pdf(
+            # Use retry mechanism for Textract calls
+            text_content, page_count = await self._extract_with_retry(
                 s3_bucket,
                 s3_key,
-                document_type
+                document_type,
+                max_retries=3
             )
             
             try:

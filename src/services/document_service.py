@@ -40,10 +40,8 @@ class DocumentService:
             document_type = self._get_document_type(extension)
             storage_service = get_storage_service()
             
-            # Generate S3 key more efficiently
-            timestamp = int(datetime.utcnow().timestamp())
-            unique_id = str(uuid.uuid4())[:8]
-            s3_key = f"uploaded_documents/{upload_data.user_id}/{timestamp}_{unique_id}{extension}"
+            # Generate S3 key using centralized path generation
+            s3_key = aws_config.generate_document_s3_key(upload_data.user_id, upload_data.filename, document_id)
 
             # Create document record first to avoid waiting for S3 upload
             document = Document(
