@@ -426,7 +426,8 @@ class ChatService:
     async def _get_documents_for_crawl_task(self, task_id: str) -> List:
         """Get documents for a specific crawl task."""
         try:
-            documents = await DocumentService.get_task_documents(task_id)
+            document_service = DocumentService()
+            documents = await document_service.get_task_documents(task_id)
             logger.info(f"[AI] Found {len(documents)} documents for task: {task_id}")
             return documents
         except Exception as e:
