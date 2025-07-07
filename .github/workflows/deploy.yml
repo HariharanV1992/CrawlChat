@@ -100,6 +100,44 @@ jobs:
         
         echo "preprocessor-image=$ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
     
+    - name: Create ECS IAM roles
+      run: |
+        # Create task execution role
+        aws iam create-role \
+          --role-name crawlchat-ecs-task-execution-role \
+          --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+          --region ap-south-1 2>/dev/null || echo "Task execution role already exists"
+        
+        # Attach task execution policy
+        aws iam attach-role-policy \
+          --role-name crawlchat-ecs-task-execution-role \
+          --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy \
+          --region ap-south-1 2>/dev/null || echo "Policy already attached"
+        
+        # Create task role
+        aws iam create-role \
+          --role-name crawlchat-preprocessor-task-role \
+          --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+          --region ap-south-1 2>/dev/null || echo "Task role already exists"
+        
+        # Create custom policy for preprocessor
+        aws iam put-role-policy \
+          --role-name crawlchat-preprocessor-task-role \
+          --policy-name PreprocessorPermissions \
+          --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],"Resource":["arn:aws:s3:::crawlchat-data","arn:aws:s3:::crawlchat-data/*"]},{"Effect":"Allow","Action":["textract:DetectDocumentText","textract:AnalyzeDocument"],"Resource":"*"}]}' \
+          --region ap-south-1 2>/dev/null || echo "Policy already exists"
+        
+        # Wait for roles to be available
+        sleep 10
+
+    - name: Create ECS cluster
+      run: |
+        aws ecs create-cluster --cluster-name crawlchat-cluster --region ap-south-1 2>/dev/null || echo "Cluster already exists"
+
+    - name: Create CloudWatch log group
+      run: |
+        aws logs create-log-group --log-group-name /ecs/crawlchat-preprocessor --region ap-south-1 2>/dev/null || echo "Log group already exists"
+
     - name: Register new ECS task definition for Preprocessor
       id: register-ecs-task
       env:
