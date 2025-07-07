@@ -27,7 +27,7 @@ except ImportError:
         CRAWLER_AVAILABLE = True
     except ImportError:
         CRAWLER_AVAILABLE = False
-        AdvancedCrawler = None
+    AdvancedCrawler = None
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class CrawlerService:
     def __init__(self):
         self.running_tasks = {}  # Track running tasks for cancellation
         self.cancellation_events = {}  # Track cancellation events
-        
+
         # Check if crawler is available
         if not CRAWLER_AVAILABLE:
             logger.warning("AdvancedCrawler not available - crawling functionality disabled")
@@ -133,29 +133,29 @@ class CrawlerService:
         if not CRAWLER_AVAILABLE:
             raise Exception("Crawler functionality not available")
         
-        task = await self.get_task_status(task_id)
-        if not task:
+            task = await self.get_task_status(task_id)
+            if not task:
             raise Exception(f"Task {task_id} not found")
-        
-        if task.status != TaskStatus.PENDING:
+            
+            if task.status != TaskStatus.PENDING:
             raise Exception(f"Task {task_id} is not in pending status")
-        
+            
         # Update task status
-        task.status = TaskStatus.RUNNING
-        task.started_at = datetime.utcnow()
-        
-        # Create cancellation event
-        cancellation_event = asyncio.Event()
-        self.cancellation_events[task_id] = cancellation_event
-        
-        # Start crawl task
-        crawl_task = asyncio.create_task(
-            self._run_crawl_task(task_id, task, cancellation_event)
-        )
-        
-        # Store the running task for cancellation
-        self.running_tasks[task_id] = crawl_task
-        
+            task.status = TaskStatus.RUNNING
+            task.started_at = datetime.utcnow()
+            
+            # Create cancellation event
+            cancellation_event = asyncio.Event()
+            self.cancellation_events[task_id] = cancellation_event
+            
+            # Start crawl task
+            crawl_task = asyncio.create_task(
+                self._run_crawl_task(task_id, task, cancellation_event)
+            )
+            
+            # Store the running task for cancellation
+            self.running_tasks[task_id] = crawl_task
+            
         logger.info(f"Started crawl task {task_id}")
         
         return CrawlStatus(

@@ -149,18 +149,18 @@ class UnifiedPreprocessingService:
             logger.info(f"[UNIFIED_PREPROCESSING] Processing PDF: {filename}")
             
             # Upload PDF to normalized documents bucket
-            normalized_key = f"normalized-documents/{user_id}/{filename}"
+                normalized_key = f"normalized-documents/{user_id}/{filename}"
             
-            if self.s3_client:
-                self.s3_client.put_object(
-                    Bucket=config.s3_bucket,
-                    Key=normalized_key,
-                    Body=pdf_content,
-                    ContentType='application/pdf'
-                )
-            
-            return {
-                "status": "success",
+                if self.s3_client:
+                    self.s3_client.put_object(
+                        Bucket=config.s3_bucket,
+                        Key=normalized_key,
+                        Body=pdf_content,
+                        ContentType='application/pdf'
+                    )
+                
+                return {
+                    "status": "success",
                 "processing_type": ProcessingType.NORMALIZATION.value,
                 "document_type": DocumentType.PDF.value,
                 "normalized_key": normalized_key,
@@ -182,7 +182,7 @@ class UnifiedPreprocessingService:
         This method is deprecated. PDF-to-image conversion is now handled by the Textract service.
         """
         logger.warning("[UNIFIED_PREPROCESSING] PDF-to-image conversion is now handled by Textract service")
-        return []
+            return []
     
     async def _process_image(
         self, 

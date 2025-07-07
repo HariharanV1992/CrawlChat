@@ -23,19 +23,23 @@ class AdvancedCrawler:
     Advanced web crawler with ScrapingBee integration and smart JavaScript rendering control.
     """
     
-    def __init__(self, api_key: str, output_dir: str = "crawled_data", max_depth: int = 2, 
+    def __init__(self, api_key: str, base_url: str, output_dir: str = "crawled_data", max_depth: int = 2, 
                  max_pages: int = 50, delay: float = 1.0, site_type: str = 'generic'):
         self.api_key = api_key
+        self.base_url = base_url
         self.output_dir = output_dir
         self.max_depth = max_depth
         self.max_pages = max_pages
         self.delay = delay
         self.site_type = site_type
         
+        # Extract domain from base_url
+        self.domain = urlparse(base_url).netloc
+        
         # Initialize components
         self.proxy_manager = ScrapingBeeProxyManager(api_key)
-        self.link_extractor = LinkExtractor()
-        self.file_downloader = FileDownloader()
+        self.link_extractor = LinkExtractor(self.domain)
+        self.file_downloader = FileDownloader(self.output_dir)
         self.settings_manager = SettingsManager()
         
         # Crawling state
