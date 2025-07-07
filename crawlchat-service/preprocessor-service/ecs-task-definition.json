@@ -4,12 +4,12 @@
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "1024",
   "memory": "2048",
-  "executionRoleArn": "arn:aws:iam::169164939839:role/ecsTaskExecutionRole",
-  "taskRoleArn": "arn:aws:iam::169164939839:role/pdf-preprocessor-task-role",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/pdf-preprocessor-task-role",
   "containerDefinitions": [
     {
       "name": "pdf-preprocessor",
-      "image": "169164939839.dkr.ecr.ap-south-1.amazonaws.com/pdf-preprocessor:latest",
+      "image": "ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com/pdf-preprocessor:latest",
       "essential": true,
       "environment": [
         {
@@ -17,8 +17,12 @@
           "value": "ap-south-1"
         },
         {
+          "name": "S3_BUCKET",
+          "value": "YOUR_S3_BUCKET"
+        },
+        {
           "name": "SQS_QUEUE_URL",
-          "value": "https://sqs.ap-south-1.amazonaws.com/169164939839/pdf-preprocess-queue"
+          "value": "https://sqs.ap-south-1.amazonaws.com/ACCOUNT_ID/pdf-preprocess-queue"
         }
       ],
       "logConfiguration": {

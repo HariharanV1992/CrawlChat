@@ -8,7 +8,7 @@ set -e
 # Configuration
 AWS_REGION="ap-south-1"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-S3_BUCKET="crawlchat-data"  # Your actual S3 bucket
+S3_BUCKET="stock-market-crawler-data"  # Updated to match your actual bucket
 ECR_REPOSITORY="pdf-preprocessor"
 ECS_CLUSTER="pdf-preprocessing-cluster"
 ECS_SERVICE="pdf-preprocessor-service"
@@ -109,18 +109,32 @@ EOF
 
 aws iam put-role-policy --role-name pdf-preprocessor-task-role --policy-name pdf-preprocessor-policy --policy-document file://task-role-policy.json
 
-# Step 7: Update task definition
+# Step 7: Discover VPC resources
+echo "🔍 Discovering VPC resources..."
+DEFAULT_VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text --region $AWS_REGION)
+echo "Default VPC: $DEFAULT_VPC_ID"
+
+# Get public subnets
+SUBNET_IDS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$DEFAULT_VPC_ID" "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[*].SubnetId' --output text --region $AWS_REGION)
+SUBNET_ID=$(echo $SUBNET_IDS | cut -d' ' -f1)
+echo "Using subnet: $SUBNET_ID"
+
+# Get default security group
+SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$DEFAULT_VPC_ID" "Name=group-name,Values=default" --query 'SecurityGroups[0].GroupId' --output text --region $AWS_REGION)
+echo "Using security group: $SECURITY_GROUP_ID"
+
+# Step 8: Update task definition
 echo "📋 Updating ECS task definition..."
 sed -i "s/ACCOUNT_ID/$ACCOUNT_ID/g" ecs-task-definition.json
 sed -i "s/YOUR_S3_BUCKET/$S3_BUCKET/g" ecs-task-definition.json
 
 aws ecs register-task-definition --cli-input-json file://ecs-task-definition.json
 
-# Step 8: Create ECS Cluster
+# Step 9: Create ECS Cluster
 echo "🏗️ Creating ECS cluster..."
 aws ecs create-cluster --cluster-name $ECS_CLUSTER --region $AWS_REGION || echo "Cluster already exists"
 
-# Step 9: Create ECS Service
+# Step 10: Create ECS Service
 echo "🚀 Creating ECS service..."
 cat > service-definition.json << EOF
 {
@@ -131,8 +145,8 @@ cat > service-definition.json << EOF
   "launchType": "FARGATE",
   "networkConfiguration": {
     "awsvpcConfiguration": {
-      "subnets": ["subnet-06c6fea962ae73e48"],
-      "securityGroups": ["sg-025568b6da190067d"],
+      "subnets": ["$SUBNET_ID"],
+      "securityGroups": ["$SECURITY_GROUP_ID"],
       "assignPublicIp": "ENABLED"
     }
   }
@@ -141,7 +155,7 @@ EOF
 
 aws ecs create-service --cli-input-json file://service-definition.json --region $AWS_REGION || echo "Service already exists"
 
-# Step 10: Set up S3 Event Notification
+# Step 11: Set up S3 Event Notification
 echo "🔔 Setting up S3 event notification..."
 QUEUE_URL=$(aws sqs get-queue-url --queue-name pdf-preprocess-queue --region $AWS_REGION --query QueueUrl --output text)
 QUEUE_ARN=$(aws sqs get-queue-attributes --queue-url $QUEUE_URL --attribute-names QueueArn --region $AWS_REGION --query Attributes.QueueArn --output text)
@@ -183,6 +197,9 @@ echo "  - ECS Cluster: $ECS_CLUSTER"
 echo "  - ECS Service: $ECS_SERVICE"
 echo "  - SQS Queue: pdf-preprocess-queue"
 echo "  - S3 Bucket: $S3_BUCKET"
+echo "  - VPC: $DEFAULT_VPC_ID"
+echo "  - Subnet: $SUBNET_ID"
+echo "  - Security Group: $SECURITY_GROUP_ID"
 echo ""
 echo "🔍 Monitor the deployment:"
 echo "  - ECS Service: https://console.aws.amazon.com/ecs/home?region=$AWS_REGION#/clusters/$ECS_CLUSTER/services/$ECS_SERVICE"
