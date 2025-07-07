@@ -465,8 +465,24 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Final fallback failed for {filename}: {e}")
         
+        # Return user-friendly error message instead of technical description
         logger.error(f"All PDF extraction methods failed for {filename}")
-        return f"Could not extract text from PDF: {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n- AWS Textract is not available or configured\n\nPlease try uploading a text-based PDF or a different document format."
+        return self._get_user_friendly_pdf_error_message(filename)
+    
+    def _get_user_friendly_pdf_error_message(self, filename: str) -> str:
+        """Generate a user-friendly error message for PDF extraction failures."""
+        return (
+            f"I'm unable to read the content from '{filename}'. This could be because:\n\n"
+            "• The PDF is a scanned document (image-based)\n"
+            "• The PDF is password-protected\n"
+            "• The PDF is corrupted or damaged\n"
+            "• The PDF contains only images without text\n\n"
+            "To help you better, please try:\n"
+            "• Uploading a text-based PDF (not scanned)\n"
+            "• Converting the PDF to text format first\n"
+            "• Using a different document format (Word, text file, etc.)\n"
+            "• Checking if the PDF is password-protected and removing the password"
+        )
     
     async def _extract_text_with_ocr(self, content: bytes, filename: str) -> str:
         """Extract text from PDF using AWS Textract for scanned documents."""
@@ -781,100 +797,6 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error checking page limit for user {user_id}: {e}")
             return False
-
-    async def process_preprocessed_document(self, document_id: str, user_id: str, preprocessed_s3_key: str) -> DocumentProcessResponse:
-        """Process a document that has been preprocessed by the preprocessing service."""
-        try:
-            await mongodb.connect()
-            
-            start_time = datetime.utcnow()
-            
-            # Get document data
-            doc_data = await mongodb.get_collection("documents").find_one({"document_id": document_id, "user_id": user_id})
-            if not doc_data:
-                raise DocumentProcessingError("Document not found")
-
-            document = Document(**doc_data)
-            
-            # Update status to processing
-            await mongodb.get_collection("documents").update_one(
-                {"document_id": document.document_id},
-                {"$set": {"status": DocumentStatus.PROCESSING}}
-            )
-
-            # Extract content from preprocessed document using Textract
-            content = await self._extract_preprocessed_content(preprocessed_s3_key, document.filename)
-            
-            # Generate summary and key points in parallel
-            summary_task = self._generate_summary(content, None)
-            key_points_task = self._extract_key_points(content)
-            
-            summary, key_points = await asyncio.gather(summary_task, key_points_task)
-
-            # Update document with all changes at once
-            update_data = {
-                "content": content,
-                "summary": summary,
-                "key_points": key_points,
-                "status": DocumentStatus.PROCESSED,
-                "processed_at": datetime.utcnow(),
-                "preprocessed_s3_key": preprocessed_s3_key
-            }
-            
-            await mongodb.get_collection("documents").update_one(
-                {"document_id": document.document_id},
-                {"$set": update_data}
-            )
-            
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
-            logger.info(f"Processed preprocessed document {document.document_id} in {processing_time:.2f}s")
-            
-            return DocumentProcessResponse(
-                document_id=document.document_id,
-                status=DocumentStatus.PROCESSED,
-                content=content,
-                summary=summary,
-                key_points=key_points,
-                processing_time=processing_time
-            )
-            
-        except Exception as e:
-            logger.error(f"Error processing preprocessed document: {e}")
-            raise DocumentProcessingError(f"Failed to process preprocessed document: {e}")
-
-    async def _extract_preprocessed_content(self, s3_key: str, filename: str) -> str:
-        """Extract content from a preprocessed document using Textract."""
-        try:
-            from common.src.services.aws_textract_service import textract_service, DocumentType
-            
-            logger.info(f"Extracting content from preprocessed document: {s3_key}")
-            
-            # Determine document type
-            document_type = DocumentType.GENERAL
-            filename_lower = filename.lower()
-            if any(keyword in filename_lower for keyword in ['form', 'invoice', 'receipt', 'tax', 'w2', '1099']):
-                document_type = DocumentType.FORM
-                logger.info(f"Detected form/invoice document: {filename}")
-            
-            # Process with Textract
-            bucket_name = aws_config.s3_bucket
-            text_content, page_count = await textract_service.process_preprocessed_document(
-                bucket_name, s3_key, document_type
-            )
-            
-            # Store page count for later use
-            self._last_page_count = page_count
-            
-            if text_content and text_content.strip():
-                logger.info(f"Successfully extracted {len(text_content)} characters from preprocessed document: {filename}")
-                return text_content
-            else:
-                logger.warning(f"No content extracted from preprocessed document: {filename}")
-                return f"Could not extract text from preprocessed document: {filename}"
-                
-        except Exception as e:
-            logger.error(f"Error extracting content from preprocessed document {s3_key}: {e}")
-            return f"Error extracting content from preprocessed document: {e}"
 
 # Global instance
 document_service = DocumentService() 
