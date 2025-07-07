@@ -100,99 +100,21 @@ jobs:
         
         echo "preprocessor-image=$ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
     
-    - name: Create ECS IAM roles
+    - name: Update ECS Preprocessor Service (if infrastructure exists)
       run: |
-        # Create task execution role
-        aws iam create-role \
-          --role-name crawlchat-ecs-task-execution-role \
-          --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
-          --region ap-south-1 2>/dev/null || echo "Task execution role already exists"
-        
-        # Attach task execution policy
-        aws iam attach-role-policy \
-          --role-name crawlchat-ecs-task-execution-role \
-          --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy \
-          --region ap-south-1 2>/dev/null || echo "Policy already attached"
-        
-        # Create task role
-        aws iam create-role \
-          --role-name crawlchat-preprocessor-task-role \
-          --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
-          --region ap-south-1 2>/dev/null || echo "Task role already exists"
-        
-        # Create custom policy for preprocessor
-        aws iam put-role-policy \
-          --role-name crawlchat-preprocessor-task-role \
-          --policy-name PreprocessorPermissions \
-          --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],"Resource":["arn:aws:s3:::crawlchat-data","arn:aws:s3:::crawlchat-data/*"]},{"Effect":"Allow","Action":["textract:DetectDocumentText","textract:AnalyzeDocument"],"Resource":"*"}]}' \
-          --region ap-south-1 2>/dev/null || echo "Policy already exists"
-        
-        # Wait longer for roles to be fully propagated
-        echo "Waiting for IAM roles to be fully propagated..."
-        sleep 30
-        
-        # Verify roles exist and are accessible
-        aws iam get-role --role-name crawlchat-ecs-task-execution-role --region ap-south-1
-        aws iam get-role --role-name crawlchat-preprocessor-task-role --region ap-south-1
-
-    - name: Create ECS cluster
-      run: |
-        aws ecs create-cluster --cluster-name crawlchat-cluster --region ap-south-1 2>/dev/null || echo "Cluster already exists"
-
-    - name: Create CloudWatch log group
-      run: |
-        aws logs create-log-group --log-group-name /ecs/crawlchat-preprocessor --region ap-south-1 2>/dev/null || echo "Log group already exists"
-
-    - name: Register new ECS task definition for Preprocessor
-      id: register-ecs-task
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        cat > preprocessor-task-def.json <<EOF
-        {
-          "family": "crawlchat-preprocessor-task",
-          "networkMode": "awsvpc",
-          "requiresCompatibilities": ["FARGATE"],
-          "cpu": "1024",
-          "memory": "2048",
-          "executionRoleArn": "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/crawlchat-ecs-task-execution-role",
-          "taskRoleArn": "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/crawlchat-preprocessor-task-role",
-          "containerDefinitions": [
-            {
-              "name": "preprocessor",
-              "image": "${{ steps.login-ecr.outputs.registry }}/crawlchat-preprocessor:${{ github.sha }}",
-              "essential": true,
-              "portMappings": [
-                { "containerPort": 8000, "protocol": "tcp" }
-              ],
-              "environment": [
-                { "name": "AWS_REGION", "value": "ap-south-1" },
-                { "name": "S3_BUCKET", "value": "crawlchat-data" }
-              ],
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/crawlchat-preprocessor",
-                  "awslogs-region": "ap-south-1",
-                  "awslogs-stream-prefix": "ecs"
-                }
-              }
-            }
-          ]
-        }
-        EOF
-        aws ecs register-task-definition --cli-input-json file://preprocessor-task-def.json --region ap-south-1
-
-    - name: Update ECS Preprocessor Service
-      run: |
-        NEW_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition crawlchat-preprocessor-task --region ap-south-1 --query 'taskDefinition.taskDefinitionArn' --output text)
-        aws ecs update-service \
-          --cluster crawlchat-cluster \
-          --service crawlchat-preprocessor \
-          --task-definition $NEW_TASK_DEF_ARN \
-          --force-new-deployment \
-          --region ap-south-1
+        # Only update if the service exists
+        if aws ecs describe-services --cluster crawlchat-cluster --services crawlchat-preprocessor --region ap-south-1 --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
+          echo "Updating ECS preprocessor service..."
+          NEW_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition crawlchat-preprocessor-task --region ap-south-1 --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service \
+            --cluster crawlchat-cluster \
+            --service crawlchat-preprocessor \
+            --task-definition $NEW_TASK_DEF_ARN \
+            --force-new-deployment \
+            --region ap-south-1
+        else
+          echo "⚠️ ECS preprocessor service not found. Run create_preprocessor_service.sh first to set up infrastructure."
+        fi
     
     - name: Update Lambda function code
       run: |
@@ -207,54 +129,17 @@ jobs:
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
           --region ${{ env.AWS_REGION }}
     
-    - name: Create Crawler Lambda function if it doesn't exist
+    - name: Update Crawler function code (if exists)
       run: |
-        # Check if crawler function exists
-        if ! aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
-          echo "Creating crawler Lambda function..."
-          
-          # Create IAM role for crawler if it doesn't exist
-          aws iam create-role \
-            --role-name crawlchat-crawler-role \
-            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
-            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Crawler role already exists"
-          
-          # Attach basic Lambda execution policy
-          aws iam attach-role-policy \
-            --role-name crawlchat-crawler-role \
-            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole \
-            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Policy already attached"
-          
-          # Create custom policy for crawler
-          aws iam put-role-policy \
-            --role-name crawlchat-crawler-role \
-            --policy-name CrawlerPermissions \
-            --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::crawlchat-data","arn:aws:s3:::crawlchat-data/*"]},{"Effect":"Allow","Action":["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],"Resource":"*"}]}' \
-            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Policy already exists"
-          
-          # Wait for role to be available
-          sleep 10
-          
-          # Get role ARN
-          ROLE_ARN=$(aws iam get-role --role-name crawlchat-crawler-role --query 'Role.Arn' --output text --region ${{ env.AWS_REGION }})
-          
-          # Create Lambda function
-          aws lambda create-function \
-            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-            --package-type Image \
-            --code ImageUri=${{ steps.build-crawler.outputs.crawler-image }} \
-            --role $ROLE_ARN \
-            --memory-size 1024 \
-            --timeout 60 \
-            --region ${{ env.AWS_REGION }}
-          
-          echo "Crawler Lambda function created successfully!"
-        else
-          echo "Crawler Lambda function already exists, updating code..."
+        # Only update if the function exists
+        if aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          echo "Updating crawler Lambda function..."
           aws lambda update-function-code \
             --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
             --image-uri ${{ steps.build-crawler.outputs.crawler-image }} \
             --region ${{ env.AWS_REGION }}
+        else
+          echo "⚠️ Crawler Lambda function not found. Run create_crawler_function.sh first to set up infrastructure."
         fi
     
     - name: Wait for Crawler update
