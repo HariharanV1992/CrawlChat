@@ -127,8 +127,13 @@ jobs:
           --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],"Resource":["arn:aws:s3:::crawlchat-data","arn:aws:s3:::crawlchat-data/*"]},{"Effect":"Allow","Action":["textract:DetectDocumentText","textract:AnalyzeDocument"],"Resource":"*"}]}' \
           --region ap-south-1 2>/dev/null || echo "Policy already exists"
         
-        # Wait for roles to be available
-        sleep 10
+        # Wait longer for roles to be fully propagated
+        echo "Waiting for IAM roles to be fully propagated..."
+        sleep 30
+        
+        # Verify roles exist and are accessible
+        aws iam get-role --role-name crawlchat-ecs-task-execution-role --region ap-south-1
+        aws iam get-role --role-name crawlchat-preprocessor-task-role --region ap-south-1
 
     - name: Create ECS cluster
       run: |
@@ -202,12 +207,55 @@ jobs:
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
           --region ${{ env.AWS_REGION }}
     
-    - name: Update Crawler function code
+    - name: Create Crawler Lambda function if it doesn't exist
       run: |
-        aws lambda update-function-code \
-          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-          --image-uri ${{ steps.build-crawler.outputs.crawler-image }} \
-          --region ${{ env.AWS_REGION }}
+        # Check if crawler function exists
+        if ! aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          echo "Creating crawler Lambda function..."
+          
+          # Create IAM role for crawler if it doesn't exist
+          aws iam create-role \
+            --role-name crawlchat-crawler-role \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Crawler role already exists"
+          
+          # Attach basic Lambda execution policy
+          aws iam attach-role-policy \
+            --role-name crawlchat-crawler-role \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Policy already attached"
+          
+          # Create custom policy for crawler
+          aws iam put-role-policy \
+            --role-name crawlchat-crawler-role \
+            --policy-name CrawlerPermissions \
+            --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::crawlchat-data","arn:aws:s3:::crawlchat-data/*"]},{"Effect":"Allow","Action":["ecr:GetAuthorizationToken","ecr:BatchCheckLayerAvailability","ecr:GetDownloadUrlForLayer","ecr:BatchGetImage"],"Resource":"*"}]}' \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Policy already exists"
+          
+          # Wait for role to be available
+          sleep 10
+          
+          # Get role ARN
+          ROLE_ARN=$(aws iam get-role --role-name crawlchat-crawler-role --query 'Role.Arn' --output text --region ${{ env.AWS_REGION }})
+          
+          # Create Lambda function
+          aws lambda create-function \
+            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+            --package-type Image \
+            --code ImageUri=${{ steps.build-crawler.outputs.crawler-image }} \
+            --role $ROLE_ARN \
+            --memory-size 1024 \
+            --timeout 60 \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "Crawler Lambda function created successfully!"
+        else
+          echo "Crawler Lambda function already exists, updating code..."
+          aws lambda update-function-code \
+            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+            --image-uri ${{ steps.build-crawler.outputs.crawler-image }} \
+            --region ${{ env.AWS_REGION }}
+        fi
     
     - name: Wait for Crawler update
       run: |
