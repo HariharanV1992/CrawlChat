@@ -17,10 +17,10 @@ from common.src.core.config import config
 from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
 
-# Import crawler modules (these will need to be moved to src/crawler/ later)
+# Import crawler modules
 try:
-    from common.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-    from common.src.crawler.settings_manager import SettingsManager
+    from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+    from src.crawler.settings_manager import SettingsManager
 except ImportError:
     # Fallback for when crawler modules are not yet migrated
     AdvancedCrawler = None

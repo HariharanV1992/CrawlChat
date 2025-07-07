@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from common.src.core.logging import setup_logging
 from common.src.core.config import get_settings
 from common.src.services.crawler_service import crawler_service
-from common.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
 
 # Setup logging
 setup_logging()
