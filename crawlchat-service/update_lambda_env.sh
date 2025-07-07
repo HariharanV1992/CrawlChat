@@ -13,8 +13,8 @@ ENV_VARS='{
   "Variables": {
     "ENVIRONMENT": "production",
     "S3_BUCKET": "crawlchat-data",
-    "MONGODB_URI": "mongodb+srv://hariharanv:welcome030219@financedata.doarsxf.mongodb.net/?retryWrites=true&w=majority&appName=FinanceData",
-    "OPENAI_API_KEY": "",
+    "MONGODB_URI": "YOUR_MONGODB_URI_HERE",
+    "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE",
     "DB_NAME": "stock_market_crawler",
     "COLLECTION_PREFIX": "crawler",
     "OPENAI_MODEL": "gpt-4o-mini",
@@ -40,7 +40,7 @@ ENV_VARS='{
     "PROXY_API_KEY": "YOUR_PROXY_API_KEY_HERE",
     "USE_PROXY": "true",
     "SCRAPERAPI_BASE": "http://api.scraperapi.com/",
-    "SCRAPINGBEE_API_KEY": "W9GZ5T0DYMJFB2Y7MATVWN0NGQRUTFKJLTU0DY6HJH2D01RE1YNG1FBX4951CO9WQD4OKD5O62ICX31O"
+    "SCRAPINGBEE_API_KEY": "YOUR_SCRAPINGBEE_API_KEY_HERE"
   }
 }'
 
