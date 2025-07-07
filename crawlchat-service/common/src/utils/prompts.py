@@ -324,9 +324,10 @@ When analyzing documents or providing insights:
 • Provide clear, well-structured responses that are easy to understand
 • Use bullet points or numbered lists when it helps organize information
 • Share observations, trends, patterns, or comparisons when relevant
-• Be conversational and engaging while remaining professional
-• If you notice interesting details or implications, feel free to mention them
-• Keep responses concise but comprehensive
+• Be conversational while remaining professional
+• If you notice interesting details or implications, mention them briefly
+• Keep responses concise and focused - avoid unnecessary verbosity
+• Do NOT provide recaps or summaries unless specifically requested
 
 Example approach:
 - "Looking at the compensation structure, I can see..."
@@ -349,6 +350,7 @@ When responding to questions about documents:
 • Be conversational while maintaining accuracy and relevance
 • If the document contains specific data, numbers, or facts, reference them directly
 • Focus on answering the user's specific question rather than making assumptions about what they want
+• Keep responses concise and to the point - avoid unnecessary verbosity
 
 IMPORTANT GUIDELINES:
 • Do NOT assume the document is financial or stock market related unless specifically asked
@@ -357,6 +359,8 @@ IMPORTANT GUIDELINES:
 • If the document contains code, technical specifications, or non-financial content, analyze that appropriately
 • Provide relevant insights based on the actual document content
 • If the user asks about specific aspects (financial, technical, legal, etc.), focus on those areas
+• Do NOT provide recaps or summaries unless specifically requested
+• Do NOT offer additional help unless the user asks for it
 
 Example approaches:
 - "The document contains [specific content type] with the following key points..."
@@ -418,7 +422,7 @@ Example summary structure:
 - "Important Information: [Specific data, facts, or requirements]"
 - "Summary: [Overall purpose and main takeaways]"
 
-Provide summaries that accurately reflect the document content and help users understand the key information, regardless of the document type."""
+Provide summaries that accurately reflect the document content and help users understand the key information, regardless of the document type. Keep summaries concise and focused on the most important points."""
 
     @staticmethod
     def get_technical_document_prompt() -> str:
@@ -549,6 +553,28 @@ Example responses:
 Provide accurate calculations with clear explanations that help users understand the numbers."""
 
     @staticmethod
+    def get_simple_acknowledgment_prompt() -> str:
+        """Get prompt for simple acknowledgments and short responses"""
+        return """You are a helpful AI assistant that responds appropriately to simple acknowledgments and short user inputs.
+
+When the user provides simple acknowledgments like "thank you", "ok", "good", "thanks", etc.:
+
+• Respond with a simple, brief acknowledgment
+• Do NOT provide recaps, summaries, or additional information
+• Do NOT repeat previous information
+• Do NOT offer to help with more questions unless specifically asked
+• Keep responses short and natural
+
+Examples of appropriate responses:
+- "You're welcome!"
+- "Glad I could help!"
+- "Anytime!"
+- "Great!"
+- "Perfect!"
+
+CRITICAL: For simple acknowledgments, respond with ONLY 1-3 words. Do not be verbose or helpful beyond what's needed."""
+
+    @staticmethod
     def detect_query_type(user_query: str) -> str:
         """Detect the type of query to determine appropriate prompt"""
         query_lower = user_query.lower()
@@ -571,37 +597,42 @@ Provide accurate calculations with clear explanations that help users understand
         
         # Market education keywords
         market_education_keywords = [
-            'learn', 'teach', 'explain', 'how to', 'what is', 'concept', 'basics',
-            'beginner', 'tutorial', 'guide', 'education', 'understanding', 'knowledge',
-            'investment', 'trading', 'market', 'stock market', 'sebi', 'nse', 'bse'
+            'learn about', 'teach me', 'explain how', 'how to invest', 'how to trade', 'what is stock', 'concept of', 'basics of',
+            'beginner guide', 'tutorial on', 'education about', 'understanding of', 'knowledge about',
+            'investment basics', 'trading basics', 'market basics', 'stock market basics', 'sebi basics', 'nse basics', 'bse basics'
         ]
         
         # Investment guidance keywords
         investment_guidance_keywords = [
-            'advice', 'guidance', 'recommend', 'suggest', 'portfolio', 'investment',
-            'strategy', 'planning', 'asset allocation', 'diversification', 'risk',
-            'return', 'mutual fund', 'sip', 'tax', 'retirement', 'financial planning'
+            'investment advice', 'financial advice', 'portfolio advice', 'investment guidance', 'financial guidance',
+            'recommend investment', 'suggest investment', 'portfolio strategy', 'investment strategy',
+            'asset allocation advice', 'diversification advice', 'risk management', 'investment planning',
+            'retirement planning', 'financial planning advice', 'mutual fund advice', 'sip advice'
         ]
         
         # Market research keywords
         market_research_keywords = [
-            'research', 'study', 'report', 'sector', 'industry', 'market trend',
-            'economic', 'policy', 'government', 'rbi', 'regulation', 'reform',
-            'global', 'international', 'commodity', 'currency', 'inflation', 'gdp'
+            'market research', 'sector research', 'industry research', 'market study', 'sector study',
+            'market report', 'sector report', 'industry report', 'market trend analysis',
+            'economic research', 'economic study', 'policy research', 'government policy',
+            'rbi policy', 'regulation research', 'reform study', 'global market', 'international market',
+            'commodity research', 'currency research', 'inflation research', 'gdp research'
         ]
         
         # Technical analysis keywords
         technical_analysis_keywords = [
-            'chart', 'technical', 'pattern', 'indicator', 'trend', 'momentum',
-            'volume', 'price action', 'candlestick', 'support', 'resistance',
-            'breakout', 'breakdown', 'fibonacci', 'elliot wave', 'oscillator'
+            'technical chart', 'chart pattern', 'technical pattern', 'technical indicator', 'chart indicator',
+            'technical trend', 'chart trend', 'technical momentum', 'volume analysis', 'price action analysis',
+            'candlestick pattern', 'support level', 'resistance level', 'breakout pattern', 'breakdown pattern',
+            'fibonacci retracement', 'elliot wave', 'oscillator indicator', 'technical analysis'
         ]
         
         # News analysis keywords
         news_analysis_keywords = [
-            'news', 'announcement', 'result', 'quarterly', 'annual', 'update',
-            'policy', 'decision', 'impact', 'effect', 'reaction', 'sentiment',
-            'rumor', 'speculation', 'expert', 'analyst', 'report'
+            'news analysis', 'news impact', 'announcement impact', 'quarterly result', 'annual result',
+            'policy announcement', 'decision impact', 'news effect', 'market reaction', 'sentiment analysis',
+            'news rumor', 'market speculation', 'expert opinion', 'analyst report', 'news report',
+            'earnings announcement', 'corporate news', 'market news'
         ]
         
         # Market crash and historical event keywords
@@ -620,7 +651,8 @@ Provide accurate calculations with clear explanations that help users understand
             'calculate', 'salary', 'take home', 'take-home', 'gross', 'net', 'deduction',
             'monthly', 'annual', 'yearly', 'per month', 'per year', 'amount', 'total',
             'compensation', 'pay', 'income', 'earnings', 'bonus', 'increment', 'how much',
-            'what is the', 'compute', 'figure out', 'in month', 'month', 'need in',
+            'what is the salary', 'what is the pay', 'what is the compensation',
+            'compute', 'figure out', 'in month', 'month', 'need in',
             'calculation', 'calcualtion', 'correct', 'wrong', 'fix', 'accurate'
         ]
         
@@ -635,14 +667,23 @@ Provide accurate calculations with clear explanations that help users understand
         summary_keywords = [
             'summarize', 'summary', 'overview', 'brief', 'main points', 'key points',
             'highlight', 'outline', 'describe', 'explain', 'what is', 'tell me about',
-            'give me a', 'provide a', 'create a summary'
+            'give me a', 'provide a', 'create a summary', 'what mainly', 'what mainly said',
+            'what does it say', 'what does this say', 'what is this about', 'what is it about'
+        ]
+        
+        # Simple acknowledgment keywords
+        simple_acknowledgment_keywords = [
+            'thank you', 'thanks', 'ok', 'okay', 'good', 'great', 'perfect', 'fine',
+            'alright', 'sure', 'yes', 'no', 'yep', 'nope', 'cool', 'awesome',
+            'excellent', 'wonderful', 'fantastic', 'amazing', 'brilliant',
+            'that\'s it', 'that is it', 'done', 'finished', 'complete'
         ]
         
         # Concise response keywords
         concise_keywords = [
-            'one line', 'one sentence', 'brief', 'short', 'concise', 'quick',
+            'one line', 'one sentence', 'brief answer', 'short answer', 'concise answer', 'quick answer',
             'in brief', 'summarize in one line', 'one word', 'simple answer',
-            'just tell me', 'direct answer', 'straight answer', 'simple'
+            'just tell me', 'direct answer', 'straight answer', 'simple answer'
         ]
         
         # Technical document keywords (more specific)
@@ -671,9 +712,18 @@ Provide accurate calculations with clear explanations that help users understand
             'textbook', 'manual', 'handbook', 'reference book'
         ]
         
-        # Check for concise response requests first (highest priority)
-        if any(keyword in query_lower for keyword in concise_keywords):
+        # Check for simple acknowledgments first (highest priority)
+        if any(keyword in query_lower for keyword in simple_acknowledgment_keywords):
+            return 'simple_acknowledgment'
+        # Check for concise response requests
+        elif any(keyword in query_lower for keyword in concise_keywords):
             return 'concise_response'
+        # Check for calculation queries (high priority)
+        elif any(keyword in query_lower for keyword in calculation_keywords):
+            # Check if it's also a multi-year query
+            if any(keyword in query_lower for keyword in multi_year_keywords):
+                return 'multi_year_calculation'
+            return 'calculation'
         # Check for technical document queries (before market education)
         elif any(keyword in query_lower for keyword in technical_keywords):
             return 'technical_document'
@@ -701,13 +751,6 @@ Provide accurate calculations with clear explanations that help users understand
         elif any(keyword in query_lower for keyword in news_analysis_keywords):
             return 'news_analysis'
         
-        # Check for calculation queries
-        if any(keyword in query_lower for keyword in calculation_keywords):
-            # Check if it's also a multi-year query
-            if any(keyword in query_lower for keyword in multi_year_keywords):
-                return 'multi_year_calculation'
-            return 'calculation'
-        
         # Check for summary queries
         if any(keyword in query_lower for keyword in summary_keywords):
             return 'summary'
@@ -720,7 +763,9 @@ Provide accurate calculations with clear explanations that help users understand
         """Get the appropriate prompt based on the user's query"""
         query_type = PromptManager.detect_query_type(user_query)
         
-        if query_type == 'concise_response':
+        if query_type == 'simple_acknowledgment':
+            return PromptManager.get_simple_acknowledgment_prompt()
+        elif query_type == 'concise_response':
             return PromptManager.get_concise_response_prompt()
         elif query_type == 'market_crash_analysis':
             return PromptManager.get_market_crash_analysis_prompt()

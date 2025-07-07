@@ -25,17 +25,56 @@ try:
     # Try to import from lambda-service crawler directory
     import sys
     import os
-    # Add lambda-service src to path
-    lambda_src_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src')
-    if lambda_src_path not in sys.path:
-        sys.path.insert(0, lambda_src_path)
     
-    from crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-    from crawler.settings_manager import SettingsManager
-    logger.info("Successfully imported AdvancedCrawler and related modules")
+    # Try multiple possible paths for the crawler modules
+    possible_paths = [
+        # Path for Lambda deployment
+        "/var/task/src",
+        # Path for local development
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src'),
+        # Path for common module structure
+        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src'),
+        # Current directory
+        os.getcwd(),
+        # Lambda task root
+        "/var/task",
+        # Additional Lambda paths
+        "/var/task/lambda-service/src",
+        "/var/task/crawlchat-service/lambda-service/src"
+    ]
+    
+    crawler_imported = False
+    for path in possible_paths:
+        logger.info(f"Trying path: {path}")
+        if os.path.exists(path):
+            logger.info(f"Path exists: {path}")
+            if path not in sys.path:
+                sys.path.insert(0, path)
+                logger.info(f"Added {path} to sys.path")
+            
+            try:
+                from crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+                from crawler.settings_manager import SettingsManager
+                logger.info(f"Successfully imported AdvancedCrawler and related modules from {path}")
+                crawler_imported = True
+                break
+            except ImportError as e:
+                logger.warning(f"Import failed from {path}: {e}")
+                # Remove the path if import failed
+                if path in sys.path:
+                    sys.path.remove(path)
+                continue
+        else:
+            logger.info(f"Path does not exist: {path}")
+    
+    if not crawler_imported:
+        raise ImportError("Could not find crawler modules in any of the expected paths")
+        
 except ImportError as e:
     # Fallback for when crawler modules are not available
     logger.error(f"Failed to import crawler modules: {e}")
+    logger.error(f"Current working directory: {os.getcwd()}")
+    logger.error(f"Python path: {sys.path}")
     AdvancedCrawler = None
     CrawlConfig = None
     SettingsManager = None
