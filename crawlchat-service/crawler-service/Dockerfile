@@ -4,8 +4,8 @@ FROM public.ecr.aws/lambda/python:3.10
 # Install system dependencies for web crawling
 RUN yum update -y && yum clean all
 
-# Copy requirements file
-COPY requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+# Copy requirements file (Docker-specific, excludes local packages)
+COPY requirements-docker.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 # Copy crawler code
