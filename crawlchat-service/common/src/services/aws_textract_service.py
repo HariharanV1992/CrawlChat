@@ -533,39 +533,26 @@ class AWSTextractService:
         user_id: str
     ) -> (str, int):
         """
-        Hybrid PDF extraction: Try local methods first, then Textract as fallback.
+        Hybrid PDF extraction: Skip local methods and always use Textract for testing.
         """
-        logger.info(f"Starting hybrid PDF extraction for {filename}")
+        logger.info(f"Starting Textract-only PDF extraction for {filename}")
 
-        # Step 1: Local extraction
+        # Skip local extraction and go directly to Textract
         try:
-            logger.info(f"🔄 Step 1: Attempting local extraction for {filename}")
-            text_content, page_count = await self._fallback_pdf_extraction(file_content, filename, user_id)
-            if text_content and len(text_content.strip()) > 50:
-                logger.info(f"✅ Local extraction successful: {len(text_content)} characters")
-                logger.info(f"📄 First 100 chars: {text_content[:100]}")
-                return text_content, page_count
-            else:
-                logger.warning(f"⚠ Local extraction minimal content ({len(text_content.strip())} chars), trying Textract")
-        except Exception as e:
-            logger.warning(f"⚠ Local extraction failed: {e}, trying Textract")
-
-        # Step 2: Textract fallback
-        try:
-            logger.info(f"🔄 Step 2: Attempting Textract fallback for {filename}")
+            logger.info(f"🔄 Using Textract directly for {filename} (skipping local extraction)")
             text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
             if text_content and len(text_content.strip()) > 10:
-                logger.info(f"✅ Textract fallback successful: {len(text_content)} characters")
+                logger.info(f"✅ Textract extraction successful: {len(text_content)} characters")
                 logger.info(f"📄 First 100 chars: {text_content[:100]}")
                 return text_content, page_count
             else:
                 logger.warning(f"⚠ Textract returned minimal content ({len(text_content.strip())} chars)")
         except Exception as e:
-            logger.warning(f"⚠ Textract fallback failed: {e}")
+            logger.warning(f"⚠ Textract extraction failed: {e}")
 
-        # Step 3: Raw aggressive text decoding
+        # Final fallback: Raw text extraction
         try:
-            logger.info(f"🔄 Step 3: Attempting raw text extraction for {filename}")
+            logger.info(f"🔄 Attempting raw text extraction for {filename}")
             text_content = await self._try_raw_text_extraction(file_content, filename)
             if text_content and len(text_content.strip()) > 10:
                 logger.info(f"✅ Raw text extraction successful: {len(text_content)} characters")
@@ -580,175 +567,10 @@ class AWSTextractService:
             "- The PDF is image-based (scanned document)\n"
             "- The PDF is corrupted or damaged\n"
             "- The PDF has no embedded text content\n"
+            "- AWS Textract is not available or configured\n"
             "Please try uploading a text-based PDF or a different document format.",
             1
         )
-
-    async def _fallback_pdf_extraction(self, file_content: bytes, filename: str, user_id: str) -> (str, int):
-        """
-        Aggressive PDF text extraction using multiple libraries.
-        Tries all available methods to extract any possible text.
-        """
-        try:
-            logger.info(f"Starting aggressive PDF extraction for: {filename}")
-            
-            # First, try to detect if the PDF is severely corrupted
-            corruption_level = self._analyze_pdf_corruption(file_content)
-            logger.info(f"PDF corruption analysis: {corruption_level}")
-            
-            # Try multiple PDF extraction methods in order of reliability
-            extraction_methods = [
-                ("PDFMiner", self._try_pdfminer_extraction),  # Most robust for corrupted PDFs
-                ("PyPDF2", self._try_pypdf2_extraction),      # Good for standard PDFs
-                ("Basic Text", self._try_basic_text_extraction) # Last resort
-            ]
-            
-            best_result = None
-            best_length = 0
-            best_method = None
-            
-            for method_name, method in extraction_methods:
-                try:
-                    logger.info(f"🔄 Trying {method_name} extraction for {filename}")
-                    text_content, page_count = await method(file_content, filename)
-                    if text_content and len(text_content.strip()) > best_length:
-                        best_result = (text_content, page_count)
-                        best_length = len(text_content.strip())
-                        best_method = method_name
-                        logger.info(f"✅ {method_name} extracted {best_length} characters")
-                    else:
-                        logger.warning(f"⚠ {method_name} returned minimal content ({len(text_content.strip())} chars)")
-                except Exception as e:
-                    logger.warning(f"⚠ {method_name} failed: {e}")
-                    continue
-            
-            # If we got any meaningful content, return it
-            if best_result and best_length > 5:
-                text_content, page_count = best_result
-                logger.info(f"✅ Best extraction result ({best_method}): {best_length} characters, {page_count} pages")
-                return text_content, page_count
-            
-            # If all methods fail, try to extract any readable text from the PDF bytes
-            logger.warning("🔄 All extraction methods failed, attempting raw text extraction")
-            try:
-                raw_text = await self._try_raw_text_extraction(file_content, filename)
-                if raw_text and len(raw_text.strip()) > 5:
-                    logger.info(f"✅ Raw text extraction successful: {len(raw_text)} characters")
-                    return raw_text, 1
-            except Exception as e:
-                logger.warning(f"⚠ Raw text extraction failed: {e}")
-            
-            # Try one more aggressive approach - decode as text with multiple encodings
-            logger.warning("🔄 Trying aggressive text decoding")
-            try:
-                aggressive_text = await self._try_aggressive_text_extraction(file_content, filename)
-                if aggressive_text and len(aggressive_text.strip()) > 5:
-                    logger.info(f"✅ Aggressive text extraction successful: {len(aggressive_text)} characters")
-                    return aggressive_text, 1
-            except Exception as e:
-                logger.warning(f"⚠ Aggressive text extraction failed: {e}")
-            
-            # Final fallback - return a descriptive message based on corruption level
-            logger.warning("❌ All extraction methods failed, returning descriptive message")
-            return self._generate_fallback_message(filename, corruption_level), 1
-            
-        except Exception as e:
-            logger.error(f"Fallback PDF extraction failed: {e}")
-            raise TextractError(f"Fallback extraction failed: {e}")
-
-    def _analyze_pdf_corruption(self, file_content: bytes) -> str:
-        """
-        Analyze PDF corruption level and return descriptive message.
-        """
-        try:
-            issues = []
-            
-            # Check for basic PDF structure
-            if not file_content.startswith(b'%PDF-'):
-                issues.append("Missing PDF header")
-            
-            # Check for end-of-file marker
-            if b'%%EOF' not in file_content[-1000:]:
-                issues.append("Missing EOF marker")
-            
-            # Check for reasonable file size (at least 1KB)
-            if len(file_content) < 1024:
-                issues.append("File too small")
-            
-            # Check for excessive null bytes (indicates corruption)
-            null_ratio = file_content.count(b'\x00') / len(file_content)
-            if null_ratio > 0.5:
-                issues.append(f"High null byte ratio ({null_ratio:.1%})")
-            
-            # Check for PDF structure keywords
-            pdf_keywords = [b'obj', b'endobj', b'stream', b'endstream', b'xref', b'trailer']
-            found_keywords = sum(1 for keyword in pdf_keywords if keyword in file_content)
-            if found_keywords < 3:
-                issues.append("Missing PDF structure elements")
-            
-            if not issues:
-                return "PDF appears structurally sound"
-            elif len(issues) <= 2:
-                return f"Minor issues: {', '.join(issues)}"
-            else:
-                return f"Severely corrupted: {', '.join(issues)}"
-                
-        except Exception as e:
-            return f"Error analyzing PDF: {e}"
-
-    def _generate_fallback_message(self, filename: str, corruption_level: str) -> str:
-        """
-        Generate a helpful fallback message based on corruption level.
-        """
-        if "Severely corrupted" in corruption_level:
-            return f"""The PDF file '{filename}' appears to be severely corrupted or damaged and could not be processed.
-
-Corruption Analysis: {corruption_level}
-
-Recommendations:
-1. Try uploading the original source file (Word, Excel, etc.) instead of the PDF
-2. Re-generate the PDF using a different method (Adobe Acrobat, Microsoft Word, etc.)
-3. Avoid browser-generated PDFs (Chrome "Save as PDF" often creates problematic files)
-4. Check if the file was corrupted during upload or transfer
-5. Try converting the file to an image format (PNG/JPEG) and upload that instead
-
-If you continue having issues, please contact support with the original source file."""
-        
-        elif "Minor issues" in corruption_level:
-            return f"""The PDF file '{filename}' has some structural issues that prevented text extraction.
-
-Analysis: {corruption_level}
-
-This could be due to:
-- Browser-generated PDF (Chrome/Firefox "Save as PDF")
-- Non-standard PDF creation method
-- Minor file corruption
-
-Try:
-1. Re-generating the PDF using Adobe Acrobat or Microsoft Word
-2. Converting to image format (PNG/JPEG) and uploading that
-3. Using the preprocessing service to normalize the PDF
-
-The document may still be readable visually, but text extraction failed."""
-        
-        else:
-            return f"""The PDF file '{filename}' could not be processed for text extraction.
-
-Analysis: {corruption_level}
-
-Possible reasons:
-- Image-based PDF (scanned document)
-- Non-standard PDF format
-- Browser-generated PDF with unusual structure
-- PDF with embedded images instead of text
-
-Solutions:
-1. Upload the original source file (Word, Excel, etc.)
-2. Convert to image format (PNG/JPEG) and upload that
-3. Use the preprocessing service to convert the PDF to images
-4. Re-generate the PDF using standard tools (Adobe Acrobat, Word, etc.)
-
-The document content may still be accessible through the preprocessing service."""
 
     async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try very aggressive text extraction from PDF bytes."""

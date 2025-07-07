@@ -4,6 +4,7 @@ AWS Configuration loader
 
 import json
 import os
+import boto3
 from typing import Dict, Any
 
 class AWSConfig:
@@ -13,6 +14,7 @@ class AWSConfig:
         """Initialize AWS configuration."""
         self.config_file = config_file
         self.config = self._load_config()
+        self._session = None
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from JSON file."""
@@ -21,7 +23,7 @@ class AWSConfig:
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
             else:
-                # Fallback to environment variables
+                # Fallback to environment variables and boto3 default chain
                 return {
                     "aws": {
                         "access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
@@ -49,20 +51,65 @@ class AWSConfig:
             print(f"Warning: Could not load AWS config file: {e}")
             return {}
     
+    def _get_boto3_session(self):
+        """Get boto3 session using default credential chain."""
+        if not self._session:
+            try:
+                # Use boto3's default credential chain (includes AWS CLI credentials)
+                self._session = boto3.Session()
+                print("AWS credentials loaded from boto3 default chain")
+            except Exception as e:
+                print(f"Warning: Could not create boto3 session: {e}")
+                self._session = None
+        return self._session
+    
     @property
     def access_key_id(self) -> str:
-        """Get AWS access key ID."""
-        return self.config.get("aws", {}).get("access_key_id")
+        """Get AWS access key ID from environment or boto3 session."""
+        # First try environment variables
+        env_key = self.config.get("aws", {}).get("access_key_id")
+        if env_key:
+            return env_key
+        
+        # Then try boto3 session
+        session = self._get_boto3_session()
+        if session:
+            credentials = session.get_credentials()
+            if credentials:
+                return credentials.access_key
+        return None
     
     @property
     def secret_access_key(self) -> str:
-        """Get AWS secret access key."""
-        return self.config.get("aws", {}).get("secret_access_key")
+        """Get AWS secret access key from environment or boto3 session."""
+        # First try environment variables
+        env_secret = self.config.get("aws", {}).get("secret_access_key")
+        if env_secret:
+            return env_secret
+        
+        # Then try boto3 session
+        session = self._get_boto3_session()
+        if session:
+            credentials = session.get_credentials()
+            if credentials:
+                return credentials.secret_key
+        return None
     
     @property
     def region(self) -> str:
-        """Get AWS region."""
-        return self.config.get("aws", {}).get("region", "ap-south-1")
+        """Get AWS region from environment, config, or boto3 session."""
+        # First try environment variables
+        env_region = self.config.get("aws", {}).get("region")
+        if env_region:
+            return env_region
+        
+        # Then try boto3 session
+        session = self._get_boto3_session()
+        if session and session.region_name:
+            return session.region_name
+        
+        # Default fallback
+        return "ap-south-1"
     
     @property
     def sqs_queue_name(self) -> str:

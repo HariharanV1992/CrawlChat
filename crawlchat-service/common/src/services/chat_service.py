@@ -1017,7 +1017,8 @@ Please provide a helpful response:"""
                             # Get the file content from S3
                             file_content = await storage_service.get_file_content(s3_key)
                             if file_content:
-                                # Use Textract service directly
+                                # ALWAYS use Textract for PDFs (no local fallback)
+                                logger.info(f"[EMBEDDING] Forcing Textract extraction for PDF: {document.filename}")
                                 text_content, page_count = await textract_service.upload_to_s3_and_extract(
                                     file_content, 
                                     document.filename, 
