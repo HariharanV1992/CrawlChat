@@ -9,8 +9,8 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy requirements first for better caching (Docker-specific, excludes local packages)
+COPY requirements-docker.txt requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
