@@ -87,8 +87,10 @@ ECR_REGISTRY=$(aws ecr get-login-password --region $REGION | docker login --user
 echo "🏗️ Building crawler Docker image..."
 # Copy requirements file for Docker build
 cp crawler-service/requirements.txt crawler-service/requirements-lambda.txt
-docker build -f crawler-service/Dockerfile -t $ECR_REGISTRY/$ECR_REPO:latest .
+cd crawler-service
+docker build -t $ECR_REGISTRY/$ECR_REPO:latest .
 docker push $ECR_REGISTRY/$ECR_REPO:latest
+cd ..
 
 # 9. Create Lambda function
 echo "🚀 Creating Lambda function..."

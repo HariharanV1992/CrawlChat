@@ -581,7 +581,9 @@ class DocumentService:
             # Use projection to only fetch needed fields
             projection = {
                 "document_id": 1,
+                "user_id": 1,
                 "filename": 1,
+                "file_path": 1,
                 "document_type": 1,
                 "status": 1,
                 "uploaded_at": 1,

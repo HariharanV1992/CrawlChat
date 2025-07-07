@@ -86,16 +86,50 @@ echo "🎯 Task Role ARN: $TASK_ROLE_ARN"
 
 # 7. Create task definition
 echo "📋 Creating task definition..."
-aws ecs register-task-definition \
-  --family $TASK_DEFINITION_NAME \
-  --network-mode awsvpc \
-  --requires-compatibilities FARGATE \
-  --cpu 1024 \
-  --memory 2048 \
-  --execution-role-arn $TASK_EXECUTION_ROLE_ARN \
-  --task-role-arn $TASK_ROLE_ARN \
-  --container-definitions '[{"name":"preprocessor","image":"169164939839.dkr.ecr.ap-south-1.amazonaws.com/crawlchat-preprocessor:latest","essential":true,"portMappings":[{"containerPort":8000,"protocol":"tcp"}],"environment":[{"name":"AWS_REGION","value":"ap-south-1"},{"name":"S3_BUCKET","value":"crawlchat-data"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-group":"/ecs/crawlchat-preprocessor","awslogs-region":"ap-south-1","awslogs-stream-prefix":"ecs"}}}]}' \
-  --region $REGION
+cat > task-definition.json <<EOF
+{
+  "family": "$TASK_DEFINITION_NAME",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "$TASK_EXECUTION_ROLE_ARN",
+  "taskRoleArn": "$TASK_ROLE_ARN",
+  "containerDefinitions": [
+    {
+      "name": "preprocessor",
+      "image": "169164939839.dkr.ecr.ap-south-1.amazonaws.com/crawlchat-preprocessor:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "AWS_REGION",
+          "value": "ap-south-1"
+        },
+        {
+          "name": "S3_BUCKET",
+          "value": "crawlchat-data"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/crawlchat-preprocessor",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+EOF
+
+aws ecs register-task-definition --cli-input-json file://task-definition.json --region $REGION
 
 # 8. Create CloudWatch log group
 echo "📊 Creating log group..."

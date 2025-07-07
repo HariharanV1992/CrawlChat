@@ -20,9 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 
-from src.core.config import config
-from src.core.database import mongodb
-from src.core.logging import setup_logging
+from common.src.core.config import config
+from common.src.core.database import mongodb
+from common.src.core.logging import setup_logging
 
 # Lazy imports for Lambda optimization
 def get_storage_service_lazy():

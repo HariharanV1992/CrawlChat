@@ -12,10 +12,10 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from src.core.logging import setup_logging
-from src.core.config import get_settings
-from src.services.crawler_service import crawler_service
-from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+from common.src.core.logging import setup_logging
+from common.src.core.config import get_settings
+from common.src.services.crawler_service import crawler_service
+from common.src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
 
 # Setup logging
 setup_logging()
