@@ -11,6 +11,7 @@ from pathlib import Path
 import io
 from functools import lru_cache
 import hashlib
+import os
 
 from common.src.models.documents import (
     Document, DocumentType, DocumentStatus, DocumentUpload, 
@@ -407,6 +408,10 @@ class DocumentService:
         
         logger.info(f"Starting PDF extraction for: {filename}")
         
+        # Add comprehensive debugging information
+        debug_info = self._get_pdf_debug_info(content, filename)
+        logger.info(f"PDF Debug Info: {debug_info}")
+        
         # Try PyPDF2 first (fastest)
         try:
             import PyPDF2
@@ -468,6 +473,76 @@ class DocumentService:
         # Return user-friendly error message instead of technical description
         logger.error(f"All PDF extraction methods failed for {filename}")
         return self._get_user_friendly_pdf_error_message(filename)
+    
+    def _get_pdf_debug_info(self, content: bytes, filename: str) -> Dict[str, Any]:
+        """Get comprehensive debugging information for PDF extraction."""
+        import hashlib
+        import platform
+        import sys
+        
+        debug_info = {
+            "file_info": {
+                "filename": filename,
+                "size_bytes": len(content),
+                "size_mb": len(content) / (1024 * 1024),
+                "md5_hash": hashlib.md5(content).hexdigest(),
+                "first_20_bytes": content[:20].hex(),
+                "last_20_bytes": content[-20:].hex(),
+                "is_pdf_header": content.startswith(b'%PDF-'),
+                "has_eof_marker": b'%%EOF' in content[-1000:],
+                "null_byte_ratio": content.count(b'\x00') / len(content) if content else 0
+            },
+            "environment": {
+                "python_version": sys.version,
+                "platform": platform.platform(),
+                "is_lambda": bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME")),
+                "lambda_memory": os.getenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE"),
+                "lambda_function": os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+            },
+            "libraries": {}
+        }
+        
+        # Check library availability
+        try:
+            import PyPDF2
+            debug_info["libraries"]["PyPDF2"] = {
+                "available": True,
+                "version": getattr(PyPDF2, "__version__", "unknown"),
+                "path": PyPDF2.__file__
+            }
+        except Exception as e:
+            debug_info["libraries"]["PyPDF2"] = {
+                "available": False,
+                "error": str(e)
+            }
+        
+        try:
+            import pdfminer
+            debug_info["libraries"]["pdfminer.six"] = {
+                "available": True,
+                "version": getattr(pdfminer, "__version__", "unknown"),
+                "path": pdfminer.__file__
+            }
+        except Exception as e:
+            debug_info["libraries"]["pdfminer.six"] = {
+                "available": False,
+                "error": str(e)
+            }
+        
+        try:
+            import boto3
+            debug_info["libraries"]["boto3"] = {
+                "available": True,
+                "version": boto3.__version__,
+                "path": boto3.__file__
+            }
+        except Exception as e:
+            debug_info["libraries"]["boto3"] = {
+                "available": False,
+                "error": str(e)
+            }
+        
+        return debug_info
     
     def _get_user_friendly_pdf_error_message(self, filename: str) -> str:
         """Generate a user-friendly error message for PDF extraction failures."""
