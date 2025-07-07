@@ -4,12 +4,73 @@ Utility functions for the enhanced stock market crawler.
 
 import json
 import multiprocessing
+import re
+import hashlib
+import random
 from pathlib import Path
 from typing import Dict, Any, List
 import logging
 import os
+from urllib.parse import urlparse, urljoin
 
 logger = logging.getLogger(__name__)
+
+def clean_filename(filename: str) -> str:
+    """Clean filename by removing invalid characters and limiting length."""
+    # Remove invalid characters for filenames
+    cleaned = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    # Remove multiple underscores
+    cleaned = re.sub(r'_+', '_', cleaned)
+    # Remove leading/trailing underscores and dots
+    cleaned = cleaned.strip('_.')
+    # Limit length
+    if len(cleaned) > 200:
+        name, ext = os.path.splitext(cleaned)
+        cleaned = name[:200-len(ext)] + ext
+    return cleaned
+
+def get_file_extension(url: str) -> str:
+    """Extract file extension from URL."""
+    parsed = urlparse(url)
+    path = parsed.path
+    if '.' in path:
+        return os.path.splitext(path)[1].lower()
+    return ''
+
+def is_valid_url(url: str) -> bool:
+    """Check if URL is valid."""
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except:
+        return False
+
+def normalize_url(url: str, base_url: str = None) -> str:
+    """Normalize URL by resolving relative URLs and removing fragments."""
+    try:
+        if base_url:
+            url = urljoin(base_url, url)
+        parsed = urlparse(url)
+        # Remove fragment
+        normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if parsed.query:
+            normalized += f"?{parsed.query}"
+        return normalized
+    except:
+        return url
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename for safe file system usage."""
+    # Remove or replace problematic characters
+    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', filename)
+    # Remove multiple underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Remove leading/trailing underscores and dots
+    sanitized = sanitized.strip('_.')
+    # Ensure it's not empty
+    if not sanitized:
+        sanitized = 'unnamed_file'
+    return sanitized
 
 def load_settings_from_file(settings_file="stock_market_settings.json"):
     """Load settings and keywords from JSON file"""
@@ -79,12 +140,10 @@ def get_optimal_delay(url):
 
 def get_url_hash(url):
     """Generate hash for URL"""
-    import hashlib
     return hashlib.md5(url.encode()).hexdigest()
 
 def rotate_user_agent():
     """Rotate user agent to avoid detection"""
-    import random
     user_agents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

@@ -26,23 +26,11 @@ async def create_crawl_task(
 ):
     """Create a new crawl task."""
     try:
-        task = await crawler_service.create_crawl_task(
-            url=str(request.url),
-            user_id=current_user.user_id,
-            crawl_config=request.dict()
+        response = await crawler_service.create_crawl_task(
+            request=request,
+            user_id=current_user.user_id
         )
-        if not isinstance(task, CrawlTask):
-            logger.error(f"create_crawl_task did not return a CrawlTask: {task} (type={type(task)})")
-            raise HTTPException(status_code=500, detail="Internal error: Task creation failed")
-        await crawler_service.start_crawl_task(task.task_id)
-        return CrawlResponse(
-            task_id=task.task_id,
-            status=task.status.value,
-            message="Crawl task created successfully",
-            url=task.url,
-            max_documents=task.max_documents,
-            created_at=task.created_at
-        )
+        return response
     except CrawlerError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
