@@ -10,16 +10,13 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy requirements first for better caching
-COPY preprocessor-service/requirements.txt .
-
-# Copy the common package before pip install
-COPY common/ ./common/
+COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY preprocessor-service/preprocessing_service.py .
+COPY preprocessing_service.py .
 
 # Create non-root user for security
 RUN useradd -m -u 1000 preprocessor && \
