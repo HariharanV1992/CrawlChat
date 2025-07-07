@@ -329,8 +329,16 @@ class DocumentService:
                     logger.error(f"Error processing CSV {document.filename}: {e}")
                     return f"Error processing CSV: {e}"
             
-            # PDF processing with improved error handling
+            # PDF processing with improved error handling and S3 fallback
             if document.document_type == DocumentType.PDF:
+                # Check for PDF corruption indicators
+                if not content.startswith(b'%PDF-') or b'%%EOF' not in content[-1000:]:
+                    logger.warning(f"PDF corruption detected for {document.filename}, trying S3 fallback")
+                    s3_fallback_content = await self._try_s3_fallback(document.filename)
+                    if s3_fallback_content:
+                        logger.info(f"Using S3 fallback for corrupted PDF: {document.filename}")
+                        return await self._extract_pdf_text_optimized(s3_fallback_content, document.filename)
+                
                 return await self._extract_pdf_text_optimized(content, document.filename)
             
             # Excel files (XLSX, XLS)
@@ -598,6 +606,51 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Textract extraction failed for {filename}: {e}")
             return f"Textract extraction failed: {e}"
+
+    async def _try_s3_fallback(self, filename: str) -> Optional[bytes]:
+        """Try to get PDF content from S3 as a fallback for corrupted files."""
+        try:
+            import boto3
+            import os
+            
+            # Get S3 configuration from environment or config
+            s3_bucket = os.getenv('S3_BUCKET', 'crawlchat-data')
+            s3_key = os.getenv('S3_PDF_KEY', f'pdfs/{filename}')
+            
+            # If filename doesn't match the expected S3 key, try common patterns
+            if not s3_key.endswith(filename):
+                s3_key = f'pdfs/{filename}'
+            
+            logger.info(f"Trying S3 fallback: s3://{s3_bucket}/{s3_key}")
+            
+            # Initialize S3 client
+            if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+                # Running in Lambda - use IAM role
+                s3_client = boto3.client('s3')
+            else:
+                # Running locally - use credentials if available
+                from ..core.config import config
+                if config.s3_access_key and config.s3_secret_key:
+                    s3_client = boto3.client(
+                        's3',
+                        aws_access_key_id=config.s3_access_key,
+                        aws_secret_access_key=config.s3_secret_key,
+                        region_name=config.s3_region
+                    )
+                else:
+                    logger.warning("S3 fallback not available - missing credentials")
+                    return None
+            
+            # Download from S3
+            response = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            content = response['Body'].read()
+            
+            logger.info(f"S3 fallback successful: {len(content)} bytes")
+            return content
+            
+        except Exception as e:
+            logger.warning(f"S3 fallback failed for {filename}: {e}")
+            return None
 
     async def _generate_summary(self, content: str, user_query: Optional[str]) -> str:
         """Generate summary of document content."""

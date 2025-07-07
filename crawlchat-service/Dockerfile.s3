@@ -1,0 +1,11 @@
+FROM public.ecr.aws/lambda/python:3.10
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+# Copy the S3-based handler
+COPY lambda_handler_s3.py ${LAMBDA_TASK_ROOT}/lambda_handler.py
+
+# Set the CMD to your handler
+CMD [ "lambda_handler.lambda_handler" ] 
