@@ -32,6 +32,10 @@ webdriver-manager>=4.0.0
 # Document processing - Essential dependencies only
 PyPDF2>=3.0.0
 pdfminer.six>=20221105
+PyMuPDF>=1.23.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
 openpyxl>=3.1.0  # For Excel file support
 python-docx>=1.1.0  # For Word documents
 python-pptx>=0.6.21  # For PowerPoint files
@@ -44,19 +48,21 @@ Pillow>=10.0.0  # Image processing (for fallback scenarios)
 
 # AI and machine learning
 openai>=1.0.0
+langchain>=0.1.0
+langchain-openai>=0.1.0
+chromadb>=0.4.0
 
 # Utilities
 asyncio-throttle>=1.0.2
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt==3.2.0  # Pin to compatible version for passlib
+PyJWT>=2.8.0
+cryptography>=41.0.0
+python-dotenv>=0.19.0
 
 # Monitoring and logging
 prometheus-client>=0.17.0
-
-# Security and authentication
-passlib[bcrypt]>=1.7.4
-bcrypt==3.2.0  # Pin to compatible version for passlib
-python-jose[cryptography]>=3.5.0
-PyJWT>=2.8.0
-cryptography>=41.0.0
 
 # AWS Lambda compatibility
 mangum>=0.19.0

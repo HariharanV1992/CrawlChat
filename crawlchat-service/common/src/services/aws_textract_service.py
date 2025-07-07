@@ -18,6 +18,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from ..core.aws_config import aws_config
 from ..core.exceptions import TextractError
 from .storage_service import get_storage_service
+from .pdf_preprocessing_service import pdf_preprocessing_service
 
 logger = logging.getLogger(__name__)
 
@@ -442,85 +443,55 @@ class AWSTextractService:
         user_id: str = "anonymous"
     ) -> (str, int):
         """
-        Upload file to S3 and extract text using hybrid approach.
-        For PDFs: Try local extraction first, fallback to Textract
-        For images: Use Textract directly
+        Upload file to S3 and extract text using AWS Textract.
+        Includes PDF preprocessing for better text extraction.
         """
         try:
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
-
-            # 🔍 FILE INTEGRITY CHECK - Log file details before processing
-            logger.info(f"🔍 FILE INTEGRITY CHECK for {filename}:")
-            logger.info(f"   📏 File size: {len(file_content):,} bytes")
-            logger.info(f"   🔢 File hash (MD5): {hashlib.md5(file_content).hexdigest()}")
-            logger.info(f"   📄 First 20 bytes: {file_content[:20]}")
-            logger.info(f"   📄 Last 20 bytes: {file_content[-20:]}")
             
-            # Check if it's a valid PDF
+            # Generate S3 key
+            s3_key = aws_config.generate_temp_s3_key(filename)
+            bucket_name = aws_config.s3_bucket_name
+            
+            # Preprocess PDF if it's a PDF file
+            original_size = len(file_content)
             if filename.lower().endswith('.pdf'):
-                if file_content.startswith(b'%PDF-'):
-                    logger.info(f"   ✅ Valid PDF header detected")
-                else:
-                    logger.warning(f"   ❌ Invalid PDF header: {file_content[:10]}")
-                
-                if b'%%EOF' in file_content[-1000:]:
-                    logger.info(f"   ✅ PDF EOF marker found")
-                else:
-                    logger.warning(f"   ❌ PDF EOF marker missing")
-
-            bucket_name = aws_config.s3_bucket
-            file_id = str(uuid.uuid4())
-            s3_key = f"uploaded_documents/{user_id}/{file_id}/{filename}"
-
-            logger.info(f"📤 Uploading {filename} to s3://{bucket_name}/{s3_key}")
+                logger.info(f"🔄 Preprocessing PDF {filename} for better Textract performance")
+                try:
+                    file_content = await pdf_preprocessing_service.preprocess_pdf_for_textract(file_content, filename)
+                    processed_size = len(file_content)
+                    stats = pdf_preprocessing_service.get_preprocessing_stats(original_size, processed_size)
+                    logger.info(f"✅ PDF preprocessing completed: {stats['size_reduction_percent']:.1f}% size reduction")
+                except Exception as e:
+                    logger.warning(f"⚠ PDF preprocessing failed, using original: {e}")
+                    file_content = file_content  # Keep original content
+            
+            # Upload to S3
+            logger.info(f"Uploading {filename} to S3: s3://{bucket_name}/{s3_key}")
             self.s3_client.put_object(
                 Bucket=bucket_name,
                 Key=s3_key,
                 Body=file_content,
                 ContentType=self._get_content_type(filename)
             )
-
-            # 🔍 S3 UPLOAD VERIFICATION - Download and verify the uploaded file
-            logger.info(f"🔍 S3 UPLOAD VERIFICATION:")
+            
+            # Extract text using hybrid approach
+            text_content, page_count = await self._hybrid_pdf_extraction(
+                file_content, filename, bucket_name, s3_key, document_type, user_id
+            )
+            
+            # Clean up S3 object
             try:
-                download_response = self.s3_client.get_object(Bucket=bucket_name, Key=s3_key)
-                downloaded_content = download_response['Body'].read()
-                downloaded_size = len(downloaded_content)
-                downloaded_hash = hashlib.md5(downloaded_content).hexdigest()
-                
-                logger.info(f"   📏 S3 file size: {downloaded_size:,} bytes")
-                logger.info(f"   🔢 S3 file hash: {downloaded_hash}")
-                logger.info(f"   📄 S3 first 20 bytes: {downloaded_content[:20]}")
-                
-                # Compare with original
-                if len(file_content) == downloaded_size:
-                    logger.info(f"   ✅ File size matches original")
-                else:
-                    logger.error(f"   ❌ File size mismatch! Original: {len(file_content)}, S3: {downloaded_size}")
-                
-                if hashlib.md5(file_content).hexdigest() == downloaded_hash:
-                    logger.info(f"   ✅ File hash matches original")
-                else:
-                    logger.error(f"   ❌ File hash mismatch! File corrupted during upload!")
-                
-                # Use the downloaded content for processing to ensure we're working with what's actually in S3
-                file_content = downloaded_content
-                
+                self.s3_client.delete_object(Bucket=bucket_name, Key=s3_key)
+                logger.info(f"Cleaned up S3 object: {s3_key}")
             except Exception as e:
-                logger.error(f"   ❌ S3 verification failed: {e}")
-
-            if filename.lower().endswith('.pdf'):
-                logger.info(f"Processing PDF {filename} with hybrid approach")
-                return await self._hybrid_pdf_extraction(file_content, filename, bucket_name, s3_key, document_type, user_id)
-            else:
-                logger.info(f"Processing image {filename} with Textract")
-                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
-                logger.info(f"✅ Final extracted text length: {len(text_content)}")
-                return text_content, page_count
-
+                logger.warning(f"Failed to clean up S3 object {s3_key}: {e}")
+            
+            return text_content, page_count
+            
         except Exception as e:
-            logger.error(f"❌ Upload and extraction failed: {e}")
+            logger.error(f"Upload and extraction failed: {e}")
             raise TextractError(f"Upload and extraction failed: {e}")
 
     async def _hybrid_pdf_extraction(
