@@ -777,7 +777,12 @@ Please provide a helpful response:"""
             logger.info(f"Linked {len(documents)} documents to session {session_id}")
             
             # Create embeddings for the documents in background
-            await self._create_embeddings_for_documents(documents, session_id)
+            # Use asyncio.create_task to run in background without blocking
+            asyncio.create_task(self._create_embeddings_for_documents(documents, session_id))
+            
+            # Add immediate feedback message
+            await self.add_message(session_id, user_id, MessageRole.SYSTEM, 
+                f"📄 Linked {len(documents)} documents to this session. Processing documents in background...")
             
             return documents
             
@@ -882,6 +887,12 @@ Please provide a helpful response:"""
                 
         except Exception as e:
             logger.error(f"[EMBEDDING] Error in background embedding creation: {e}")
+            # Add error message to chat session
+            try:
+                error_message = f"❌ Error processing documents: {str(e)}"
+                await self.add_message(session_id, user_id, MessageRole.SYSTEM, error_message)
+            except Exception as add_error:
+                logger.error(f"[EMBEDDING] Failed to add error message: {add_error}")
             # Don't fail the linking process if embedding creation fails
 
     async def link_uploaded_document(self, session_id: str, user_id: str, document) -> bool:
@@ -905,7 +916,12 @@ Please provide a helpful response:"""
             logger.info(f"Linked uploaded document {document.document_id} to session {session_id}")
             
             # Create embeddings for the document in background
-            await self._create_embeddings_for_uploaded_document(document, session_id)
+            # Use asyncio.create_task to run in background without blocking
+            asyncio.create_task(self._create_embeddings_for_uploaded_document(document, session_id))
+            
+            # Add immediate feedback message
+            await self.add_message(session_id, user_id, MessageRole.SYSTEM, 
+                f"📄 Document '{document.filename}' uploaded successfully. Processing in background...")
             
             return True
             
