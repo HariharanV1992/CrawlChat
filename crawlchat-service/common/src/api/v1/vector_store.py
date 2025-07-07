@@ -5,6 +5,7 @@ Vector Store API endpoints for advanced document search and processing.
 from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from typing import List, Dict, Any, Optional
 import logging
+from datetime import datetime
 
 from common.src.services.vector_store_service import vector_store_service
 from common.src.services.document_processing_service import document_processing_service
@@ -192,6 +193,41 @@ async def list_documents(
     except Exception as e:
         logger.error(f"[API] Error listing documents: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list documents: {str(e)}")
+
+@router.post("/test-processing")
+async def test_document_processing(
+    current_user: User = Depends(get_current_user)
+):
+    """Test document processing functionality."""
+    try:
+        logger.info(f"[API] Testing document processing for user: {current_user.user_id}")
+        
+        # Test with simple content
+        test_content = "This is a test document for processing. It contains sample text to verify that the document processing pipeline is working correctly."
+        
+        result = await document_processing_service.process_document_with_vector_store(
+            document_id=f"test-{current_user.user_id}-{int(datetime.utcnow().timestamp())}",
+            content=test_content,
+            filename="test_processing.txt",
+            metadata={
+                "user_id": current_user.user_id,
+                "test": True,
+                "timestamp": datetime.utcnow().isoformat()
+            },
+            session_id=f"test-session-{current_user.user_id}"
+        )
+        
+        logger.info(f"[API] Test processing result: {result}")
+        
+        return {
+            "success": True,
+            "data": result,
+            "message": "Document processing test completed"
+        }
+        
+    except Exception as e:
+        logger.error(f"[API] Error in test processing: {e}")
+        raise HTTPException(status_code=500, detail=f"Test processing failed: {str(e)}")
 
 @router.delete("/documents/{document_id}")
 async def delete_document(
