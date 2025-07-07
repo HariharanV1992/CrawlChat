@@ -547,6 +547,8 @@ class AWSTextractService:
                 return text_content, page_count
             else:
                 logger.warning(f"⚠ Textract returned minimal content ({len(text_content.strip())} chars)")
+                # Try to provide helpful information about why Textract failed
+                return self._generate_textract_fallback_message(filename, text_content), 1
         except Exception as e:
             logger.warning(f"⚠ Textract extraction failed: {e}")
 
@@ -571,6 +573,45 @@ class AWSTextractService:
             "Please try uploading a text-based PDF or a different document format.",
             1
         )
+
+    def _generate_textract_fallback_message(self, filename: str, text_content: str) -> str:
+        """
+        Generate a helpful message when Textract returns minimal content.
+        """
+        content_length = len(text_content.strip()) if text_content else 0
+        
+        if content_length == 0:
+            return (
+                f"⚠️ Textract could not extract text from {filename}.\n\n"
+                "This usually means the PDF is:\n"
+                "• A scanned document (image-based)\n"
+                "• Created by a browser or certain tools\n"
+                "• Has embedded images instead of text\n\n"
+                "**Solutions:**\n"
+                "1. Upload the original source file (Word, Excel, etc.)\n"
+                "2. Convert the PDF to images (PNG/JPEG) and upload those\n"
+                "3. Use a PDF with embedded text content\n"
+                "4. Re-generate the PDF using Adobe Acrobat or Microsoft Word\n\n"
+                "The document may still be readable visually, but text extraction failed."
+            )
+        elif content_length < 50:
+            return (
+                f"⚠️ Textract extracted very little text from {filename} ({content_length} characters).\n\n"
+                "This suggests the PDF is mostly image-based or has minimal text content.\n\n"
+                "**Extracted content:**\n"
+                f"'{text_content.strip()}'\n\n"
+                "**Recommendations:**\n"
+                "1. Upload the original source file instead\n"
+                "2. Convert to image format and upload those\n"
+                "3. Try a different PDF with more text content"
+            )
+        else:
+            return (
+                f"⚠️ Textract extracted limited text from {filename} ({content_length} characters).\n\n"
+                "**Extracted content:**\n"
+                f"'{text_content.strip()}'\n\n"
+                "This may be sufficient for basic analysis, but consider uploading the original source file for better results."
+            )
 
     async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try very aggressive text extraction from PDF bytes."""
@@ -913,6 +954,89 @@ class AWSTextractService:
             "estimated_cost": estimated_cost,
             "currency": "USD"
         }
+
+    def analyze_pdf_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
+        """
+        Analyze PDF content to determine its type and extraction strategy.
+        """
+        try:
+            import fitz  # PyMuPDF
+            
+            analysis = {
+                "filename": filename,
+                "file_size": len(file_content),
+                "pdf_type": "unknown",
+                "page_count": 0,
+                "text_pages": 0,
+                "image_pages": 0,
+                "text_content_length": 0,
+                "recommendation": "unknown"
+            }
+            
+            # Open PDF with PyMuPDF
+            pdf_document = fitz.open(stream=file_content, filetype="pdf")
+            analysis["page_count"] = len(pdf_document)
+            
+            total_text_length = 0
+            text_pages = 0
+            image_pages = 0
+            
+            for page_num in range(len(pdf_document)):
+                page = pdf_document[page_num]
+                
+                # Extract text
+                text = page.get_text()
+                text_length = len(text.strip())
+                total_text_length += text_length
+                
+                # Check for images
+                image_list = page.get_images()
+                
+                if text_length > 50:  # Meaningful text content
+                    text_pages += 1
+                elif len(image_list) > 0:  # Has images
+                    image_pages += 1
+            
+            analysis["text_content_length"] = total_text_length
+            analysis["text_pages"] = text_pages
+            analysis["image_pages"] = image_pages
+            
+            # Determine PDF type and recommendation
+            if text_pages > 0 and image_pages == 0:
+                analysis["pdf_type"] = "text_based"
+                analysis["recommendation"] = "Textract should work well"
+            elif text_pages > 0 and image_pages > 0:
+                analysis["pdf_type"] = "mixed_content"
+                analysis["recommendation"] = "Textract may work, but consider original source"
+            elif text_pages == 0 and image_pages > 0:
+                analysis["pdf_type"] = "image_based"
+                analysis["recommendation"] = "Use original source file or convert to images"
+            elif total_text_length == 0:
+                analysis["pdf_type"] = "empty_or_corrupted"
+                analysis["recommendation"] = "File may be corrupted or empty"
+            else:
+                analysis["pdf_type"] = "minimal_text"
+                analysis["recommendation"] = "Limited text content, consider alternative"
+            
+            pdf_document.close()
+            return analysis
+            
+        except ImportError:
+            logger.warning("PyMuPDF not available for PDF analysis")
+            return {
+                "filename": filename,
+                "file_size": len(file_content),
+                "pdf_type": "unknown",
+                "recommendation": "Install PyMuPDF for detailed analysis"
+            }
+        except Exception as e:
+            logger.error(f"Error analyzing PDF {filename}: {e}")
+            return {
+                "filename": filename,
+                "file_size": len(file_content),
+                "pdf_type": "error",
+                "recommendation": f"Analysis failed: {e}"
+            }
 
 # Global instance
 textract_service = AWSTextractService() 
