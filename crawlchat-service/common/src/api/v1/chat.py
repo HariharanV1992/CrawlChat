@@ -130,7 +130,17 @@ async def get_messages(
 ):
     """Get all messages in a chat session."""
     try:
-        return await chat_service.get_session_messages(session_id, current_user.user_id)
+        # Get messages first
+        messages = await chat_service.get_session_messages(session_id, current_user.user_id)
+        
+        # Check for missing completion message and add it if needed
+        # This helps ensure completion messages appear even if they were missed due to Lambda timing
+        await chat_service.check_and_add_missing_completion_message(session_id, current_user.user_id)
+        
+        # Get updated messages after potential completion message addition
+        updated_messages = await chat_service.get_session_messages(session_id, current_user.user_id)
+        
+        return updated_messages
     except Exception as e:
         logger.error(f"Error getting messages: {e}")
         raise HTTPException(status_code=500, detail="Failed to get messages")
@@ -380,6 +390,22 @@ async def get_processing_status(
     except Exception as e:
         logger.error(f"Error getting processing status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get processing status")
+
+@router.post("/sessions/{session_id}/check-completion")
+async def check_completion_message(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Check for missing completion message and add it if needed."""
+    try:
+        success = await chat_service.check_and_add_missing_completion_message(session_id, current_user.user_id)
+        if success:
+            return {"message": "Completion message checked and added if needed"}
+        else:
+            return {"message": "No completion message needed or could not be added"}
+    except Exception as e:
+        logger.error(f"Error checking completion message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to check completion message")
 
 @router.post("/sessions/{session_id}/force-completion")
 async def force_completion_message(

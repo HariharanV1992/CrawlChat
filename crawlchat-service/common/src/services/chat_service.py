@@ -778,10 +778,6 @@ Please provide a helpful response:"""
             
             logger.info(f"Linked {len(documents)} documents to session {session_id}")
             
-            # Create embeddings for the documents in background
-            # Use asyncio.create_task to run in background without blocking
-            asyncio.create_task(self._create_embeddings_for_documents(documents, session_id))
-            
             # Add immediate feedback message with better tracking
             await self.add_message(session_id, user_id, MessageRole.SYSTEM, 
                 f"📄 Linked {len(documents)} documents to this session. Processing documents in background...")
@@ -797,6 +793,10 @@ Please provide a helpful response:"""
                     }
                 }
             )
+            
+            # Create embeddings for the documents - run synchronously to ensure completion
+            # This ensures the completion message is added before Lambda terminates
+            await self._create_embeddings_for_documents(documents, session_id)
             
             return documents
             
@@ -961,13 +961,13 @@ Please provide a helpful response:"""
             
             logger.info(f"Linked uploaded document {document.document_id} to session {session_id}")
             
-            # Create embeddings for the document in background
-            # Use asyncio.create_task to run in background without blocking
-            asyncio.create_task(self._create_embeddings_for_uploaded_document(document, session_id))
-            
             # Add immediate feedback message
             await self.add_message(session_id, user_id, MessageRole.SYSTEM, 
                 f"📄 Document '{document.filename}' uploaded successfully. Processing in background...")
+            
+            # Create embeddings for the document - run synchronously to ensure completion
+            # This ensures the completion message is added before Lambda terminates
+            await self._create_embeddings_for_uploaded_document(document, session_id)
             
             return True
             
@@ -1148,43 +1148,87 @@ Please provide a helpful response:"""
             logger.error(f"Error checking processing status: {e}")
             return {"status": "error", "error": str(e)}
     
-    async def force_completion_message(self, session_id: str, user_id: str) -> bool:
-        """Force add a completion message if processing is done but message is missing."""
+    async def check_and_add_missing_completion_message(self, session_id: str, user_id: str) -> bool:
+        """Check if completion message is missing and add it if needed."""
         try:
-            status_info = await self.check_processing_status(session_id, user_id)
+            # Get session data
+            session_data = await mongodb.get_collection("chat_sessions").find_one({"session_id": session_id})
+            if not session_data:
+                logger.warning(f"[COMPLETION] Session {session_id} not found")
+                return False
             
-            if status_info.get("has_completion_message"):
-                logger.info(f"Completion message already exists for session {session_id}")
+            # Check if we have a completion message
+            messages = session_data.get("messages", [])
+            has_completion_message = any(
+                m.get('content', '').startswith('🎉') or 
+                m.get('content', '').startswith('✅') or
+                'completed' in m.get('content', '').lower() or
+                'ready for questions' in m.get('content', '').lower()
+                for m in messages
+            )
+            
+            if has_completion_message:
+                logger.info(f"[COMPLETION] Completion message already exists for session {session_id}")
                 return True
             
             # Check if we have documents but no completion message
-            total_docs = status_info.get("document_count", 0) + status_info.get("crawl_tasks", 0)
+            document_count = session_data.get("document_count", 0)
+            crawl_tasks = len(session_data.get("crawl_tasks", []))
+            uploaded_documents = len(session_data.get("uploaded_documents", []))
+            
+            total_docs = document_count + crawl_tasks + uploaded_documents
             
             if total_docs > 0:
-                completion_message = "🎉 Document processing completed! You can now ask questions about the documents."
-                success = await self.add_message(session_id, user_id, MessageRole.SYSTEM, completion_message)
-                
-                if success:
-                    # Update processing status
-                    await mongodb.get_collection("chat_sessions").update_one(
-                        {"session_id": session_id, "user_id": user_id},
-                        {
-                            "$set": {
-                                "processing_status": "completed",
-                                "processing_completed_at": datetime.utcnow(),
-                                "updated_at": datetime.utcnow()
-                            }
-                        }
-                    )
-                    logger.info(f"Forced completion message for session {session_id}")
-                    return True
-                else:
-                    logger.error(f"Failed to add forced completion message for session {session_id}")
-                    return False
+                # Check if processing is actually complete by looking at vector store
+                try:
+                    from common.src.services.vector_store_service import vector_store_service
+                    vector_store_id = await vector_store_service.get_or_create_session_vector_store(session_id)
+                    files = await vector_store_service.list_vector_store_files(vector_store_id)
+                    
+                    if files and len(files) > 0:
+                        # Files exist in vector store, add completion message
+                        completion_message = "🎉 Document processing completed! You can now ask questions about the documents."
+                        success = await self.add_message(session_id, user_id, MessageRole.SYSTEM, completion_message)
+                        
+                        if success:
+                            # Update processing status
+                            await mongodb.get_collection("chat_sessions").update_one(
+                                {"session_id": session_id, "user_id": user_id},
+                                {
+                                    "$set": {
+                                        "processing_status": "completed",
+                                        "processing_completed_at": datetime.utcnow(),
+                                        "updated_at": datetime.utcnow()
+                                    }
+                                }
+                            )
+                            logger.info(f"[COMPLETION] Added missing completion message for session {session_id}")
+                            return True
+                        else:
+                            logger.error(f"[COMPLETION] Failed to add completion message for session {session_id}")
+                            return False
+                    else:
+                        logger.info(f"[COMPLETION] No files in vector store for session {session_id}, processing may still be in progress")
+                        return False
+                        
+                except Exception as e:
+                    logger.error(f"[COMPLETION] Error checking vector store for session {session_id}: {e}")
+                    # If we can't check vector store, add completion message anyway
+                    completion_message = "🎉 Document processing completed! You can now ask questions about the documents."
+                    success = await self.add_message(session_id, user_id, MessageRole.SYSTEM, completion_message)
+                    return success
             else:
-                logger.info(f"No documents found for session {session_id}, no completion message needed")
+                logger.info(f"[COMPLETION] No documents found for session {session_id}, no completion message needed")
                 return True
                 
+        except Exception as e:
+            logger.error(f"[COMPLETION] Error checking for missing completion message: {e}")
+            return False
+
+    async def force_completion_message(self, session_id: str, user_id: str) -> bool:
+        """Force add a completion message if processing is done but message is missing."""
+        try:
+            return await self.check_and_add_missing_completion_message(session_id, user_id)
         except Exception as e:
             logger.error(f"Error forcing completion message: {e}")
             return False
