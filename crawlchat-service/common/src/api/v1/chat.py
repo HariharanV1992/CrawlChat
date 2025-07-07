@@ -366,4 +366,33 @@ async def get_background_task_status(
         }
     except Exception as e:
         logger.error(f"Error getting task status: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get task status") 
+        raise HTTPException(status_code=500, detail="Failed to get task status")
+
+@router.get("/sessions/{session_id}/processing-status")
+async def get_processing_status(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Check the processing status of documents in a session."""
+    try:
+        status_info = await chat_service.check_processing_status(session_id, current_user.user_id)
+        return status_info
+    except Exception as e:
+        logger.error(f"Error getting processing status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get processing status")
+
+@router.post("/sessions/{session_id}/force-completion")
+async def force_completion_message(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Force add a completion message if processing is done but message is missing."""
+    try:
+        success = await chat_service.force_completion_message(session_id, current_user.user_id)
+        if success:
+            return {"message": "Completion message added successfully"}
+        else:
+            raise HTTPException(status_code=400, detail="Failed to add completion message")
+    except Exception as e:
+        logger.error(f"Error forcing completion message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to force completion message") 

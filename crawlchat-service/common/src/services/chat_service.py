@@ -782,9 +782,21 @@ Please provide a helpful response:"""
             # Use asyncio.create_task to run in background without blocking
             asyncio.create_task(self._create_embeddings_for_documents(documents, session_id))
             
-            # Add immediate feedback message
+            # Add immediate feedback message with better tracking
             await self.add_message(session_id, user_id, MessageRole.SYSTEM, 
                 f"📄 Linked {len(documents)} documents to this session. Processing documents in background...")
+            
+            # Update session with processing status
+            await mongodb.get_collection("chat_sessions").update_one(
+                {"session_id": session_id, "user_id": user_id},
+                {
+                    "$set": {
+                        "processing_status": "processing",
+                        "processing_started_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
             
             return documents
             
@@ -867,22 +879,54 @@ Please provide a helpful response:"""
                 
                 logger.info(f"[EMBEDDING] Completed background embedding creation for session {session_id}")
                 
-                # Add final completion message
+                # Add final completion message with better tracking
                 completion_message = "🎉 All document embeddings created successfully! You can now ask questions about the documents."
-                # Prevent duplicate completion message
-                session_messages = session_data.get('messages', [])
-                if not any(m.get('content') == completion_message for m in session_messages):
+                
+                # Always add completion message for crawl documents (no duplicate check needed)
+                try:
                     completion_success = await self.add_message(session_id, user_id, MessageRole.SYSTEM, completion_message)
                     logger.info(f"[EMBEDDING] Added completion message: {completion_success}")
-                else:
-                    logger.info(f"[EMBEDDING] Completion message already exists, skipping duplicate.")
+                    
+                    # Update session with processing status
+                    await mongodb.get_collection("chat_sessions").update_one(
+                        {"session_id": session_id, "user_id": user_id},
+                        {
+                            "$set": {
+                                "processing_status": "completed",
+                                "processing_completed_at": datetime.utcnow(),
+                                "updated_at": datetime.utcnow()
+                            }
+                        }
+                    )
+                    logger.info(f"[EMBEDDING] Updated session processing status to completed")
+                    
+                except Exception as msg_error:
+                    logger.error(f"[EMBEDDING] Failed to add completion message: {msg_error}")
+                    # Try alternative completion message
+                    try:
+                        alt_message = "✅ Document processing completed! Ready for questions."
+                        await self.add_message(session_id, user_id, MessageRole.SYSTEM, alt_message)
+                    except Exception as alt_error:
+                        logger.error(f"[EMBEDDING] Failed to add alternative completion message: {alt_error}")
                 
             except Exception as e:
                 logger.error(f"[EMBEDDING] Error in background embedding creation: {e}")
-                # Add error message
+                # Add error message with better handling
                 try:
                     error_message = "❌ Error creating document embeddings. Please try again."
                     await self.add_message(session_id, user_id, MessageRole.SYSTEM, error_message)
+                    
+                    # Update session with error status
+                    await mongodb.get_collection("chat_sessions").update_one(
+                        {"session_id": session_id, "user_id": user_id},
+                        {
+                            "$set": {
+                                "processing_status": "error",
+                                "processing_error": str(e),
+                                "updated_at": datetime.utcnow()
+                            }
+                        }
+                    )
                 except Exception as add_error:
                     logger.error(f"[EMBEDDING] Failed to add error message: {add_error}")
                 # Don't fail the linking process if embedding creation fails
@@ -1069,6 +1113,81 @@ Please provide a helpful response:"""
         except Exception as e:
             logger.error(f"[EMBEDDING] Error in background embedding creation for uploaded document: {e}")
             # Don't fail the linking process if embedding creation fails
+
+    async def check_processing_status(self, session_id: str, user_id: str) -> Dict[str, Any]:
+        """Check the processing status of documents in a session."""
+        try:
+            session_data = await mongodb.get_collection("chat_sessions").find_one({"session_id": session_id})
+            if not session_data:
+                return {"status": "session_not_found"}
+            
+            processing_status = session_data.get("processing_status", "unknown")
+            processing_completed_at = session_data.get("processing_completed_at")
+            processing_error = session_data.get("processing_error")
+            
+            # Check if we have a completion message
+            messages = session_data.get("messages", [])
+            has_completion_message = any(
+                m.get('content', '').startswith('🎉') or 
+                m.get('content', '').startswith('✅') or
+                'completed' in m.get('content', '').lower()
+                for m in messages
+            )
+            
+            return {
+                "status": processing_status,
+                "has_completion_message": has_completion_message,
+                "processing_completed_at": processing_completed_at,
+                "processing_error": processing_error,
+                "document_count": session_data.get("document_count", 0),
+                "crawl_tasks": len(session_data.get("crawl_tasks", [])),
+                "uploaded_documents": len(session_data.get("uploaded_documents", []))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error checking processing status: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    async def force_completion_message(self, session_id: str, user_id: str) -> bool:
+        """Force add a completion message if processing is done but message is missing."""
+        try:
+            status_info = await self.check_processing_status(session_id, user_id)
+            
+            if status_info.get("has_completion_message"):
+                logger.info(f"Completion message already exists for session {session_id}")
+                return True
+            
+            # Check if we have documents but no completion message
+            total_docs = status_info.get("document_count", 0) + status_info.get("crawl_tasks", 0)
+            
+            if total_docs > 0:
+                completion_message = "🎉 Document processing completed! You can now ask questions about the documents."
+                success = await self.add_message(session_id, user_id, MessageRole.SYSTEM, completion_message)
+                
+                if success:
+                    # Update processing status
+                    await mongodb.get_collection("chat_sessions").update_one(
+                        {"session_id": session_id, "user_id": user_id},
+                        {
+                            "$set": {
+                                "processing_status": "completed",
+                                "processing_completed_at": datetime.utcnow(),
+                                "updated_at": datetime.utcnow()
+                            }
+                        }
+                    )
+                    logger.info(f"Forced completion message for session {session_id}")
+                    return True
+                else:
+                    logger.error(f"Failed to add forced completion message for session {session_id}")
+                    return False
+            else:
+                logger.info(f"No documents found for session {session_id}, no completion message needed")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error forcing completion message: {e}")
+            return False
 
 # Global chat service instance
 chat_service = ChatService() 
