@@ -153,8 +153,9 @@ class AWSConfig:
     
     @property
     def textract_region(self) -> str:
-        """Get Textract region."""
-        return self.config.get("textract", {}).get("region", "ap-south-1")
+        """Get Textract region - use same region as main AWS region to avoid S3 conflicts."""
+        # Use the same region as the main AWS region to avoid S3 region mismatches
+        return self.region
     
     def get_sqs_queue_url(self) -> str:
         """Get SQS queue URL."""
