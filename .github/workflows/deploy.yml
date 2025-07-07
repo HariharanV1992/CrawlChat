@@ -9,7 +9,6 @@ env:
   AWS_REGION: ap-south-1
   LAMBDA_ECR_REPOSITORY: crawlchat-api
   CRAWLER_ECR_REPOSITORY: crawlchat-crawler
-  PREPROCESSOR_ECR_REPOSITORY: crawlchat-preprocessor
   LAMBDA_FUNCTION_NAME: crawlchat-api-function
   CRAWLER_FUNCTION_NAME: crawlchat-crawler-function
 
@@ -44,10 +43,6 @@ jobs:
         # Create Crawler ECR repository
         aws ecr describe-repositories --repository-names ${{ env.CRAWLER_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null || \
         aws ecr create-repository --repository-name ${{ env.CRAWLER_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
-        
-        # Create Preprocessor ECR repository
-        aws ecr describe-repositories --repository-names ${{ env.PREPROCESSOR_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null || \
-        aws ecr create-repository --repository-name ${{ env.PREPROCESSOR_ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
     
     - name: Build, tag, and push Lambda image to Amazon ECR
       id: build-lambda
@@ -82,39 +77,6 @@ jobs:
         docker push $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:latest
         
         echo "crawler-image=$ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-    - name: Build, tag, and push Preprocessor image to Amazon ECR
-      id: build-preprocessor
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
-      run: |
-        # Build the Preprocessor Docker image from the preprocessor-service directory context
-        cd crawlchat-service/preprocessor-service
-        docker build --no-cache -t $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG .
-        docker tag $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:latest
-        
-        # Push to ECR
-        docker push $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG
-        docker push $ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:latest
-        
-        echo "preprocessor-image=$ECR_REGISTRY/${{ env.PREPROCESSOR_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
-    
-    - name: Update ECS Preprocessor Service (if infrastructure exists)
-      run: |
-        # Only update if the service exists
-        if aws ecs describe-services --cluster crawlchat-cluster --services crawlchat-preprocessor --region ap-south-1 --query 'services[0].status' --output text 2>/dev/null | grep -q "ACTIVE"; then
-          echo "Updating ECS preprocessor service..."
-          NEW_TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition crawlchat-preprocessor-task --region ap-south-1 --query 'taskDefinition.taskDefinitionArn' --output text)
-          aws ecs update-service \
-            --cluster crawlchat-cluster \
-            --service crawlchat-preprocessor \
-            --task-definition $NEW_TASK_DEF_ARN \
-            --force-new-deployment \
-            --region ap-south-1
-        else
-          echo "⚠️ ECS preprocessor service not found. Run create_preprocessor_service.sh first to set up infrastructure."
-        fi
     
     - name: Update Lambda function code
       run: |
@@ -156,17 +118,16 @@ jobs:
 
     - name: Deployment complete
       run: |
-        echo "✅ All three services deployed successfully!"
+        echo "✅ All services deployed successfully!"
         echo "🔗 Lambda API Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
         echo "🔗 Crawler Function: ${{ env.CRAWLER_FUNCTION_NAME }}"
         echo "🖼️  Lambda API Image: ${{ steps.build-lambda.outputs.lambda-image }}"
         echo "🖼️  Crawler Image: ${{ steps.build-crawler.outputs.crawler-image }}"
-        echo "🖼️  Preprocessor Image: ${{ steps.build-preprocessor.outputs.preprocessor-image }}"
-        echo "🚀 All capabilities are now available: OCR, crawling, and preprocessing"
+        echo "🚀 All capabilities are now available: OCR, crawling, and smart ScrapingBee integration"
         echo ""
         echo "📋 Next Steps:"
         echo "   1. Test your Lambda function endpoints"
         echo "   2. Monitor CloudWatch logs for any issues"
-        echo "   3. Deploy preprocessing service to ECS/Fargate when needed"
-        echo "   4. Update Lambda environment variables manually in AWS Console"
-        echo "   5. Test crawler functionality" 
+        echo "   3. Update Lambda environment variables manually in AWS Console"
+        echo "   4. Test crawler functionality with smart ScrapingBee integration"
+        echo "   5. Monitor cost savings from smart JS rendering control" 
