@@ -16,10 +16,7 @@
           "name": "AWS_REGION",
           "value": "ap-south-1"
         },
-        {
-          "name": "SQS_QUEUE_URL",
-          "value": "https://sqs.ap-south-1.amazonaws.com/169164939839/pdf-preprocess-queue"
-        }
+
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

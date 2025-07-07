@@ -49,8 +49,7 @@ def check_file_structure():
         "lambda-service/src/crawler/advanced_crawler.py",
         "lambda-service/src/crawler/settings_manager.py",
         "crawler-service/main.py",
-        "crawler-service/lambda_handler.py",
-        "preprocessor-service/preprocessing_service.py"
+        "crawler-service/lambda_handler.py"
     ]
     
     missing_files = []

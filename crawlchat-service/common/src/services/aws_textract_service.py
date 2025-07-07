@@ -10,7 +10,7 @@ import asyncio
 import time
 import uuid
 import hashlib
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -18,7 +18,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from ..core.aws_config import aws_config
 from ..core.exceptions import TextractError
 from .storage_service import get_storage_service
-from .pdf_preprocessing_service import pdf_preprocessing_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -444,55 +444,141 @@ class AWSTextractService:
     ) -> (str, int):
         """
         Upload file to S3 and extract text using AWS Textract.
-        Includes PDF preprocessing for better text extraction.
+        For PDFs: Convert to images first, then process with Textract.
+        For images: Process directly with Textract.
         """
         try:
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
             
-            # Generate S3 key
-            s3_key = aws_config.generate_temp_s3_key(filename)
             bucket_name = aws_config.s3_bucket_name
             
-            # Preprocess PDF if it's a PDF file
-            original_size = len(file_content)
             if filename.lower().endswith('.pdf'):
-                logger.info(f"🔄 Preprocessing PDF {filename} for better Textract performance")
-                try:
-                    file_content = await pdf_preprocessing_service.preprocess_pdf_for_textract(file_content, filename)
-                    processed_size = len(file_content)
-                    stats = pdf_preprocessing_service.get_preprocessing_stats(original_size, processed_size)
-                    logger.info(f"✅ PDF preprocessing completed: {stats['size_reduction_percent']:.1f}% size reduction")
-                except Exception as e:
-                    logger.warning(f"⚠ PDF preprocessing failed, using original: {e}")
-                    file_content = file_content  # Keep original content
+                # For PDFs: Convert to images and process each image with Textract
+                logger.info(f"🔄 Converting PDF {filename} to images for Textract processing")
+                image_keys = await self._convert_pdf_to_images_and_upload(file_content, filename, bucket_name, user_id)
+                
+                if not image_keys:
+                    raise TextractError("Failed to convert PDF to images")
+                
+                # Process all images with Textract
+                text_content, page_count = await self.extract_text_from_image_manifest(bucket_name, image_keys, document_type)
+                
+                # Clean up image files
+                await self._cleanup_s3_objects(bucket_name, image_keys)
+                
+                return text_content, page_count
+            else:
+                # For images: Upload directly and process with Textract
+                s3_key = aws_config.generate_temp_s3_key(filename)
+                
+                logger.info(f"Uploading {filename} to S3: s3://{bucket_name}/{s3_key}")
+                self.s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=self._get_content_type(filename)
+                )
+                
+                # Extract text using Textract
+                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
+                
+                # Clean up S3 object
+                await self._cleanup_s3_objects(bucket_name, [s3_key])
+                
+                return text_content, page_count
             
-            # Upload to S3
-            logger.info(f"Uploading {filename} to S3: s3://{bucket_name}/{s3_key}")
-            self.s3_client.put_object(
-                Bucket=bucket_name,
-                Key=s3_key,
-                Body=file_content,
-                ContentType=self._get_content_type(filename)
+        except Exception as e:
+            logger.error(f"Upload and extraction failed: {e}")
+            raise TextractError(f"Upload and extraction failed: {e}")
+
+    async def _convert_pdf_to_images_and_upload(
+        self, 
+        pdf_content: bytes, 
+        filename: str, 
+        bucket_name: str, 
+        user_id: str
+    ) -> List[str]:
+        """
+        Convert PDF to images and upload to S3. Return list of S3 keys.
+        """
+        try:
+            # Convert PDF to images
+            image_files = await self._convert_pdf_to_images_local(pdf_content, filename)
+            
+            if not image_files:
+                logger.error("Failed to convert PDF to images")
+                return []
+            
+            # Upload images to S3
+            uploaded_keys = []
+            for i, (image_content, image_filename) in enumerate(image_files):
+                s3_key = f"temp-documents/{user_id}/images/{os.path.splitext(filename)[0]}_page_{i+1}.png"
+                
+                self.s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=image_content,
+                    ContentType='image/png'
+                )
+                uploaded_keys.append(s3_key)
+                logger.info(f"Uploaded image {i+1}/{len(image_files)}: {s3_key}")
+            
+            return uploaded_keys
+            
+        except Exception as e:
+            logger.error(f"Error converting PDF to images: {e}")
+            return []
+
+    async def _convert_pdf_to_images_local(
+        self, 
+        pdf_content: bytes, 
+        filename: str
+    ) -> List[Tuple[bytes, str]]:
+        """
+        Convert PDF to images locally using pdf2image.
+        """
+        try:
+            import pdf2image
+            from PIL import Image
+            import io
+            
+            # Convert PDF to images
+            images = pdf2image.convert_from_bytes(
+                pdf_content,
+                dpi=200,  # Good balance between quality and size
+                fmt='PNG',
+                thread_count=1  # Single thread for Lambda compatibility
             )
             
-            # Extract text using hybrid approach
-            text_content, page_count = await self._hybrid_pdf_extraction(
-                file_content, filename, bucket_name, s3_key, document_type, user_id
-            )
+            image_files = []
+            for i, image in enumerate(images):
+                # Convert PIL image to bytes
+                img_buffer = io.BytesIO()
+                image.save(img_buffer, format='PNG', optimize=True)
+                img_bytes = img_buffer.getvalue()
+                
+                image_filename = f"{os.path.splitext(filename)[0]}_page_{i+1}.png"
+                image_files.append((img_bytes, image_filename))
+                
+                logger.info(f"Converted page {i+1} to image: {len(img_bytes)} bytes")
             
-            # Clean up S3 object
+            return image_files
+            
+        except Exception as e:
+            logger.error(f"Error converting PDF to images locally: {e}")
+            return []
+
+    async def _cleanup_s3_objects(self, bucket_name: str, s3_keys: List[str]):
+        """
+        Clean up S3 objects after processing.
+        """
+        for s3_key in s3_keys:
             try:
                 self.s3_client.delete_object(Bucket=bucket_name, Key=s3_key)
                 logger.info(f"Cleaned up S3 object: {s3_key}")
             except Exception as e:
                 logger.warning(f"Failed to clean up S3 object {s3_key}: {e}")
-            
-            return text_content, page_count
-            
-        except Exception as e:
-            logger.error(f"Upload and extraction failed: {e}")
-            raise TextractError(f"Upload and extraction failed: {e}")
 
     async def _hybrid_pdf_extraction(
         self, 
@@ -504,24 +590,35 @@ class AWSTextractService:
         user_id: str
     ) -> (str, int):
         """
-        Hybrid PDF extraction: Skip local methods and always use Textract for testing.
+        Hybrid PDF extraction: Convert to images and use Textract.
         """
-        logger.info(f"Starting Textract-only PDF extraction for {filename}")
+        logger.info(f"Starting PDF-to-image extraction for {filename}")
 
-        # Skip local extraction and go directly to Textract
         try:
-            logger.info(f"🔄 Using Textract directly for {filename} (skipping local extraction)")
-            text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
+            # Convert PDF to images and process with Textract
+            logger.info(f"🔄 Converting PDF {filename} to images for Textract")
+            image_keys = await self._convert_pdf_to_images_and_upload(file_content, filename, bucket_name, user_id)
+            
+            if not image_keys:
+                raise Exception("Failed to convert PDF to images")
+            
+            # Process all images with Textract
+            text_content, page_count = await self.extract_text_from_image_manifest(bucket_name, image_keys, document_type)
+            
             if text_content and len(text_content.strip()) > 10:
                 logger.info(f"✅ Textract extraction successful: {len(text_content)} characters")
                 logger.info(f"📄 First 100 chars: {text_content[:100]}")
+                
+                # Clean up image files
+                await self._cleanup_s3_objects(bucket_name, image_keys)
+                
                 return text_content, page_count
             else:
                 logger.warning(f"⚠ Textract returned minimal content ({len(text_content.strip())} chars)")
-                # Try to provide helpful information about why Textract failed
                 return self._generate_textract_fallback_message(filename, text_content), 1
+                
         except Exception as e:
-            logger.warning(f"⚠ Textract extraction failed: {e}")
+            logger.warning(f"⚠ PDF-to-image extraction failed: {e}")
 
         # Final fallback: Raw text extraction
         try:
@@ -537,11 +634,10 @@ class AWSTextractService:
         logger.error(f"❌ All extraction methods failed for {filename}")
         return (
             f"PDF content could not be extracted from {filename}. Possible reasons:\n"
-            "- The PDF is image-based (scanned document)\n"
             "- The PDF is corrupted or damaged\n"
             "- The PDF has no embedded text content\n"
             "- AWS Textract is not available or configured\n"
-            "Please try uploading a text-based PDF or a different document format.",
+            "Please try uploading a different document format.",
             1
         )
 
@@ -931,8 +1027,6 @@ class AWSTextractService:
         Analyze PDF content to determine its type and extraction strategy.
         """
         try:
-            import fitz  # PyMuPDF
-            
             analysis = {
                 "filename": filename,
                 "file_size": len(file_content),
@@ -944,62 +1038,55 @@ class AWSTextractService:
                 "recommendation": "unknown"
             }
             
-            # Open PDF with PyMuPDF
-            pdf_document = fitz.open(stream=file_content, filetype="pdf")
-            analysis["page_count"] = len(pdf_document)
-            
-            total_text_length = 0
-            text_pages = 0
-            image_pages = 0
-            
-            for page_num in range(len(pdf_document)):
-                page = pdf_document[page_num]
+            # Basic analysis without PyMuPDF
+            try:
+                # Try to extract text using PyPDF2
+                import PyPDF2
+                from io import BytesIO
                 
-                # Extract text
-                text = page.get_text()
-                text_length = len(text.strip())
-                total_text_length += text_length
+                pdf_file = BytesIO(file_content)
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                analysis["page_count"] = len(pdf_reader.pages)
                 
-                # Check for images
-                image_list = page.get_images()
+                total_text_length = 0
+                text_pages = 0
                 
-                if text_length > 50:  # Meaningful text content
-                    text_pages += 1
-                elif len(image_list) > 0:  # Has images
-                    image_pages += 1
+                for page in pdf_reader.pages:
+                    text = page.extract_text()
+                    text_length = len(text.strip())
+                    total_text_length += text_length
+                    
+                    if text_length > 50:  # Meaningful text content
+                        text_pages += 1
+                
+                analysis["text_content_length"] = total_text_length
+                analysis["text_pages"] = text_pages
+                analysis["image_pages"] = analysis["page_count"] - text_pages
+                
+                # Determine PDF type and recommendation
+                if text_pages > 0 and analysis["image_pages"] == 0:
+                    analysis["pdf_type"] = "text_based"
+                    analysis["recommendation"] = "Textract should work well"
+                elif text_pages > 0 and analysis["image_pages"] > 0:
+                    analysis["pdf_type"] = "mixed_content"
+                    analysis["recommendation"] = "Textract may work, but consider original source"
+                elif text_pages == 0 and analysis["image_pages"] > 0:
+                    analysis["pdf_type"] = "image_based"
+                    analysis["recommendation"] = "Use original source file or convert to images"
+                elif total_text_length == 0:
+                    analysis["pdf_type"] = "empty_or_corrupted"
+                    analysis["recommendation"] = "File may be corrupted or empty"
+                else:
+                    analysis["pdf_type"] = "minimal_text"
+                    analysis["recommendation"] = "Limited text content, consider alternative"
+                    
+            except Exception as e:
+                logger.warning(f"PyPDF2 analysis failed: {e}")
+                analysis["pdf_type"] = "unknown"
+                analysis["recommendation"] = "Unable to analyze PDF content"
             
-            analysis["text_content_length"] = total_text_length
-            analysis["text_pages"] = text_pages
-            analysis["image_pages"] = image_pages
-            
-            # Determine PDF type and recommendation
-            if text_pages > 0 and image_pages == 0:
-                analysis["pdf_type"] = "text_based"
-                analysis["recommendation"] = "Textract should work well"
-            elif text_pages > 0 and image_pages > 0:
-                analysis["pdf_type"] = "mixed_content"
-                analysis["recommendation"] = "Textract may work, but consider original source"
-            elif text_pages == 0 and image_pages > 0:
-                analysis["pdf_type"] = "image_based"
-                analysis["recommendation"] = "Use original source file or convert to images"
-            elif total_text_length == 0:
-                analysis["pdf_type"] = "empty_or_corrupted"
-                analysis["recommendation"] = "File may be corrupted or empty"
-            else:
-                analysis["pdf_type"] = "minimal_text"
-                analysis["recommendation"] = "Limited text content, consider alternative"
-            
-            pdf_document.close()
             return analysis
             
-        except ImportError:
-            logger.warning("PyMuPDF not available for PDF analysis")
-            return {
-                "filename": filename,
-                "file_size": len(file_content),
-                "pdf_type": "unknown",
-                "recommendation": "Install PyMuPDF for detailed analysis"
-            }
         except Exception as e:
             logger.error(f"Error analyzing PDF {filename}: {e}")
             return {
@@ -1008,6 +1095,30 @@ class AWSTextractService:
                 "pdf_type": "error",
                 "recommendation": f"Analysis failed: {e}"
             }
+
+    async def extract_text_from_image_manifest(
+        self,
+        s3_bucket: str,
+        image_keys: list,
+        document_type: DocumentType = DocumentType.GENERAL
+    ) -> (str, int):
+        """
+        Extract text from a list of image S3 keys (manifest) using Textract and aggregate results.
+        Returns (combined_text_content, page_count)
+        """
+        all_text = []
+        total_pages = 0
+        for idx, image_key in enumerate(image_keys):
+            try:
+                logger.info(f"Processing image page {idx+1}/{len(image_keys)}: s3://{s3_bucket}/{image_key}")
+                text_content, page_count = await self.extract_text_from_s3_pdf(s3_bucket, image_key, document_type)
+                all_text.append(f"--- Page {idx+1} ---\n{text_content}")
+                total_pages += page_count
+            except Exception as e:
+                logger.warning(f"Textract failed for page {idx+1} ({image_key}): {e}")
+                all_text.append(f"--- Page {idx+1} ---\n[Textract failed: {e}]")
+        combined_text = "\n\n".join(all_text)
+        return combined_text, total_pages
 
 # Global instance
 textract_service = AWSTextractService() 

@@ -142,177 +142,47 @@ class UnifiedPreprocessingService:
         user_id: str,
         force_processing: bool = False
     ) -> Dict[str, Any]:
-        """Process PDF documents with text extraction and image conversion if needed."""
+        """
+        Upload PDF to S3 for Textract processing. Textract service will handle PDF-to-image conversion.
+        """
         try:
             logger.info(f"[UNIFIED_PREPROCESSING] Processing PDF: {filename}")
             
-            # Step 1: Try to extract text directly from PDF
-            text_content = await self._extract_text_from_pdf(pdf_content)
+            # Upload PDF to normalized documents bucket
+            normalized_key = f"normalized-documents/{user_id}/{filename}"
             
-            if text_content and len(text_content.strip()) > 50 and not force_processing:
-                # PDF has extractable text, use as-is
-                logger.info(f"[UNIFIED_PREPROCESSING] PDF has extractable text ({len(text_content)} characters), using as-is")
-                
-                # Upload to normalized documents bucket
-                normalized_key = f"normalized-documents/{user_id}/{filename}"
-                if self.s3_client:
-                    self.s3_client.put_object(
-                        Bucket=config.s3_bucket,
-                        Key=normalized_key,
-                        Body=pdf_content,
-                        ContentType='application/pdf'
-                    )
-                
-                return {
-                    "status": "success",
-                    "processing_type": ProcessingType.DIRECT_TEXT.value,
-                    "document_type": DocumentType.PDF.value,
-                    "text_content": text_content,
-                    "text_length": len(text_content),
-                    "normalized_key": normalized_key,
-                    "message": "PDF processed directly - contains extractable text",
-                    "filename": filename,
-                    "user_id": user_id
-                }
-            else:
-                # PDF needs conversion to images
-                logger.info("[UNIFIED_PREPROCESSING] PDF has no extractable text, converting to images")
-                return await self._convert_pdf_to_images(pdf_content, filename, user_id)
-                
-        except Exception as e:
-            logger.error(f"[UNIFIED_PREPROCESSING] Error processing PDF {filename}: {e}")
-            raise PreprocessingError(f"PDF processing failed: {e}")
-    
-    async def _extract_text_from_pdf(self, pdf_content: bytes) -> Optional[str]:
-        """Try to extract text from PDF using various libraries."""
-        try:
-            # Try PyPDF2 first
-            try:
-                import PyPDF2
-                reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
-                text = ""
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
-                if text.strip():
-                    logger.info("[UNIFIED_PREPROCESSING] Successfully extracted text using PyPDF2")
-                    return text
-            except Exception as e:
-                logger.debug(f"[UNIFIED_PREPROCESSING] PyPDF2 extraction failed: {e}")
-            
-            # Try pdfminer.six
-            try:
-                from pdfminer.high_level import extract_text_to_fp
-                from pdfminer.layout import LAParams
-                
-                output = io.StringIO()
-                extract_text_to_fp(io.BytesIO(pdf_content), output, laparams=LAParams())
-                text = output.getvalue()
-                if text.strip():
-                    logger.info("[UNIFIED_PREPROCESSING] Successfully extracted text using pdfminer.six")
-                    return text
-            except Exception as e:
-                logger.debug(f"[UNIFIED_PREPROCESSING] pdfminer.six extraction failed: {e}")
-            
-            # Try PyMuPDF
-            try:
-                import fitz
-                doc = fitz.open(stream=pdf_content, filetype="pdf")
-                text = ""
-                for page in doc:
-                    text += page.get_text() + "\n"
-                doc.close()
-                if text.strip():
-                    logger.info("[UNIFIED_PREPROCESSING] Successfully extracted text using PyMuPDF")
-                    return text
-            except Exception as e:
-                logger.debug(f"[UNIFIED_PREPROCESSING] PyMuPDF extraction failed: {e}")
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"[UNIFIED_PREPROCESSING] Text extraction failed: {e}")
-            return None
-    
-    async def _convert_pdf_to_images(
-        self, 
-        pdf_content: bytes, 
-        filename: str, 
-        user_id: str
-    ) -> Dict[str, Any]:
-        """Convert PDF to images and upload to S3."""
-        try:
-            # Convert PDF to images using pdf2image
-            image_files = await self._convert_pdf_to_images_local(pdf_content, filename)
-            
-            if not image_files:
-                raise PreprocessingError("Failed to convert PDF to images")
-            
-            # Upload images to S3
-            uploaded_keys = []
-            for i, (image_content, image_filename) in enumerate(image_files):
-                s3_key = f"normalized-documents/{user_id}/images/{os.path.splitext(filename)[0]}_page_{i+1}.png"
-                
-                if self.s3_client:
-                    self.s3_client.put_object(
-                        Bucket=config.s3_bucket,
-                        Key=s3_key,
-                        Body=image_content,
-                        ContentType='image/png'
-                    )
-                uploaded_keys.append(s3_key)
-                logger.info(f"[UNIFIED_PREPROCESSING] Uploaded image {i+1}/{len(image_files)}: {s3_key}")
+            if self.s3_client:
+                self.s3_client.put_object(
+                    Bucket=config.s3_bucket,
+                    Key=normalized_key,
+                    Body=pdf_content,
+                    ContentType='application/pdf'
+                )
             
             return {
                 "status": "success",
-                "processing_type": ProcessingType.PDF_TO_IMAGES.value,
+                "processing_type": ProcessingType.NORMALIZATION.value,
                 "document_type": DocumentType.PDF.value,
-                "image_count": len(image_files),
-                "uploaded_keys": uploaded_keys,
-                "message": f"PDF converted to {len(image_files)} images",
+                "normalized_key": normalized_key,
+                "message": "PDF uploaded for Textract processing",
                 "filename": filename,
                 "user_id": user_id
             }
             
         except Exception as e:
-            logger.error(f"[UNIFIED_PREPROCESSING] Error converting PDF to images: {e}")
-            raise PreprocessingError(f"PDF to image conversion failed: {e}")
+            logger.error(f"[UNIFIED_PREPROCESSING] Error processing PDF {filename}: {e}")
+            raise PreprocessingError(f"PDF processing failed: {e}")
     
     async def _convert_pdf_to_images_local(
         self, 
         pdf_content: bytes, 
         filename: str
     ) -> List[Tuple[bytes, str]]:
-        """Convert PDF to images locally using pdf2image."""
-        try:
-            import pdf2image
-            from PIL import Image
-            import io
-            
-            # Convert PDF to images
-            images = pdf2image.convert_from_bytes(
-                pdf_content,
-                dpi=200,  # Good balance between quality and size
-                fmt='PNG',
-                thread_count=1  # Single thread for Lambda compatibility
-            )
-            
-            image_files = []
-            for i, image in enumerate(images):
-                # Convert PIL image to bytes
-                img_buffer = io.BytesIO()
-                image.save(img_buffer, format='PNG', optimize=True)
-                img_bytes = img_buffer.getvalue()
-                
-                image_filename = f"{os.path.splitext(filename)[0]}_page_{i+1}.png"
-                image_files.append((img_bytes, image_filename))
-                
-                logger.info(f"[UNIFIED_PREPROCESSING] Converted page {i+1} to image: {len(img_bytes)} bytes")
-            
-            return image_files
-            
-        except Exception as e:
-            logger.error(f"[UNIFIED_PREPROCESSING] Error converting PDF to images locally: {e}")
-            return []
+        """
+        This method is deprecated. PDF-to-image conversion is now handled by the Textract service.
+        """
+        logger.warning("[UNIFIED_PREPROCESSING] PDF-to-image conversion is now handled by Textract service")
+        return []
     
     async def _process_image(
         self, 

@@ -56,7 +56,9 @@ def find_python_files(directory):
 
 def main():
     """Main function to update all imports."""
-    services = ['lambda-service', 'crawler-service', 'preprocessor-service']
+    services = ['lambda-service', 'crawler-service']
+    
+    services = [s for s in services if s != 'preprocessor-service']
     
     for service in services:
         service_path = f"{service}/src"

@@ -30,9 +30,6 @@ class AWSConfig:
                         "secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
                         "region": os.getenv("AWS_REGION", "ap-south-1")
                     },
-                    "sqs": {
-                        "queue_name": "stock-market-crawler-tasks"
-                    },
                     "lambda": {
                         "function_name": "stock-market-crawler-background-processor"
                     },
@@ -112,11 +109,6 @@ class AWSConfig:
         return "ap-south-1"
     
     @property
-    def sqs_queue_name(self) -> str:
-        """Get SQS queue name."""
-        return self.config.get("sqs", {}).get("queue_name", "stock-market-crawler-tasks")
-    
-    @property
     def lambda_function_name(self) -> str:
         """Get Lambda function name."""
         return self.config.get("lambda", {}).get("function_name", "stock-market-crawler-background-processor")
@@ -156,12 +148,6 @@ class AWSConfig:
         """Get Textract region - use same region as main AWS region to avoid S3 conflicts."""
         # Use the same region as the main AWS region to avoid S3 region mismatches
         return self.region
-    
-    def get_sqs_queue_url(self) -> str:
-        """Get SQS queue URL."""
-        # For now, return None to disable SQS operations until queue is properly configured
-        # This prevents the InvalidAddress error
-        return None
     
     def get_lambda_function_arn(self) -> str:
         """Get Lambda function ARN."""

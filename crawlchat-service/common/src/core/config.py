@@ -96,10 +96,6 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     aws_account_id: str = ""
     
-    # SQS settings
-    sqs_queue_url: str = ""
-    sqs_dead_letter_queue_url: str = ""
-    
     # Lambda settings
     lambda_function_name: str = "stock-market-crawler-background-processor"
     
@@ -109,6 +105,10 @@ class Settings(BaseSettings):
     
     # S3 settings
     s3_bucket_name: str = "stock-market-crawler-data"
+    s3_documents_prefix: str = "documents/"
+    s3_crawled_data_prefix: str = "crawled_data/"
+    s3_uploaded_documents_prefix: str = "uploaded_documents/"
+    s3_temp_prefix: str = "temp/"
     
     # OpenAI settings
     openai_model: str = "gpt-4o-mini"
