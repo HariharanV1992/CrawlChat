@@ -16,6 +16,7 @@ import hashlib
 
 from common.src.services.vector_store_service import vector_store_service
 from common.src.services.storage_service import StorageService
+from common.src.services.unified_preprocessing_service import unified_preprocessing_service, DocumentType
 from common.src.core.database import mongodb
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class DocumentProcessingService:
     def __init__(self):
         self.storage_service = StorageService()
         self.vector_store_id = None
+        self.preprocessing_service = unified_preprocessing_service
         
     async def process_document_with_vector_store(
         self, 
@@ -467,6 +469,95 @@ class DocumentProcessingService:
         except Exception as e:
             logger.error(f"[DOC_PROCESSING] Error in batch file processing: {e}")
             raise
+
+    async def process_document_with_preprocessing(
+        self,
+        file_content: bytes,
+        filename: str,
+        user_id: str = "anonymous",
+        metadata: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process a document with unified preprocessing before vector store integration.
+        
+        Args:
+            file_content: Raw file content as bytes
+            filename: Original filename
+            user_id: User ID for organization
+            metadata: Additional metadata
+            session_id: Optional session ID for vector store organization
+            
+        Returns:
+            Processing result with preprocessing and vector store information
+        """
+        try:
+            logger.info(f"[DOC_PROCESSING] Processing document with preprocessing: {filename}")
+            
+            # Step 1: Preprocess the document
+            preprocessing_result = await self.preprocessing_service.process_document(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id
+            )
+            
+            if preprocessing_result.get("status") != "success":
+                return {
+                    "status": "error",
+                    "error": preprocessing_result.get("error", "Preprocessing failed"),
+                    "filename": filename
+                }
+            
+            # Step 2: If preprocessing extracted text, process with vector store
+            text_content = preprocessing_result.get("text_content")
+            if text_content:
+                document_id = str(uuid.uuid4())
+                
+                # Prepare metadata
+                processing_metadata = {
+                    "preprocessing_type": preprocessing_result.get("processing_type"),
+                    "document_type": preprocessing_result.get("document_type"),
+                    "normalized_key": preprocessing_result.get("normalized_key"),
+                    "user_id": user_id
+                }
+                
+                if metadata:
+                    processing_metadata.update(metadata)
+                
+                # Process with vector store
+                vector_result = await self.process_document_with_vector_store(
+                    document_id=document_id,
+                    content=text_content,
+                    filename=filename,
+                    metadata=processing_metadata,
+                    session_id=session_id
+                )
+                
+                # Combine results
+                return {
+                    "status": "success",
+                    "preprocessing": preprocessing_result,
+                    "vector_store": vector_result,
+                    "document_id": document_id,
+                    "filename": filename
+                }
+            else:
+                # Document was processed but no text extracted (e.g., images)
+                return {
+                    "status": "success",
+                    "preprocessing": preprocessing_result,
+                    "vector_store": None,
+                    "message": "Document preprocessed but no text content for vector store",
+                    "filename": filename
+                }
+                
+        except Exception as e:
+            logger.error(f"[DOC_PROCESSING] Error processing document with preprocessing {filename}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "filename": filename
+            }
 
 # Global instance
 document_processing_service = DocumentProcessingService() 

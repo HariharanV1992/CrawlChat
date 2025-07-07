@@ -97,4 +97,9 @@ class EmailError(Exception):
 
 class BackgroundServiceError(StockCrawlerException):
     """Background service related errors."""
+    pass
+
+
+class PreprocessingError(StockCrawlerException):
+    """Document preprocessing related errors."""
     pass 
