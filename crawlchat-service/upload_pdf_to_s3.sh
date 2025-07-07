@@ -3,7 +3,7 @@
 # Upload PDF to S3 for Lambda testing
 # This avoids file corruption during Lambda deployment
 
-BUCKET_NAME="your-bucket-name"  # Replace with your actual bucket name
+BUCKET_NAME="crawlchat-data"  # Using your existing bucket
 PDF_PATH="Namecheap.pdf"
 S3_KEY="pdfs/Namecheap.pdf"
 
