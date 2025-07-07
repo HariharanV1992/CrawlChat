@@ -27,6 +27,11 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     
     return True, "Password is strong"
 
+def validate_password(password: str) -> bool:
+    """Validate password (basic validation)."""
+    is_valid, _ = validate_password_strength(password)
+    return is_valid
+
 def validate_url(url: str) -> bool:
     """Validate URL format."""
     try:

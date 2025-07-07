@@ -12,8 +12,8 @@ import logging
 import secrets
 import string
 
-from ..core.config import config
-from ..core.exceptions import EmailError
+from common.src.core.config import config
+from common.src.core.exceptions import EmailError
 
 logger = logging.getLogger(__name__)
 

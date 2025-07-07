@@ -32,4 +32,14 @@ def generate_secure_token(length: int = 32) -> str:
 
 def generate_api_key() -> str:
     """Generate a secure API key."""
-    return secrets.token_urlsafe(32) 
+    return secrets.token_urlsafe(32)
+
+def get_password_hash(password: str) -> str:
+    """Get password hash using bcrypt."""
+    try:
+        import bcrypt
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    except ImportError:
+        # Fallback to SHA-256 if bcrypt is not available
+        hashed, salt = hash_password(password)
+        return f"{hashed}:{salt}" 

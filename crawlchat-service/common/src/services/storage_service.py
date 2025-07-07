@@ -10,10 +10,10 @@ from datetime import datetime
 import uuid
 import io
 
-from ..core.config import config
-from ..core.aws_config import aws_config
-from ..core.exceptions import StorageError
-from ..core.database import mongodb
+from common.src.core.config import config
+from common.src.core.aws_config import aws_config
+from common.src.core.exceptions import StorageError
+from common.src.core.database import mongodb
 
 logger = logging.getLogger(__name__)
 

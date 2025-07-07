@@ -134,6 +134,21 @@ class CrawlResult(BaseModel):
     completed_at: datetime = Field(..., description="Completion timestamp")
 
 
+class CrawlConfig(BaseModel):
+    """Crawl configuration model."""
+    max_documents: int = Field(default=5, ge=1, le=100, description="Maximum documents to download")
+    max_pages: int = Field(default=50, ge=1, le=1000, description="Maximum pages to crawl")
+    max_workers: int = Field(default=3, ge=1, le=50, description="Maximum concurrent workers")
+    delay: float = Field(default=0.05, ge=0, le=10, description="Delay between requests in seconds")
+    total_timeout: int = Field(default=1800, ge=60, le=7200, description="Total timeout in seconds")
+    page_timeout: int = Field(default=60, ge=10, le=300, description="Page timeout in seconds")
+    request_timeout: int = Field(default=30, ge=5, le=120, description="Request timeout in seconds")
+    use_proxy: bool = Field(default=False, description="Use proxy")
+    proxy_api_key: Optional[str] = Field(None, description="Proxy API key")
+    render: bool = Field(default=False, description="Render JavaScript")
+    retry: int = Field(default=3, description="Number of retries")
+
+
 class CrawlTaskCreate(BaseModel):
     """Crawl task creation model."""
     url: HttpUrl = Field(..., description="Target URL to crawl")
