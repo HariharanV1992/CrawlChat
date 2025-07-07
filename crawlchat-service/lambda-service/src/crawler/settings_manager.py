@@ -64,9 +64,45 @@ class SettingsManager:
         
         defaults = {
             'use_proxy': True,
-            'api_key': "087071cd4dfe9cad8630b1d893552849",
-            'scraperapi_base': "http://api.scraperapi.com/",
             'timeout': 30,
+            'proxy_api_key': "",
+            'proxy_method': "api_endpoint",  # "api_endpoint" or "proxy_port"
+            'min_file_size': 1024,
+            'output_dir': "crawled_data",
+            'single_page_mode': False,
+            
+            # Performance settings
+            'connection_limit': 100,
+            'tcp_connector_limit': 50,
+            'keepalive_timeout': 30,
+            'enable_compression': True,
+            
+            # Timeout settings
+            'total_timeout': 1800,  # Total crawl timeout in seconds (30 minutes)
+            'page_timeout': 60,     # Timeout per page in seconds
+            'request_timeout': 30,  # Timeout per request in seconds
+            
+            # Early termination settings
+            'max_pages_without_documents': 20,  # Stop if no documents found after this many pages
+            
+            # Content filtering
+            'relevant_keywords': [
+                'stock', 'market', 'financial', 'investor', 'earnings', 'revenue',
+                'profit', 'dividend', 'share', 'equity', 'trading', 'quote',
+                'annual', 'quarterly', 'report', 'statement', 'filing', 'sec',
+                'board', 'governance', 'corporate', 'news', 'announcement'
+            ],
+            'exclude_patterns': [
+                'login', 'admin', 'private', 'internal', 'test', 'dev',
+                'temp', 'cache', 'session', 'cookie', 'tracking', 'advertisement',
+                'ad', 'banner', 'social', 'facebook', 'twitter', 'linkedin',
+                'youtube', 'instagram', 'subscribe', 'newsletter', 'contact',
+                'about', 'careers', 'jobs', 'support', 'help', 'faq'
+            ],
+            'document_extensions': ['.pdf', '.doc', '.docx', '.xlsx', '.xls', '.ppt', '.pptx', '.txt', '.csv'],
+            
+            # ScrapingBee specific settings
+            'scrapingbee_api_key': "",
             'country_code': 'us',
             'premium': True,
             'bypass': 'cloudflare'

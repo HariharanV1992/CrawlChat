@@ -1,179 +1,129 @@
 """
-Proxy manager for handling ScraperAPI and direct requests.
+Proxy Manager for ScrapingBee integration with smart JavaScript rendering control.
 """
 
-import requests
-import random
-import time
 import logging
-import urllib3
+import asyncio
+import aiohttp
 from typing import Optional, Dict, Any
-from .utils import rotate_user_agent
-
-# Suppress SSL warnings for ScraperAPI
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from .smart_scrapingbee_manager import SmartScrapingBeeManager, ContentCheckers
 
 logger = logging.getLogger(__name__)
 
-class ProxyManager:
-    """Manages proxy requests and fallback strategies."""
+class ScrapingBeeProxyManager:
+    """
+    Proxy manager using ScrapingBee with smart JavaScript rendering control.
+    """
     
-    def __init__(self, api_key: str, use_proxy: bool = True, scraperapi_base: str = "http://api.scraperapi.com/"):
+    def __init__(self, api_key: str, base_options: Dict[str, Any] = None):
         self.api_key = api_key
-        self.use_proxy = use_proxy
-        self.scraperapi_base = scraperapi_base
-        self.session = requests.Session()
+        self.smart_manager = SmartScrapingBeeManager(api_key, base_options)
         
-        # Performance tracking
-        self.proxy_requests = 0
-        self.proxy_failures = 0
-        
-        # Connection pooling
-        self.session.mount('http://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
-        self.session.mount('https://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
-    
-    def make_request(self, url: str, is_binary: bool = False, timeout: int = 15) -> requests.Response:
-        """Make a request through proxy or direct connection."""
-        if not self.use_proxy:
-            return self._make_direct_request(url, is_binary, timeout)
-        
-        return self._make_proxy_request(url, is_binary, timeout)
-    
-    def _make_proxy_request(self, url: str, is_binary: bool = False, timeout: int = 15) -> requests.Response:
-        """Make a request through ScraperAPI proxy using the correct format."""
-        self.proxy_requests += 1
-        
-        # Build ScraperAPI URL with parameters
-        proxy_url = f"{self.scraperapi_base}?api_key={self.api_key}&url={url}&render=true&country_code=us&premium=true"
-        
-        # Enhanced headers for better success rate
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
+        # Default options for different site types
+        self.site_options = {
+            'news': {
+                'premium_proxy': True,
+                'country_code': 'us',
+                'block_ads': True,
+                'block_resources': False,
+            },
+            'stock': {
+                'premium_proxy': True,
+                'country_code': 'us',
+                'block_ads': True,
+                'block_resources': False,
+            },
+            'financial': {
+                'premium_proxy': True,
+                'country_code': 'us',
+                'block_ads': True,
+                'block_resources': False,
+            }
         }
+    
+    async def make_request(self, url: str, site_type: str = 'generic', timeout: int = 30) -> aiohttp.ClientResponse:
+        """
+        Make a smart request using ScrapingBee with automatic JS rendering control.
+        
+        Args:
+            url: Target URL to scrape
+            site_type: Type of site ('news', 'stock', 'financial', 'generic')
+            timeout: Request timeout in seconds
+        
+        Returns:
+            aiohttp.ClientResponse object
+        """
+        # Select content checker based on site type
+        content_checker = self._get_content_checker(site_type)
+        
+        # Update options for site type
+        if site_type in self.site_options:
+            self.smart_manager.base_options.update(self.site_options[site_type])
         
         try:
-            logger.debug(f"Making proxy request for {url}")
-            response = self.session.get(
-                proxy_url, 
-                headers=headers,
-                timeout=timeout, 
-                stream=is_binary,
-                verify=False  # Disable SSL verification for ScraperAPI
-            )
+            # Use the smart manager to make the request
+            response = self.smart_manager.make_smart_request(url, content_checker, timeout)
             
-            if response.status_code == 200:
-                logger.info(f"Proxy request successful for {url}")
-                return response
-            else:
-                logger.warning(f"Proxy returned status {response.status_code} for {url}")
-                raise requests.exceptions.RequestException(f"HTTP {response.status_code}")
-                
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
-            logger.warning(f"Proxy request failed for {url}: {e}")
-            self.proxy_failures += 1
+            # Convert requests.Response to aiohttp.ClientResponse-like object
+            return self._wrap_response(response)
             
-            # Fallback to direct request
-            logger.info(f"Falling back to direct request for {url}")
-            return self._make_direct_request(url, is_binary, timeout)
-    
-    def _make_direct_request(self, url: str, is_binary: bool = False, timeout: int = 15) -> requests.Response:
-        """Make a direct request with enhanced configuration to bypass 403 errors."""
-        # Enhanced headers to mimic real browser
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
-        }
-        
-        # Add referer for better success rate
-        if 'livemint.com' in url:
-            headers['Referer'] = 'https://www.google.com/'
-        elif 'cbd.ae' in url:
-            headers['Referer'] = 'https://www.google.com/'
-        
-        try:
-            response = self.session.get(
-                url, 
-                headers=headers, 
-                timeout=timeout, 
-                stream=is_binary,
-                allow_redirects=True
-            )
-            
-            # If we get 403, try with different approach
-            if response.status_code == 403:
-                logger.warning(f"Got 403 for {url}, trying with different headers")
-                return self._retry_with_different_headers(url, is_binary, timeout)
-            
-            response.raise_for_status()
-            logger.info(f"Direct request successful for {url}")
-            return response
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Direct request failed for {url}: {e}")
+        except Exception as e:
+            logger.error(f"ScrapingBee request failed for {url}: {e}")
             raise
     
-    def _retry_with_different_headers(self, url: str, is_binary: bool = False, timeout: int = 15) -> requests.Response:
-        """Retry request with different headers to bypass 403."""
-        # Alternative headers that might work
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Referer': 'https://www.bing.com/',
+    def _get_content_checker(self, site_type: str):
+        """Get appropriate content checker for site type."""
+        checkers = {
+            'news': ContentCheckers.news_site_checker,
+            'stock': ContentCheckers.stock_site_checker,
+            'financial': ContentCheckers.financial_report_checker,
+            'generic': ContentCheckers.generic_checker,
         }
-        
-        try:
-            response = self.session.get(
-                url, 
-                headers=headers, 
-                timeout=timeout, 
-                stream=is_binary,
-                allow_redirects=True
-            )
-            
-            if response.status_code == 403:
-                logger.warning(f"Still getting 403 for {url}, this site may require JavaScript")
-                raise requests.exceptions.RequestException("Site requires JavaScript rendering")
-            
-            response.raise_for_status()
-            logger.info(f"Retry request successful for {url}")
-            return response
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Retry request failed for {url}: {e}")
-            raise
+        return checkers.get(site_type, ContentCheckers.generic_checker)
     
-    def get_stats(self) -> Dict[str, int]:
-        """Get proxy usage statistics."""
-        return {
-            'proxy_requests': self.proxy_requests,
-            'proxy_failures': self.proxy_failures,
-            'success_rate': round(((self.proxy_requests - self.proxy_failures) / max(1, self.proxy_requests)) * 100, 2)
-        }
+    def _wrap_response(self, requests_response):
+        """Wrap requests.Response to be compatible with aiohttp.ClientResponse."""
+        class WrappedResponse:
+            def __init__(self, response):
+                self._response = response
+                self.status = response.status_code
+                self.headers = response.headers
+                self.url = response.url
+            
+            async def text(self):
+                return self._response.text
+            
+            async def read(self):
+                return self._response.content
+            
+            async def json(self):
+                return self._response.json()
+            
+            def close(self):
+                pass
+        
+        return WrappedResponse(requests_response)
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get usage statistics."""
+        return self.smart_manager.get_stats()
+    
+    def get_cost_estimate(self) -> Dict[str, float]:
+        """Get cost estimate."""
+        return self.smart_manager.get_cost_estimate()
+    
+    def save_site_requirements(self, filename: str = "site_js_requirements.json"):
+        """Save site JS requirements."""
+        self.smart_manager.save_site_requirements(filename)
+    
+    def load_site_requirements(self, filename: str = "site_js_requirements.json"):
+        """Load site JS requirements."""
+        self.smart_manager.load_site_requirements(filename)
     
     def close(self):
-        """Close the session."""
-        self.session.close() 
+        """Close the manager."""
+        self.smart_manager.close()
+
+
+# Legacy compatibility - keep the old class name for existing code
+ProxyManager = ScrapingBeeProxyManager 

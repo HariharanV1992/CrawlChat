@@ -44,7 +44,23 @@ def update_lambda_environment():
         "LOG_FILE": "/var/log/crawlchat/app.log",
         "PROXY_API_KEY": "YOUR_PROXY_API_KEY_HERE",
         "USE_PROXY": "true",
-        "SCRAPERAPI_BASE": "http://api.scraperapi.com/"
+        "SCRAPINGBEE_API_KEY": "",
+        "SCRAPINGBEE_OPTIONS": "{}",
+        "PROXY_METHOD": "api_endpoint",
+        "MIN_FILE_SIZE": "1024",
+        "OUTPUT_DIR": "crawled_data",
+        "SINGLE_PAGE_MODE": "false",
+        "CONNECTION_LIMIT": "100",
+        "TCP_CONNECTOR_LIMIT": "50",
+        "KEEPALIVE_TIMEOUT": "30",
+        "ENABLE_COMPRESSION": "true",
+        "TOTAL_TIMEOUT": "1800",
+        "PAGE_TIMEOUT": "60",
+        "REQUEST_TIMEOOUT": "30",
+        "MAX_PAGES_WITHOUT_DOCUMENTS": "20",
+        "RELEVANT_KEYWORDS": "stock,market,financial,investor,earnings,revenue,profit,dividend,share,equity,trading,quote,annual,quarterly,report,statement,filing,sec,board,governance,corporate,news,announcement",
+        "EXCLUDE_PATTERNS": "login,admin,private,internal,test,dev,temp,cache,session,cookie,tracking,advertisement,ad,banner,social,facebook,twitter,linkedin,youtube,instagram,subscribe,newsletter,contact,about,careers,jobs,support,help,faq",
+        "DOCUMENT_EXTENSIONS": ".pdf,.doc,.docx,.xlsx,.xls,.ppt,.pptx,.txt,.csv",
     }
     
     try:
