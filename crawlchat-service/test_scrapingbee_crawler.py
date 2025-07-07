@@ -4,286 +4,303 @@ Test script to demonstrate ScrapingBee integration with different proxy configur
 """
 
 import asyncio
+import logging
 import sys
 import os
 from pathlib import Path
 
-# Add the crawler-service/src directory to the Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-crawler_src_path = os.path.join(current_dir, 'crawler-service', 'src')
-sys.path.insert(0, crawler_src_path)
+# Add the common module to the path
+sys.path.insert(0, str(Path(__file__).parent / "common" / "src"))
 
-from crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+from crawler.advanced_crawler import AdvancedCrawler
+from models.crawler import CrawlConfig
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def test_basic_scrapingbee():
-    """Test basic ScrapingBee with default settings."""
-    print("🔧 Testing Basic ScrapingBee Configuration...")
+    """Test basic ScrapingBee functionality."""
+    print("\n=== Basic ScrapingBee Test ===")
     
     config = CrawlConfig(
-        scrapingbee_api_key="YOUR_SCRAPINGBEE_API_KEY",  # Replace with your key
-        scrapingbee_options={
-            "render_js": True,
-            "country_code": "us",
-            "premium_proxy": False,  # Use standard proxies
-        },
-        use_proxy=True,
-        max_pages=2,
-        max_documents=1,
+        max_documents=5,
+        max_pages=10,
         max_workers=2,
-        single_page_mode=True
+        delay=0.1,
+        use_proxy=True,
+        proxy_api_key="your_scrapingbee_api_key_here",
+        render=False,
+        retry=3
     )
     
-    crawler = AdvancedCrawler("https://httpbin.org/headers", config)
+    crawler = AdvancedCrawler(
+        api_key=config.proxy_api_key,
+        output_dir="/tmp/test_basic",
+        max_depth=1,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/ip"
     
     try:
-        await crawler.crawl()
-        print("✅ Basic ScrapingBee test completed!")
+        results = await crawler.crawl(url)
+        print(f"✅ Basic test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
     except Exception as e:
-        print(f"❌ Basic ScrapingBee test failed: {e}")
+        print(f"❌ Basic test failed: {e}")
+        return False
 
 async def test_premium_proxy():
-    """Test ScrapingBee with premium proxies."""
-    print("\n🚀 Testing Premium Proxy Configuration...")
+    """Test premium proxy functionality."""
+    print("\n=== Premium Proxy Test ===")
     
     config = CrawlConfig(
-        scrapingbee_api_key="YOUR_SCRAPINGBEE_API_KEY",  # Replace with your key
-        scrapingbee_options={
-            "premium_proxy": True,
-            "country_code": "us",
-            "render_js": True,
-        },
+        max_documents=3,
+        max_pages=5,
+        max_workers=1,
+        delay=0.2,
         use_proxy=True,
-        max_pages=1,
-        max_documents=1,
-        single_page_mode=True
+        proxy_api_key="your_scrapingbee_api_key_here",
+        render=True,
+        retry=2
     )
     
-    crawler = AdvancedCrawler("https://httpbin.org/ip", config)
+    crawler = AdvancedCrawler(
+        api_key=config.proxy_api_key,
+        output_dir="/tmp/test_premium",
+        max_depth=1,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/headers"
     
     try:
-        await crawler.crawl()
-        print("✅ Premium proxy test completed!")
+        results = await crawler.crawl(url)
+        print(f"✅ Premium proxy test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
     except Exception as e:
         print(f"❌ Premium proxy test failed: {e}")
+        return False
 
-async def test_stealth_proxy():
-    """Test ScrapingBee with stealth proxies."""
-    print("\n🕵️ Testing Stealth Proxy Configuration...")
+async def test_stealth_mode():
+    """Test stealth mode functionality."""
+    print("\n=== Stealth Mode Test ===")
     
     config = CrawlConfig(
-        scrapingbee_api_key="YOUR_SCRAPINGBEE_API_KEY",  # Replace with your key
-        scrapingbee_options={
-            "stealth_proxy": True,
-            "country_code": "de",  # Germany
-            "render_js": True,
-        },
+        max_documents=2,
+        max_pages=3,
+        max_workers=1,
+        delay=0.3,
         use_proxy=True,
-        max_pages=1,
-        max_documents=1,
-        single_page_mode=True
+        proxy_api_key="your_scrapingbee_api_key_here",
+        render=True,
+        retry=1
     )
     
-    crawler = AdvancedCrawler("https://httpbin.org/ip", config)
+    crawler = AdvancedCrawler(
+        api_key=config.proxy_api_key,
+        output_dir="/tmp/test_stealth",
+        max_depth=1,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/user-agent"
     
     try:
-        await crawler.crawl()
-        print("✅ Stealth proxy test completed!")
+        results = await crawler.crawl(url)
+        print(f"✅ Stealth mode test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
     except Exception as e:
-        print(f"❌ Stealth proxy test failed: {e}")
+        print(f"❌ Stealth mode test failed: {e}")
+        return False
 
 async def test_geolocation():
-    """Test ScrapingBee with different geolocations."""
-    print("\n🌍 Testing Geolocation Configuration...")
+    """Test geolocation functionality."""
+    print("\n=== Geolocation Test ===")
     
-    countries = ["us", "in", "gb", "de", "jp"]
+    config = CrawlConfig(
+        max_documents=2,
+        max_pages=3,
+        max_workers=1,
+        delay=0.2,
+        use_proxy=True,
+        proxy_api_key="your_scrapingbee_api_key_here",
+        render=False,
+        retry=2
+    )
     
-    for country in countries:
-        print(f"  Testing {country.upper()} location...")
-        
-        config = CrawlConfig(
-            scrapingbee_api_key="YOUR_SCRAPINGBEE_API_KEY",  # Replace with your key
-            scrapingbee_options={
-                "premium_proxy": True,
-                "country_code": country,
-                "render_js": True,
-            },
-            use_proxy=True,
-            max_pages=1,
-            max_documents=1,
-            single_page_mode=True
-        )
-        
-        crawler = AdvancedCrawler("https://httpbin.org/ip", config)
-        
-        try:
-            await crawler.crawl()
-            print(f"    ✅ {country.upper()} test completed!")
-        except Exception as e:
-            print(f"    ❌ {country.upper()} test failed: {e}")
+    crawler = AdvancedCrawler(
+        api_key=config.proxy_api_key,
+        output_dir="/tmp/test_geo",
+        max_depth=1,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/ip"
+    
+    try:
+        results = await crawler.crawl(url)
+        print(f"✅ Geolocation test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
+    except Exception as e:
+        print(f"❌ Geolocation test failed: {e}")
+        return False
 
 async def test_own_proxy():
-    """Test ScrapingBee with your own proxy."""
-    print("\n🔑 Testing Own Proxy Configuration...")
+    """Test own proxy functionality."""
+    print("\n=== Own Proxy Test ===")
     
     config = CrawlConfig(
-        scrapingbee_api_key="YOUR_SCRAPINGBEE_API_KEY",  # Replace with your key
-        scrapingbee_options={
-            "own_proxy": "https://username:password@your-proxy-host:port",  # Replace with your proxy
-            "render_js": True,
-        },
+        max_documents=2,
+        max_pages=3,
+        max_workers=1,
+        delay=0.2,
         use_proxy=True,
-        max_pages=1,
-        max_documents=1,
-        single_page_mode=True
+        proxy_api_key="your_scrapingbee_api_key_here",
+        render=False,
+        retry=2
     )
     
-    crawler = AdvancedCrawler("https://httpbin.org/ip", config)
+    crawler = AdvancedCrawler(
+        api_key=config.proxy_api_key,
+        output_dir="/tmp/test_own_proxy",
+        max_depth=1,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/ip"
     
     try:
-        await crawler.crawl()
-        print("✅ Own proxy test completed!")
+        results = await crawler.crawl(url)
+        print(f"✅ Own proxy test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
     except Exception as e:
         print(f"❌ Own proxy test failed: {e}")
+        return False
 
 async def test_advanced_features():
-    """Test ScrapingBee with advanced features."""
-    print("\n⚡ Testing Advanced Features...")
+    """Test advanced ScrapingBee features."""
+    print("\n=== Advanced Features Test ===")
     
     config = CrawlConfig(
-        scrapingbee_api_key="YOUR_SCRAPINGBEE_API_KEY",  # Replace with your key
-        scrapingbee_options={
-            "premium_proxy": True,
-            "country_code": "us",
-            "render_js": True,
-            "wait": 2000,  # Wait 2 seconds for JS to load
-            "block_ads": True,  # Block ads
-            "block_resources": False,  # Load images and CSS
-            "window_width": 1920,
-            "window_height": 1080,
-            "device": "desktop",
-        },
+        max_documents=3,
+        max_pages=5,
+        max_workers=2,
+        delay=0.1,
         use_proxy=True,
-        max_pages=1,
-        max_documents=1,
-        single_page_mode=True
+        proxy_api_key="your_scrapingbee_api_key_here",
+        render=True,
+        retry=3
     )
     
-    crawler = AdvancedCrawler("https://httpbin.org/user-agent", config)
+    crawler = AdvancedCrawler(
+        api_key=config.proxy_api_key,
+        output_dir="/tmp/test_advanced",
+        max_depth=2,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/html"
     
     try:
-        await crawler.crawl()
-        print("✅ Advanced features test completed!")
+        results = await crawler.crawl(url)
+        print(f"✅ Advanced features test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
     except Exception as e:
         print(f"❌ Advanced features test failed: {e}")
+        return False
 
 async def test_no_proxy():
-    """Test without proxy (direct connection)."""
-    print("\n🌐 Testing Direct Connection (No Proxy)...")
+    """Test without proxy functionality."""
+    print("\n=== No Proxy Test ===")
     
     config = CrawlConfig(
+        max_documents=2,
+        max_pages=3,
+        max_workers=1,
+        delay=0.1,
         use_proxy=False,
-        max_pages=1,
-        max_documents=1,
-        single_page_mode=True
+        proxy_api_key=None,
+        render=False,
+        retry=1
     )
     
-    crawler = AdvancedCrawler("https://httpbin.org/ip", config)
+    crawler = AdvancedCrawler(
+        api_key="",
+        output_dir="/tmp/test_no_proxy",
+        max_depth=1,
+        max_pages=config.max_pages,
+        delay=config.delay,
+        site_type='generic'
+    )
+    
+    url = "https://httpbin.org/ip"
     
     try:
-        await crawler.crawl()
-        print("✅ Direct connection test completed!")
+        results = await crawler.crawl(url)
+        print(f"✅ No proxy test completed: {len(results.get('downloaded_files', []))} files downloaded")
+        return True
     except Exception as e:
-        print(f"❌ Direct connection test failed: {e}")
-
-def print_configuration_guide():
-    """Print a guide for configuring ScrapingBee."""
-    print("\n" + "="*60)
-    print("📋 ScrapingBee Configuration Guide")
-    print("="*60)
-    
-    print("\n🔑 Basic Configuration:")
-    print("  config = CrawlConfig(")
-    print("      scrapingbee_api_key='YOUR_API_KEY',")
-    print("      scrapingbee_options={")
-    print("          'render_js': True,")
-    print("          'country_code': 'us',")
-    print("          'premium_proxy': False,")
-    print("      },")
-    print("      use_proxy=True")
-    print("  )")
-    
-    print("\n🚀 Premium Proxy:")
-    print("  scrapingbee_options={")
-    print("      'premium_proxy': True,")
-    print("      'country_code': 'us',")
-    print("  }")
-    
-    print("\n🕵️ Stealth Proxy:")
-    print("  scrapingbee_options={")
-    print("      'stealth_proxy': True,")
-    print("      'country_code': 'de',")
-    print("  }")
-    
-    print("\n🌍 Geolocation Options:")
-    print("  'country_code': 'us'  # United States")
-    print("  'country_code': 'in'  # India")
-    print("  'country_code': 'gb'  # United Kingdom")
-    print("  'country_code': 'de'  # Germany")
-    print("  'country_code': 'jp'  # Japan")
-    
-    print("\n🔑 Own Proxy:")
-    print("  scrapingbee_options={")
-    print("      'own_proxy': 'https://user:pass@host:port',")
-    print("  }")
-    
-    print("\n⚡ Advanced Features:")
-    print("  scrapingbee_options={")
-    print("      'wait': 2000,           # Wait 2 seconds")
-    print("      'block_ads': True,      # Block advertisements")
-    print("      'block_resources': False, # Load images/CSS")
-    print("      'window_width': 1920,   # Browser width")
-    print("      'window_height': 1080,  # Browser height")
-    print("      'device': 'desktop',    # or 'mobile'")
-    print("  }")
-    
-    print("\n💰 Cost Information:")
-    print("  - Standard proxy: 1-5 credits")
-    print("  - Premium proxy: 10-25 credits")
-    print("  - Stealth proxy: 75 credits")
-    print("  - AI features: +5 credits")
+        print(f"❌ No proxy test failed: {e}")
+        return False
 
 async def main():
     """Run all tests."""
-    print("🧪 ScrapingBee Integration Test Suite")
-    print("="*50)
+    print("🚀 Starting ScrapingBee Crawler Tests")
+    print("=" * 50)
     
-    # Check if API key is provided
-    api_key = os.getenv("SCRAPINGBEE_API_KEY")
-    if not api_key:
-        print("⚠️  No SCRAPINGBEE_API_KEY environment variable found!")
-        print("   Set it with: export SCRAPINGBEE_API_KEY='your_api_key'")
-        print("   Or replace 'YOUR_SCRAPINGBEE_API_KEY' in the script")
-        print("\n📋 Configuration Guide:")
-        print_configuration_guide()
-        return
+    tests = [
+        test_basic_scrapingbee,
+        test_premium_proxy,
+        test_stealth_mode,
+        test_geolocation,
+        test_own_proxy,
+        test_advanced_features,
+        test_no_proxy
+    ]
     
-    print(f"✅ Using ScrapingBee API key: {api_key[:10]}...")
+    results = []
+    for test in tests:
+        try:
+            result = await test()
+            results.append(result)
+        except Exception as e:
+            print(f"❌ Test {test.__name__} crashed: {e}")
+            results.append(False)
     
-    # Run tests
-    await test_no_proxy()
-    await test_basic_scrapingbee()
-    await test_premium_proxy()
-    await test_stealth_proxy()
-    await test_geolocation()
-    await test_advanced_features()
+    print("\n" + "=" * 50)
+    print("📊 Test Results Summary")
+    print("=" * 50)
     
-    print("\n" + "="*50)
-    print("🎉 All tests completed!")
-    print("\n💡 Tips:")
-    print("  - Premium proxies work better for difficult sites")
-    print("  - Stealth proxies are best for very hard sites")
-    print("  - Use geolocation to match your target audience")
-    print("  - Monitor your credit usage in ScrapingBee dashboard")
+    passed = sum(results)
+    total = len(results)
+    
+    print(f"✅ Passed: {passed}/{total}")
+    print(f"❌ Failed: {total - passed}/{total}")
+    
+    if passed == total:
+        print("🎉 All tests passed!")
+    else:
+        print("⚠️  Some tests failed. Check the output above for details.")
+    
+    print("\n💡 Configuration Guide:")
+    print("To use these tests with your ScrapingBee API key:")
+    print("1. Replace 'your_scrapingbee_api_key_here' with your actual API key")
+    print("2. Run: python test_scrapingbee_crawler.py")
+    print("3. Check the /tmp/test_* directories for downloaded files")
 
 if __name__ == "__main__":
     asyncio.run(main()) 

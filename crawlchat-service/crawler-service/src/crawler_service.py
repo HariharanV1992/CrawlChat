@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from common.src.core.database import mongodb
-from common.src.models.crawler import CrawlTask, TaskStatus
+from common.src.models.crawler import CrawlTask, TaskStatus, CrawlConfig, CrawlRequest, CrawlResponse, CrawlStatus, CrawlResult
 from common.src.models.documents import Document, DocumentType
 from common.src.services.storage_service import get_storage_service
 from common.src.core.config import config
@@ -19,13 +19,15 @@ from common.src.models.auth import User, UserCreate, Token, TokenData
 
 # Import crawler modules
 try:
-    from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
-    from src.crawler.settings_manager import SettingsManager
+    from src.crawler.advanced_crawler import AdvancedCrawler
+    CRAWLER_AVAILABLE = True
 except ImportError:
-    # Fallback for when crawler modules are not yet migrated
-    AdvancedCrawler = None
-    CrawlConfig = None
-    SettingsManager = None
+    try:
+        from crawler.advanced_crawler import AdvancedCrawler
+        CRAWLER_AVAILABLE = True
+    except ImportError:
+        CRAWLER_AVAILABLE = False
+        AdvancedCrawler = None
 
 logger = logging.getLogger(__name__)
 
@@ -34,24 +36,45 @@ class CrawlerService:
     def __init__(self):
         self.running_tasks = {}  # Track running tasks for cancellation
         self.cancellation_events = {}  # Track cancellation events
+        
+        # Check if crawler is available
+        if not CRAWLER_AVAILABLE:
+            logger.warning("AdvancedCrawler not available - crawling functionality disabled")
 
-    async def create_crawl_task(self, url: str, user_id: str, crawl_config: Dict[str, Any]) -> CrawlTask:
+    async def create_crawl_task(self, request: CrawlRequest, user_id: str) -> CrawlResponse:
+        """Create a new crawl task."""
+        if not CRAWLER_AVAILABLE:
+            raise Exception("Crawler functionality not available")
+        
         task_id = str(uuid.uuid4())
+        
+        # Create crawl task
         task = CrawlTask(
             task_id=task_id,
-            url=url,
             user_id=user_id,
-            status=TaskStatus.PENDING,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            max_pages=crawl_config.get("max_pages", 10),
-            max_documents=crawl_config.get("max_documents", 10),
-            max_workers=crawl_config.get("max_workers", 5)
+            url=str(request.url),
+            max_documents=request.max_documents,
+            max_pages=request.max_pages,
+            max_workers=request.max_workers,
+            delay=request.delay,
+            total_timeout=request.total_timeout,
+            page_timeout=request.page_timeout,
+            request_timeout=request.request_timeout
         )
-        await mongodb.get_collection("tasks").insert_one(task.dict())
-        # Defensive: always return a CrawlTask, never an enum or other value
-        assert isinstance(task, CrawlTask), f"create_crawl_task did not create a CrawlTask: {task}"
-        return task
+        
+        # Store task
+        self.running_tasks[task_id] = task
+        
+        logger.info(f"Created crawl task {task_id} for user {user_id}")
+        
+        return CrawlResponse(
+            task_id=task_id,
+            status=task.status.value,
+            message="Crawl task created successfully",
+            url=str(request.url),
+            max_documents=request.max_documents,
+            created_at=task.created_at
+        )
 
     async def get_task_status(self, task_id: str) -> Optional[CrawlTask]:
         doc = await mongodb.get_collection("tasks").find_one({"task_id": task_id})
@@ -105,42 +128,43 @@ class CrawlerService:
     async def set_task_cancelled(self, task_id: str) -> bool:
         return await self.update_task_status(task_id, TaskStatus.CANCELLED)
 
-    async def start_crawl_task(self, task_id: str) -> bool:
+    async def start_crawl_task(self, task_id: str) -> CrawlStatus:
         """Start a crawl task."""
-        try:
-            # Get task from storage
-            task = await self.get_task_status(task_id)
-            
-            if not task:
-                logger.error(f"Task {task_id} not found")
-                return False
-            
-            if task.status != TaskStatus.PENDING:
-                logger.warning(f"Task {task_id} is not in pending status: {task.status}")
-                return False
-            
-            # Update task status to running
-            task.status = TaskStatus.RUNNING
-            task.started_at = datetime.utcnow()
-            await self.update_task_status(task_id, TaskStatus.RUNNING)
-            
-            # Create cancellation event
-            cancellation_event = asyncio.Event()
-            self.cancellation_events[task_id] = cancellation_event
-            
-            # Start crawl task
-            crawl_task = asyncio.create_task(
-                self._run_crawl_task(task_id, task, cancellation_event)
-            )
-            
-            # Store the running task for cancellation
-            self.running_tasks[task_id] = crawl_task
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error starting crawl task {task_id}: {e}")
-            return False
+        if not CRAWLER_AVAILABLE:
+            raise Exception("Crawler functionality not available")
+        
+        task = await self.get_task_status(task_id)
+        if not task:
+            raise Exception(f"Task {task_id} not found")
+        
+        if task.status != TaskStatus.PENDING:
+            raise Exception(f"Task {task_id} is not in pending status")
+        
+        # Update task status
+        task.status = TaskStatus.RUNNING
+        task.started_at = datetime.utcnow()
+        
+        # Create cancellation event
+        cancellation_event = asyncio.Event()
+        self.cancellation_events[task_id] = cancellation_event
+        
+        # Start crawl task
+        crawl_task = asyncio.create_task(
+            self._run_crawl_task(task_id, task, cancellation_event)
+        )
+        
+        # Store the running task for cancellation
+        self.running_tasks[task_id] = crawl_task
+        
+        logger.info(f"Started crawl task {task_id}")
+        
+        return CrawlStatus(
+            task_id=task_id,
+            status=task.status.value,
+            progress={"pages_crawled": 0, "documents_downloaded": 0},
+            documents_downloaded=0,
+            pages_crawled=0
+        )
     
     async def _run_crawl_task(self, task_id: str, task: CrawlTask, cancellation_event: asyncio.Event):
         """Run the actual crawl task."""
@@ -151,34 +175,19 @@ class CrawlerService:
             if not AdvancedCrawler:
                 raise CrawlerError("AdvancedCrawler not available")
             
-
-            
             # Create crawler configuration
             crawler_config = CrawlConfig(
-                max_pages=task.max_pages,
                 max_documents=task.max_documents,
+                max_pages=task.max_pages,
                 max_workers=task.max_workers,
-                timeout=task.timeout,
                 delay=task.delay,
-                min_file_size=task.min_file_size,
-                output_dir=task.output_dir,
-                use_proxy=task.use_proxy,
-                proxy_api_key=task.proxy_api_key,
-                proxy_method=task.proxy_method,
-                country_code=task.country_code,
-                premium=task.premium,
-                bypass=task.bypass,
-                render=task.render,
-                retry=task.retry,
-                session_number=task.session_number,
                 total_timeout=task.total_timeout,
                 page_timeout=task.page_timeout,
                 request_timeout=task.request_timeout,
-                connection_limit=task.connection_limit,
-                tcp_connector_limit=task.tcp_connector_limit,
-                keepalive_timeout=task.keepalive_timeout,
-                enable_compression=task.enable_compression,
-                max_pages_without_documents=task.max_pages_without_documents
+                use_proxy=task.use_proxy,
+                proxy_api_key=task.proxy_api_key,
+                render=task.render,
+                retry=task.retry
             )
             
             # Create progress callback

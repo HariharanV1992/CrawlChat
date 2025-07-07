@@ -98,7 +98,7 @@ python crawler_main.py
 python -c "
 import asyncio
 from src.crawler.advanced_crawler import AdvancedCrawler
-from src.crawler.advanced_crawler import CrawlConfig
+from models.crawler import CrawlConfig
 
 async def test_crawl():
     crawler = AdvancedCrawler()

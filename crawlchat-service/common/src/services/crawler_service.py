@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 from common.src.core.database import mongodb
-from common.src.models.crawler import CrawlTask, TaskStatus
+from common.src.models.crawler import CrawlTask, TaskStatus, CrawlConfig, CrawlRequest, CrawlResponse, CrawlStatus, CrawlResult
 from common.src.models.documents import Document, DocumentType
 from common.src.services.storage_service import get_storage_service
 from common.src.core.config import config
@@ -53,7 +53,7 @@ try:
                 logger.info(f"Added {path} to sys.path")
             
             try:
-                from crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+                from crawler.advanced_crawler import AdvancedCrawler
                 from crawler.settings_manager import SettingsManager
                 logger.info(f"Successfully imported AdvancedCrawler and related modules from {path}")
                 crawler_imported = True
@@ -76,7 +76,6 @@ except ImportError as e:
     logger.error(f"Current working directory: {os.getcwd()}")
     logger.error(f"Python path: {sys.path}")
     AdvancedCrawler = None
-    CrawlConfig = None
     SettingsManager = None
 
 class CrawlerService:
@@ -84,27 +83,54 @@ class CrawlerService:
     def __init__(self):
         self.running_tasks = {}  # Track running tasks for cancellation
         self.cancellation_events = {}  # Track cancellation events
+        self.db = mongodb
+        self.tasks: Dict[str, CrawlTask] = {}
+        self.active_tasks: Dict[str, asyncio.Task] = {}
+        
+        # Check if crawler is available
+        if not AdvancedCrawler:
+            logger.warning("AdvancedCrawler not available - crawling functionality disabled")
 
-    async def create_crawl_task(self, url: str, user_id: str, crawl_config: Dict[str, Any]) -> CrawlTask:
+    async def create_crawl_task(self, request: CrawlRequest, user_id: str) -> CrawlResponse:
+        """Create a new crawl task."""
+        if not AdvancedCrawler:
+            raise Exception("Crawler functionality not available")
+        
         task_id = str(uuid.uuid4())
+        
+        # Create crawl task
         task = CrawlTask(
             task_id=task_id,
-            url=url,
             user_id=user_id,
-            status=TaskStatus.PENDING,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            max_pages=crawl_config.get("max_pages", 10),
-            max_documents=crawl_config.get("max_documents", 10),
-            max_workers=crawl_config.get("max_workers", 5)
+            url=str(request.url),
+            max_documents=request.max_documents,
+            max_pages=request.max_pages,
+            max_workers=request.max_workers,
+            delay=request.delay,
+            total_timeout=request.total_timeout,
+            page_timeout=request.page_timeout,
+            request_timeout=request.request_timeout
         )
-        await mongodb.get_collection("tasks").insert_one(task.dict())
-        # Defensive: always return a CrawlTask, never an enum or other value
-        assert isinstance(task, CrawlTask), f"create_crawl_task did not create a CrawlTask: {task}"
-        return task
+        
+        # Store task
+        self.tasks[task_id] = task
+        
+        # Save to database
+        await self.db.get_collection("tasks").insert_one(task.dict())
+        
+        logger.info(f"Created crawl task {task_id} for user {user_id}")
+        
+        return CrawlResponse(
+            task_id=task_id,
+            status=task.status.value,
+            message="Crawl task created successfully",
+            url=str(request.url),
+            max_documents=request.max_documents,
+            created_at=task.created_at
+        )
 
     async def get_task_status(self, task_id: str) -> Optional[CrawlTask]:
-        doc = await mongodb.get_collection("tasks").find_one({"task_id": task_id})
+        doc = await self.db.get_collection("tasks").find_one({"task_id": task_id})
         if doc:
             return CrawlTask(**doc)
         return None
@@ -122,14 +148,14 @@ class CrawlerService:
                     "pages_crawled": task.pages_crawled,
                     "documents_downloaded": task.documents_downloaded
                 }
-                result = await mongodb.get_collection("tasks").update_one(
+                result = await self.db.get_collection("tasks").update_one(
                     {"task_id": task_id}, 
                     {"$set": update_data}
                 )
                 return result.modified_count > 0
             else:
                 # Fallback if task not found
-                result = await mongodb.get_collection("tasks").update_one(
+                result = await self.db.get_collection("tasks").update_one(
                     {"task_id": task_id}, 
                     {"$set": {"status": status, "updated_at": datetime.utcnow()}}
                 )
@@ -139,11 +165,11 @@ class CrawlerService:
             return False
 
     async def list_user_tasks(self, user_id: str, limit: int = 50, skip: int = 0) -> List[CrawlTask]:
-        cursor = mongodb.get_collection("tasks").find({"user_id": user_id}).skip(skip).limit(limit)
+        cursor = self.db.get_collection("tasks").find({"user_id": user_id}).skip(skip).limit(limit)
         return [CrawlTask(**doc) async for doc in cursor]
 
     async def delete_task(self, task_id: str, user_id: str) -> bool:
-        result = await mongodb.get_collection("tasks").delete_one({"task_id": task_id, "user_id": user_id})
+        result = await self.db.get_collection("tasks").delete_one({"task_id": task_id, "user_id": user_id})
         return result.deleted_count > 0
 
     async def set_task_completed(self, task_id: str) -> bool:
@@ -155,168 +181,197 @@ class CrawlerService:
     async def set_task_cancelled(self, task_id: str) -> bool:
         return await self.update_task_status(task_id, TaskStatus.CANCELLED)
 
-    async def start_crawl_task(self, task_id: str) -> bool:
+    async def start_crawl_task(self, task_id: str) -> CrawlStatus:
         """Start a crawl task."""
-        try:
-            # Get task from storage
-            task = await self.get_task_status(task_id)
-            
-            if not task:
-                logger.error(f"Task {task_id} not found")
-                return False
-            
-            if task.status != TaskStatus.PENDING:
-                logger.warning(f"Task {task_id} is not in pending status: {task.status}")
-                return False
-            
-            # Update task status to running
-            task.status = TaskStatus.RUNNING
-            task.started_at = datetime.utcnow()
-            await self.update_task_status(task_id, TaskStatus.RUNNING)
-            
-            # Create cancellation event
-            cancellation_event = asyncio.Event()
-            self.cancellation_events[task_id] = cancellation_event
-            
-            # Start crawl task
-            crawl_task = asyncio.create_task(
-                self._run_crawl_task(task_id, task, cancellation_event)
-            )
-            
-            # Store the running task for cancellation
-            self.running_tasks[task_id] = crawl_task
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error starting crawl task {task_id}: {e}")
-            return False
-    
-    async def _run_crawl_task(self, task_id: str, task: CrawlTask, cancellation_event: asyncio.Event):
-        """Run the actual crawl task."""
-        start_time = datetime.utcnow()
-        final_progress = {"pages_crawled": 0, "documents_downloaded": 0}
+        if not AdvancedCrawler:
+            raise Exception("Crawler functionality not available")
         
+        task = self.tasks.get(task_id)
+        if not task:
+            raise Exception(f"Task {task_id} not found")
+        
+        if task.status != TaskStatus.PENDING:
+            raise Exception(f"Task {task_id} is not in pending status")
+        
+        # Update task status
+        task.status = TaskStatus.RUNNING
+        task.started_at = datetime.utcnow()
+        
+        # Save to database
+        await self.db.get_collection("tasks").update_one(
+            {"task_id": task_id},
+            {"$set": {"status": task.status.value, "started_at": task.started_at}}
+        )
+        
+        # Start crawling in background
+        crawl_task = asyncio.create_task(self._run_crawl_task(task))
+        self.active_tasks[task_id] = crawl_task
+        
+        logger.info(f"Started crawl task {task_id}")
+        
+        return CrawlStatus(
+            task_id=task_id,
+            status=task.status.value,
+            progress={"pages_crawled": 0, "documents_downloaded": 0},
+            documents_downloaded=0,
+            pages_crawled=0
+        )
+    
+    async def _run_crawl_task(self, task: CrawlTask):
+        """Run the actual crawl task."""
         try:
-            if not AdvancedCrawler:
-                raise CrawlerError("AdvancedCrawler not available")
-            
-
-            
             # Create crawler configuration
             crawler_config = CrawlConfig(
-                max_pages=task.max_pages,
                 max_documents=task.max_documents,
+                max_pages=task.max_pages,
                 max_workers=task.max_workers,
-                timeout=task.timeout,
                 delay=task.delay,
-                min_file_size=task.min_file_size,
-                output_dir=task.output_dir,
-                use_proxy=task.use_proxy,
-                proxy_api_key=task.proxy_api_key,
-                proxy_method=task.proxy_method,
-                country_code=task.country_code,
-                premium=task.premium,
-                bypass=task.bypass,
-                render=task.render,
-                retry=task.retry,
-                session_number=task.session_number,
                 total_timeout=task.total_timeout,
                 page_timeout=task.page_timeout,
                 request_timeout=task.request_timeout,
-                connection_limit=task.connection_limit,
-                tcp_connector_limit=task.tcp_connector_limit,
-                keepalive_timeout=task.keepalive_timeout,
-                enable_compression=task.enable_compression,
-                max_pages_without_documents=task.max_pages_without_documents
+                use_proxy=task.use_proxy,
+                proxy_api_key=task.proxy_api_key,
+                render=task.render,
+                retry=task.retry
             )
             
-            # Create progress callback
-            async def progress_callback(progress: Dict[str, Any]):
-                # Check for cancellation before updating progress
-                if cancellation_event.is_set():
-                    raise asyncio.CancelledError()
-                
-                final_progress.update(progress)
-                await self._update_task_progress(task_id, progress)
+            # Initialize crawler
+            crawler = AdvancedCrawler(
+                api_key=task.proxy_api_key or "",
+                output_dir=task.output_dir,
+                max_depth=2,
+                max_pages=task.max_pages,
+                delay=task.delay,
+                site_type='generic'
+            )
             
-            # Run crawler
-            async with AdvancedCrawler(task.url, crawler_config, progress_callback, user_id=task.user_id) as crawler:
-                # Set task_id for document saving
-                crawler.task_id = task_id
-                
-                # Check for cancellation
-                if cancellation_event.is_set():
-                    crawler.cancel()
-                    return
-                
-                # Start the crawl
-                await crawler.crawl()
+            # Start crawling
+            results = await crawler.crawl(task.url)
             
-            # Update task as completed
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
-            await self._update_task_completion(task_id, TaskStatus.COMPLETED, processing_time, final_progress=final_progress)
+            # Update task with results
+            task.status = TaskStatus.COMPLETED
+            task.completed_at = datetime.utcnow()
+            task.pages_crawled = results['crawling_stats']['total_urls_visited']
+            task.documents_downloaded = results['crawling_stats']['successful_downloads']
+            task.downloaded_files = results['downloaded_files']
+            task.metadata = results
             
-        except asyncio.CancelledError:
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
-            await self._update_task_completion(task_id, TaskStatus.CANCELLED, processing_time, "Task was cancelled by user", final_progress=final_progress)
-            
-        except Exception as e:
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
-            error_msg = f"Crawl task {task_id} failed after {processing_time:.2f}s: {str(e)}"
-            logger.error(error_msg)
-            await self._update_task_completion(task_id, TaskStatus.FAILED, processing_time, str(e), final_progress=final_progress)
-        
-        finally:
-            # Clean up task tracking
-            self.running_tasks.pop(task_id, None)
-            self.cancellation_events.pop(task_id, None)
-    
-    async def _update_task_progress(self, task_id: str, progress: Dict[str, Any]):
-        """Update task progress in storage."""
-        try:
-            task = await self.get_task_status(task_id)
-            if task:
-                task.pages_crawled = progress.get('pages_crawled', 0)
-                task.documents_downloaded = progress.get('documents_downloaded', 0)
-                await self.update_task_status(task_id, TaskStatus.RUNNING)
-            else:
-                logger.warning(f"Task {task_id} not found when updating progress")
-        except Exception as e:
-            logger.error(f"Error updating task progress: {e}")
-    
-    async def _update_task_completion(self, task_id: str, status: TaskStatus, 
-                                    processing_time: float, error_message: Optional[str] = None, final_progress: Dict[str, Any] = None):
-        """Update task completion status."""
-        try:
-            task = await self.get_task_status(task_id)
-            if task:
-                task.status = status
-                task.completed_at = datetime.utcnow()
-                if error_message:
-                    task.errors.append(error_message)
-                
-                # Preserve progress fields when updating status
-                update_data = {
-                    "status": status, 
-                    "updated_at": datetime.utcnow(),
+            # Save to database
+            await self.db.get_collection("tasks").update_one(
+                {"task_id": task.task_id},
+                {"$set": {
+                    "status": task.status.value,
                     "completed_at": task.completed_at,
                     "pages_crawled": task.pages_crawled,
-                    "documents_downloaded": task.documents_downloaded
-                }
-                if error_message:
-                    update_data["errors"] = task.errors
-                if final_progress:
-                    update_data.update(final_progress)
-                
-                result = await mongodb.get_collection("tasks").update_one(
-                    {"task_id": task_id},
-                    {"$set": update_data}
-                )
-                return result.modified_count > 0
+                    "documents_downloaded": task.documents_downloaded,
+                    "downloaded_files": task.downloaded_files,
+                    "metadata": task.metadata
+                }}
+            )
+            
+            logger.info(f"Completed crawl task {task.task_id}: {task.documents_downloaded} documents")
+            
         except Exception as e:
-            logger.error(f"Error updating task completion: {e}")
-            return False
+            logger.error(f"Crawl task {task.task_id} failed: {e}")
+            
+            # Update task with error
+            task.status = TaskStatus.FAILED
+            task.completed_at = datetime.utcnow()
+            task.errors.append(str(e))
+            
+            # Save to database
+            await self.db.get_collection("tasks").update_one(
+                {"task_id": task.task_id},
+                {"$set": {
+                    "status": task.status.value,
+                    "completed_at": task.completed_at,
+                    "errors": task.errors
+                }}
+            )
+        
+        finally:
+            # Remove from active tasks
+            if task.task_id in self.active_tasks:
+                del self.active_tasks[task.task_id]
+    
+    async def get_crawl_status(self, task_id: str) -> CrawlStatus:
+        """Get the status of a crawl task."""
+        task = self.tasks.get(task_id)
+        if not task:
+            # Try to get from database
+            task_data = await self.db.get_collection("tasks").find_one({"task_id": task_id})
+            if not task_data:
+                raise Exception(f"Task {task_id} not found")
+            
+            task = CrawlTask(**task_data)
+            self.tasks[task_id] = task
+        
+        return CrawlStatus(
+            task_id=task_id,
+            status=task.status.value,
+            progress={
+                "pages_crawled": task.pages_crawled,
+                "documents_downloaded": task.documents_downloaded,
+                "total_pages": task.max_pages,
+                "total_documents": task.max_documents
+            },
+            documents_downloaded=task.documents_downloaded,
+            pages_crawled=task.pages_crawled,
+            error_message=task.errors[-1] if task.errors else None,
+            completed_at=task.completed_at
+        )
+    
+    async def cancel_crawl_task(self, task_id: str) -> bool:
+        """Cancel a crawl task."""
+        task = self.tasks.get(task_id)
+        if not task:
+            raise Exception(f"Task {task_id} not found")
+        
+        if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+            raise Exception(f"Task {task_id} cannot be cancelled")
+        
+        # Cancel active task
+        if task_id in self.active_tasks:
+            self.active_tasks[task_id].cancel()
+            del self.active_tasks[task_id]
+        
+        # Update task status
+        task.status = TaskStatus.CANCELLED
+        task.completed_at = datetime.utcnow()
+        
+        # Save to database
+        await self.db.get_collection("tasks").update_one(
+            {"task_id": task_id},
+            {"$set": {"status": task.status.value, "completed_at": task.completed_at}}
+        )
+        
+        logger.info(f"Cancelled crawl task {task_id}")
+        return True
+    
+    async def get_crawl_results(self, task_id: str) -> CrawlResult:
+        """Get the results of a completed crawl task."""
+        task = self.tasks.get(task_id)
+        if not task:
+            # Try to get from database
+            task_data = await self.db.get_collection("tasks").find_one({"task_id": task_id})
+            if not task_data:
+                raise Exception(f"Task {task_id} not found")
+            
+            task = CrawlTask(**task_data)
+            self.tasks[task_id] = task
+        
+        if task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+            raise Exception(f"Task {task_id} is not completed")
+        
+        return CrawlResult(
+            task_id=task_id,
+            status=task.status,
+            total_pages=task.pages_crawled,
+            total_documents=task.documents_downloaded,
+            errors=task.errors,
+            files=task.downloaded_files,
+            completed_at=task.completed_at
+        )
     
     def _get_document_type(self, extension: str) -> DocumentType:
         """Get document type from file extension."""
@@ -329,38 +384,6 @@ class CrawlerService:
         }
         return extension_map.get(extension.lower(), DocumentType.TXT)
     
-    async def cancel_crawl_task(self, task_id: str) -> bool:
-        """Cancel a running crawl task."""
-        try:
-            # Get the task to check if it exists
-            task = await self.get_task_status(task_id)
-            if not task:
-                logger.warning(f"Task {task_id} not found for cancellation")
-                return False
-            
-            # Set cancellation event if it exists
-            if task_id in self.cancellation_events:
-                self.cancellation_events[task_id].set()
-            
-            # Cancel the running task if it exists
-            if task_id in self.running_tasks:
-                running_task = self.running_tasks[task_id]
-                if not running_task.done():
-                    running_task.cancel()
-            
-            # Update task status to cancelled
-                await self.update_task_status(task_id, TaskStatus.CANCELLED)
-            
-            # Clean up tracking
-            self.running_tasks.pop(task_id, None)
-            self.cancellation_events.pop(task_id, None)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error cancelling crawl task {task_id}: {e}")
-            return False
-
     async def delete_crawl_task(self, task_id: str, user_id: str) -> bool:
         """Delete a crawl task and its associated documents from the database."""
         try:

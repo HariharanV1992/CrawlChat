@@ -7,15 +7,17 @@ High-performance web crawler for document extraction and processing.
 import asyncio
 import logging
 import sys
+import os
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add the src directory to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from common.src.core.logging import setup_logging
 from common.src.core.config import get_settings
 from common.src.services.crawler_service import crawler_service
-from src.crawler.advanced_crawler import AdvancedCrawler, CrawlConfig
+from src.crawler.advanced_crawler import AdvancedCrawler
+from models.crawler import CrawlConfig
 
 # Setup logging
 setup_logging()
