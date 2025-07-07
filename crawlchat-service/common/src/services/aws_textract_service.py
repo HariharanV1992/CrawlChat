@@ -575,23 +575,13 @@ class AWSTextractService:
             logger.warning(f"⚠ Raw text extraction failed: {e}")
 
         logger.error(f"❌ All extraction methods failed for {filename}")
-        return self._get_user_friendly_extraction_error_message(filename), 1
-
-    def _get_user_friendly_extraction_error_message(self, filename: str) -> str:
-        """Generate a user-friendly error message for extraction failures."""
         return (
-            f"I'm unable to read the content from '{filename}'. This could be because:\n\n"
-            "• The PDF is a scanned document (image-based)\n"
-            "• The PDF is password-protected\n"
-            "• The PDF is corrupted or damaged\n"
-            "• The PDF contains only images without text\n"
-            "• The file format is not supported\n\n"
-            "To help you better, please try:\n"
-            "• Uploading a text-based PDF (not scanned)\n"
-            "• Converting the PDF to text format first\n"
-            "• Using a different document format (Word, text file, etc.)\n"
-            "• Checking if the PDF is password-protected and removing the password\n"
-            "• Ensuring the file is not corrupted"
+            f"PDF content could not be extracted from {filename}. Possible reasons:\n"
+            "- The PDF is image-based (scanned document)\n"
+            "- The PDF is corrupted or damaged\n"
+            "- The PDF has no embedded text content\n"
+            "Please try uploading a text-based PDF or a different document format.",
+            1
         )
 
     async def _fallback_pdf_extraction(self, file_content: bytes, filename: str, user_id: str) -> (str, int):
@@ -658,9 +648,9 @@ class AWSTextractService:
             except Exception as e:
                 logger.warning(f"⚠ Aggressive text extraction failed: {e}")
             
-            # Final fallback - return a descriptive message
-            logger.warning("All extraction methods failed, returning descriptive message")
-            return self._get_user_friendly_extraction_error_message(filename), 1
+            # Final fallback - return a descriptive message based on corruption level
+            logger.warning("❌ All extraction methods failed, returning descriptive message")
+            return self._generate_fallback_message(filename, corruption_level), 1
             
         except Exception as e:
             logger.error(f"Fallback PDF extraction failed: {e}")
@@ -705,6 +695,60 @@ class AWSTextractService:
                 
         except Exception as e:
             return f"Error analyzing PDF: {e}"
+
+    def _generate_fallback_message(self, filename: str, corruption_level: str) -> str:
+        """
+        Generate a helpful fallback message based on corruption level.
+        """
+        if "Severely corrupted" in corruption_level:
+            return f"""The PDF file '{filename}' appears to be severely corrupted or damaged and could not be processed.
+
+Corruption Analysis: {corruption_level}
+
+Recommendations:
+1. Try uploading the original source file (Word, Excel, etc.) instead of the PDF
+2. Re-generate the PDF using a different method (Adobe Acrobat, Microsoft Word, etc.)
+3. Avoid browser-generated PDFs (Chrome "Save as PDF" often creates problematic files)
+4. Check if the file was corrupted during upload or transfer
+5. Try converting the file to an image format (PNG/JPEG) and upload that instead
+
+If you continue having issues, please contact support with the original source file."""
+        
+        elif "Minor issues" in corruption_level:
+            return f"""The PDF file '{filename}' has some structural issues that prevented text extraction.
+
+Analysis: {corruption_level}
+
+This could be due to:
+- Browser-generated PDF (Chrome/Firefox "Save as PDF")
+- Non-standard PDF creation method
+- Minor file corruption
+
+Try:
+1. Re-generating the PDF using Adobe Acrobat or Microsoft Word
+2. Converting to image format (PNG/JPEG) and uploading that
+3. Using the preprocessing service to normalize the PDF
+
+The document may still be readable visually, but text extraction failed."""
+        
+        else:
+            return f"""The PDF file '{filename}' could not be processed for text extraction.
+
+Analysis: {corruption_level}
+
+Possible reasons:
+- Image-based PDF (scanned document)
+- Non-standard PDF format
+- Browser-generated PDF with unusual structure
+- PDF with embedded images instead of text
+
+Solutions:
+1. Upload the original source file (Word, Excel, etc.)
+2. Convert to image format (PNG/JPEG) and upload that
+3. Use the preprocessing service to convert the PDF to images
+4. Re-generate the PDF using standard tools (Adobe Acrobat, Word, etc.)
+
+The document content may still be accessible through the preprocessing service."""
 
     async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
         """Try very aggressive text extraction from PDF bytes."""

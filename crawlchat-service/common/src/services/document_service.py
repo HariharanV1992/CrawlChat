@@ -11,7 +11,6 @@ from pathlib import Path
 import io
 from functools import lru_cache
 import hashlib
-import os
 
 from common.src.models.documents import (
     Document, DocumentType, DocumentStatus, DocumentUpload, 
@@ -329,16 +328,8 @@ class DocumentService:
                     logger.error(f"Error processing CSV {document.filename}: {e}")
                     return f"Error processing CSV: {e}"
             
-            # PDF processing with improved error handling and S3 fallback
+            # PDF processing with improved error handling
             if document.document_type == DocumentType.PDF:
-                # Check for PDF corruption indicators
-                if not content.startswith(b'%PDF-') or b'%%EOF' not in content[-1000:]:
-                    logger.warning(f"PDF corruption detected for {document.filename}, trying S3 fallback")
-                    s3_fallback_content = await self._try_s3_fallback(document.filename)
-                    if s3_fallback_content:
-                        logger.info(f"Using S3 fallback for corrupted PDF: {document.filename}")
-                        return await self._extract_pdf_text_optimized(s3_fallback_content, document.filename)
-                
                 return await self._extract_pdf_text_optimized(content, document.filename)
             
             # Excel files (XLSX, XLS)
@@ -416,10 +407,6 @@ class DocumentService:
         
         logger.info(f"Starting PDF extraction for: {filename}")
         
-        # Add comprehensive debugging information
-        debug_info = self._get_pdf_debug_info(content, filename)
-        logger.info(f"PDF Debug Info: {debug_info}")
-        
         # Try PyPDF2 first (fastest)
         try:
             import PyPDF2
@@ -478,94 +465,8 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Final fallback failed for {filename}: {e}")
         
-        # Return user-friendly error message instead of technical description
         logger.error(f"All PDF extraction methods failed for {filename}")
-        return self._get_user_friendly_pdf_error_message(filename)
-    
-    def _get_pdf_debug_info(self, content: bytes, filename: str) -> Dict[str, Any]:
-        """Get comprehensive debugging information for PDF extraction."""
-        import hashlib
-        import platform
-        import sys
-        
-        debug_info = {
-            "file_info": {
-                "filename": filename,
-                "size_bytes": len(content),
-                "size_mb": len(content) / (1024 * 1024),
-                "md5_hash": hashlib.md5(content).hexdigest(),
-                "first_20_bytes": content[:20].hex(),
-                "last_20_bytes": content[-20:].hex(),
-                "is_pdf_header": content.startswith(b'%PDF-'),
-                "has_eof_marker": b'%%EOF' in content[-1000:],
-                "null_byte_ratio": content.count(b'\x00') / len(content) if content else 0
-            },
-            "environment": {
-                "python_version": sys.version,
-                "platform": platform.platform(),
-                "is_lambda": bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME")),
-                "lambda_memory": os.getenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE"),
-                "lambda_function": os.getenv("AWS_LAMBDA_FUNCTION_NAME")
-            },
-            "libraries": {}
-        }
-        
-        # Check library availability
-        try:
-            import PyPDF2
-            debug_info["libraries"]["PyPDF2"] = {
-                "available": True,
-                "version": getattr(PyPDF2, "__version__", "unknown"),
-                "path": PyPDF2.__file__
-            }
-        except Exception as e:
-            debug_info["libraries"]["PyPDF2"] = {
-                "available": False,
-                "error": str(e)
-            }
-        
-        try:
-            import pdfminer
-            debug_info["libraries"]["pdfminer.six"] = {
-                "available": True,
-                "version": getattr(pdfminer, "__version__", "unknown"),
-                "path": pdfminer.__file__
-            }
-        except Exception as e:
-            debug_info["libraries"]["pdfminer.six"] = {
-                "available": False,
-                "error": str(e)
-            }
-        
-        try:
-            import boto3
-            debug_info["libraries"]["boto3"] = {
-                "available": True,
-                "version": boto3.__version__,
-                "path": boto3.__file__
-            }
-        except Exception as e:
-            debug_info["libraries"]["boto3"] = {
-                "available": False,
-                "error": str(e)
-            }
-        
-        return debug_info
-    
-    def _get_user_friendly_pdf_error_message(self, filename: str) -> str:
-        """Generate a user-friendly error message for PDF extraction failures."""
-        return (
-            f"I'm unable to read the content from '{filename}'. This could be because:\n\n"
-            "• The PDF is a scanned document (image-based)\n"
-            "• The PDF is password-protected\n"
-            "• The PDF is corrupted or damaged\n"
-            "• The PDF contains only images without text\n\n"
-            "To help you better, please try:\n"
-            "• Uploading a text-based PDF (not scanned)\n"
-            "• Converting the PDF to text format first\n"
-            "• Using a different document format (Word, text file, etc.)\n"
-            "• Checking if the PDF is password-protected and removing the password"
-        )
+        return f"Could not extract text from PDF: {filename}. This may be because:\n- The PDF is image-based (scanned document)\n- The PDF is corrupted or damaged\n- The PDF has no embedded text content\n- AWS Textract is not available or configured\n\nPlease try uploading a text-based PDF or a different document format."
     
     async def _extract_text_with_ocr(self, content: bytes, filename: str) -> str:
         """Extract text from PDF using AWS Textract for scanned documents."""
@@ -606,51 +507,6 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Textract extraction failed for {filename}: {e}")
             return f"Textract extraction failed: {e}"
-
-    async def _try_s3_fallback(self, filename: str) -> Optional[bytes]:
-        """Try to get PDF content from S3 as a fallback for corrupted files."""
-        try:
-            import boto3
-            import os
-            
-            # Get S3 configuration from environment or config
-            s3_bucket = os.getenv('S3_BUCKET', 'crawlchat-data')
-            s3_key = os.getenv('S3_PDF_KEY', f'pdfs/{filename}')
-            
-            # If filename doesn't match the expected S3 key, try common patterns
-            if not s3_key.endswith(filename):
-                s3_key = f'pdfs/{filename}'
-            
-            logger.info(f"Trying S3 fallback: s3://{s3_bucket}/{s3_key}")
-            
-            # Initialize S3 client
-            if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-                # Running in Lambda - use IAM role
-                s3_client = boto3.client('s3')
-            else:
-                # Running locally - use credentials if available
-                from ..core.config import config
-                if config.s3_access_key and config.s3_secret_key:
-                    s3_client = boto3.client(
-                        's3',
-                        aws_access_key_id=config.s3_access_key,
-                        aws_secret_access_key=config.s3_secret_key,
-                        region_name=config.s3_region
-                    )
-                else:
-                    logger.warning("S3 fallback not available - missing credentials")
-                    return None
-            
-            # Download from S3
-            response = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
-            content = response['Body'].read()
-            
-            logger.info(f"S3 fallback successful: {len(content)} bytes")
-            return content
-            
-        except Exception as e:
-            logger.warning(f"S3 fallback failed for {filename}: {e}")
-            return None
 
     async def _generate_summary(self, content: str, user_query: Optional[str]) -> str:
         """Generate summary of document content."""
@@ -925,6 +781,100 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error checking page limit for user {user_id}: {e}")
             return False
+
+    async def process_preprocessed_document(self, document_id: str, user_id: str, preprocessed_s3_key: str) -> DocumentProcessResponse:
+        """Process a document that has been preprocessed by the preprocessing service."""
+        try:
+            await mongodb.connect()
+            
+            start_time = datetime.utcnow()
+            
+            # Get document data
+            doc_data = await mongodb.get_collection("documents").find_one({"document_id": document_id, "user_id": user_id})
+            if not doc_data:
+                raise DocumentProcessingError("Document not found")
+
+            document = Document(**doc_data)
+            
+            # Update status to processing
+            await mongodb.get_collection("documents").update_one(
+                {"document_id": document.document_id},
+                {"$set": {"status": DocumentStatus.PROCESSING}}
+            )
+
+            # Extract content from preprocessed document using Textract
+            content = await self._extract_preprocessed_content(preprocessed_s3_key, document.filename)
+            
+            # Generate summary and key points in parallel
+            summary_task = self._generate_summary(content, None)
+            key_points_task = self._extract_key_points(content)
+            
+            summary, key_points = await asyncio.gather(summary_task, key_points_task)
+
+            # Update document with all changes at once
+            update_data = {
+                "content": content,
+                "summary": summary,
+                "key_points": key_points,
+                "status": DocumentStatus.PROCESSED,
+                "processed_at": datetime.utcnow(),
+                "preprocessed_s3_key": preprocessed_s3_key
+            }
+            
+            await mongodb.get_collection("documents").update_one(
+                {"document_id": document.document_id},
+                {"$set": update_data}
+            )
+            
+            processing_time = (datetime.utcnow() - start_time).total_seconds()
+            logger.info(f"Processed preprocessed document {document.document_id} in {processing_time:.2f}s")
+            
+            return DocumentProcessResponse(
+                document_id=document.document_id,
+                status=DocumentStatus.PROCESSED,
+                content=content,
+                summary=summary,
+                key_points=key_points,
+                processing_time=processing_time
+            )
+            
+        except Exception as e:
+            logger.error(f"Error processing preprocessed document: {e}")
+            raise DocumentProcessingError(f"Failed to process preprocessed document: {e}")
+
+    async def _extract_preprocessed_content(self, s3_key: str, filename: str) -> str:
+        """Extract content from a preprocessed document using Textract."""
+        try:
+            from common.src.services.aws_textract_service import textract_service, DocumentType
+            
+            logger.info(f"Extracting content from preprocessed document: {s3_key}")
+            
+            # Determine document type
+            document_type = DocumentType.GENERAL
+            filename_lower = filename.lower()
+            if any(keyword in filename_lower for keyword in ['form', 'invoice', 'receipt', 'tax', 'w2', '1099']):
+                document_type = DocumentType.FORM
+                logger.info(f"Detected form/invoice document: {filename}")
+            
+            # Process with Textract
+            bucket_name = aws_config.s3_bucket
+            text_content, page_count = await textract_service.process_preprocessed_document(
+                bucket_name, s3_key, document_type
+            )
+            
+            # Store page count for later use
+            self._last_page_count = page_count
+            
+            if text_content and text_content.strip():
+                logger.info(f"Successfully extracted {len(text_content)} characters from preprocessed document: {filename}")
+                return text_content
+            else:
+                logger.warning(f"No content extracted from preprocessed document: {filename}")
+                return f"Could not extract text from preprocessed document: {filename}"
+                
+        except Exception as e:
+            logger.error(f"Error extracting content from preprocessed document {s3_key}: {e}")
+            return f"Error extracting content from preprocessed document: {e}"
 
 # Global instance
 document_service = DocumentService() 

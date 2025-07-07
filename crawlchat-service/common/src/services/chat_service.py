@@ -621,35 +621,15 @@ Please provide your response based on the document content above. If this is a f
             # Load AI config
             import os
             
-            # First try to get configuration from config system
-            try:
-                from common.src.core.config import config
-                openai_api_key = config.openai_api_key
-                model = config.openai_model
-                max_tokens = config.openai_max_tokens
-                temperature = config.openai_temperature
-                
-                if openai_api_key:
-                    logger.info("[AI] Using AI config from configuration system")
-                else:
-                    raise ValueError("API key not found in config")
-                    
-            except Exception as config_error:
-                logger.warning(f"[AI] Could not get config from system: {config_error}")
-                
-                # Fallback to direct environment variable access
-                openai_api_key = os.environ.get('OPENAI_API_KEY')
-                model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-                max_tokens = int(os.environ.get('OPENAI_MAX_TOKENS', '4000'))
-                temperature = float(os.environ.get('OPENAI_TEMPERATURE', '0.1'))
-                
-                if not openai_api_key:
-                    # Try alternative environment variable names
-                    openai_api_key = os.environ.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')
-                
-                if not openai_api_key:
-                    logger.error("[AI] OPENAI_API_KEY environment variable not found")
-                    return "I apologize, but the AI configuration is not properly set up. Please contact support."
+            # Get configuration from environment variables
+            openai_api_key = os.environ.get('OPENAI_API_KEY')
+            model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+            max_tokens = int(os.environ.get('OPENAI_MAX_TOKENS', '4000'))
+            temperature = float(os.environ.get('OPENAI_TEMPERATURE', '0.1'))
+            
+            if not openai_api_key:
+                logger.error("[AI] OPENAI_API_KEY environment variable not found")
+                return "I apologize, but the AI configuration is not properly set up. Please contact support."
             
             logger.info(f"[AI] Using AI config: model={model}, max_tokens={max_tokens}, temperature={temperature}")
             
@@ -698,35 +678,14 @@ Please provide your response based on the document content above. If this is a f
             # Load AI config from environment variables
             import os
             
-            # First try to get configuration from config system
-            try:
-                from common.src.core.config import config
-                openai_api_key = config.openai_api_key
-                model = config.openai_model
-                max_tokens = config.openai_max_tokens
-                temperature = config.openai_temperature
-                
-                if openai_api_key:
-                    logger.info("[AI] Using AI config from configuration system for general response")
-                else:
-                    raise ValueError("API key not found in config")
-                    
-            except Exception as config_error:
-                logger.warning(f"[AI] Could not get config from system for general response: {config_error}")
-                
-                # Fallback to direct environment variable access
-                openai_api_key = os.environ.get('OPENAI_API_KEY')
-                model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-                max_tokens = int(os.environ.get('OPENAI_MAX_TOKENS', '4000'))
-                temperature = float(os.environ.get('OPENAI_TEMPERATURE', '0.1'))
-                
-                if not openai_api_key:
-                    # Try alternative environment variable names
-                    openai_api_key = os.environ.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')
-                
-                if not openai_api_key:
-                    logger.error("OPENAI_API_KEY environment variable not found")
-                    return "I don't see any documents linked to this session. To help you with document analysis, please upload or link documents first."
+            openai_api_key = os.environ.get('OPENAI_API_KEY')
+            model = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+            max_tokens = int(os.environ.get('OPENAI_MAX_TOKENS', '4000'))
+            temperature = float(os.environ.get('OPENAI_TEMPERATURE', '0.1'))
+            
+            if not openai_api_key:
+                logger.error("OPENAI_API_KEY environment variable not found")
+                return "I don't see any documents linked to this session. To help you with document analysis, please upload or link documents first."
             
             # Prepare conversation history for context
             conversation_context = ""

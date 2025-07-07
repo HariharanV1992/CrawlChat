@@ -34,29 +34,11 @@ class VectorStoreService:
         try:
             import os
             
-            # First try to get API key from configuration system
-            try:
-                from common.src.core.config import config
-                api_key = config.openai_api_key
-                if api_key:
-                    logger.info("[VECTOR_STORE] Using API key from configuration system")
-                    return OpenAI(api_key=api_key)
-            except Exception as config_error:
-                logger.warning(f"[VECTOR_STORE] Could not get API key from config: {config_error}")
-            
-            # Fallback to direct environment variable access
+            # Get API key from environment variable
             api_key = os.environ.get('OPENAI_API_KEY')
             if not api_key:
-                # Try alternative environment variable names
-                api_key = os.environ.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')
-                
-            if not api_key:
-                # Log all environment variables for debugging (without sensitive data)
-                env_vars = {k: v for k, v in os.environ.items() if 'OPENAI' in k.upper()}
-                logger.error(f"[VECTOR_STORE] OPENAI_API_KEY not found. Available OpenAI env vars: {list(env_vars.keys())}")
                 raise ValueError("OPENAI_API_KEY environment variable not found")
             
-            logger.info("[VECTOR_STORE] Using API key from environment variables")
             return OpenAI(api_key=api_key)
             
         except Exception as e:
