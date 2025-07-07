@@ -5,6 +5,7 @@ Chat service for managing chat sessions and AI interactions.
 import logging
 import uuid
 import re
+import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
