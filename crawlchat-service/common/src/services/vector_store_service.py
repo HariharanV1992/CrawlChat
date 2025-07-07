@@ -25,9 +25,15 @@ class VectorStoreService:
     """Service for managing vector stores using OpenAI's Vector Store API."""
     
     def __init__(self):
-        self.client = self._initialize_openai_client()
+        self.client = None  # Lazy initialization
         self.vector_store_id = None
         self.session_vector_stores = {}  # Cache for session-specific vector stores
+    
+    def _get_client(self) -> OpenAI:
+        """Get OpenAI client with lazy initialization."""
+        if self.client is None:
+            self.client = self._initialize_openai_client()
+        return self.client
     
     def _initialize_openai_client(self) -> OpenAI:
         """Initialize OpenAI client with API key from environment variables."""
@@ -37,20 +43,25 @@ class VectorStoreService:
             # Get API key from environment variable
             api_key = os.environ.get('OPENAI_API_KEY')
             if not api_key:
-                raise ValueError("OPENAI_API_KEY environment variable not found")
+                logger.warning("[VECTOR_STORE] OPENAI_API_KEY environment variable not found - vector store features will be disabled")
+                return None
             
             return OpenAI(api_key=api_key)
             
         except Exception as e:
             logger.error(f"[VECTOR_STORE] Error initializing OpenAI client: {e}")
-            raise
+            return None
     
     async def create_vector_store(self, name: str = "Stock Market Data") -> str:
         """Create a new vector store."""
         try:
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
             logger.info(f"[VECTOR_STORE] Creating vector store: {name}")
             
-            vector_store = self.client.vector_stores.create(name=name)
+            vector_store = client.vector_stores.create(name=name)
             self.vector_store_id = vector_store.id
             
             logger.info(f"[VECTOR_STORE] Created vector store with ID: {self.vector_store_id}")
@@ -63,8 +74,12 @@ class VectorStoreService:
     async def get_or_create_vector_store(self, name: str = "Stock Market Data") -> str:
         """Get existing vector store or create a new one."""
         try:
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
             # First, try to list existing vector stores
-            vector_stores = self.client.vector_stores.list()
+            vector_stores = client.vector_stores.list()
             
             # Look for a vector store with the given name
             for store in vector_stores.data:
@@ -83,6 +98,10 @@ class VectorStoreService:
     async def get_or_create_session_vector_store(self, session_id: str) -> str:
         """Get or create a session-specific vector store."""
         try:
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
             # Check if we already have this session's vector store cached
             if session_id in self.session_vector_stores:
                 logger.info(f"[VECTOR_STORE] Using cached session vector store: {self.session_vector_stores[session_id]}")
@@ -92,7 +111,7 @@ class VectorStoreService:
             session_store_name = f"Session_{session_id[:8]}_Data"
             
             # First, try to list existing vector stores
-            vector_stores = self.client.vector_stores.list()
+            vector_stores = client.vector_stores.list()
             
             # Look for a vector store with the session-specific name
             for store in vector_stores.data:
@@ -127,8 +146,12 @@ class VectorStoreService:
             logger.info(f"[VECTOR_STORE] Uploading file: {file_path}")
             
             # Upload file with automatic chunking
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
             with open(file_path, "rb") as file:
-                vector_store_file = self.client.vector_stores.files.upload_and_poll(
+                vector_store_file = client.vector_stores.files.upload_and_poll(
                     vector_store_id=vector_store_id,
                     file=file
                 )
@@ -253,7 +276,11 @@ class VectorStoreService:
             
             for attempt in range(max_retries):
                 try:
-                    results = self.client.vector_stores.search(**search_params)
+                    client = self._get_client()
+                    if client is None:
+                        raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+                    
+                    results = client.vector_stores.search(**search_params)
                     logger.info(f"[VECTOR_STORE] Search API call successful (attempt {attempt + 1})")
                     break
                 except Exception as search_error:
@@ -303,7 +330,11 @@ class VectorStoreService:
             formatted_results = self._format_search_results(search_results)
             
             # Create completion with the search results as context
-            completion = self.client.chat.completions.create(
+            client = self._get_client()
+            if client is None:
+                return "OpenAI client not available - check OPENAI_API_KEY environment variable"
+            
+            completion = client.chat.completions.create(
                 model=model,
                 messages=[
                     {
@@ -355,7 +386,11 @@ class VectorStoreService:
             if not vector_store_id:
                 vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
             
-            files = self.client.vector_stores.files.list(vector_store_id=vector_store_id)
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            files = client.vector_stores.files.list(vector_store_id=vector_store_id)
             return [file.model_dump() for file in files.data]
             
         except Exception as e:
@@ -372,7 +407,11 @@ class VectorStoreService:
             if not vector_store_id:
                 vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
             
-            self.client.vector_stores.files.delete(
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            client.vector_stores.files.delete(
                 vector_store_id=vector_store_id,
                 file_id=file_id
             )
@@ -394,7 +433,11 @@ class VectorStoreService:
                 logger.warning("[VECTOR_STORE] No vector store ID provided for deletion")
                 return False
             
-            self.client.vector_stores.delete(vector_store_id=vector_store_id)
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            client.vector_stores.delete(vector_store_id=vector_store_id)
             
             logger.info(f"[VECTOR_STORE] Deleted vector store: {vector_store_id}")
             self.vector_store_id = None
@@ -410,7 +453,11 @@ class VectorStoreService:
             if not vector_store_id:
                 vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
             
-            store_info = self.client.vector_stores.retrieve(vector_store_id=vector_store_id)
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            store_info = client.vector_stores.retrieve(vector_store_id=vector_store_id)
             return store_info.model_dump()
             
         except Exception as e:
@@ -428,7 +475,11 @@ class VectorStoreService:
             if not vector_store_id:
                 vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
             
-            self.client.vector_stores.files.update(
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            client.vector_stores.files.update(
                 vector_store_id=vector_store_id,
                 file_id=file_id,
                 attributes=attributes
