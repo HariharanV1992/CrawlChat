@@ -278,4 +278,8 @@ def example_file_download():
         'download_file': True,
         'country_code': 'us'
     }
-    return lambda_handler(event, None) 
+    return lambda_handler(event, None)
+
+
+# Export the handler function for Lambda
+handler = lambda_handler 
