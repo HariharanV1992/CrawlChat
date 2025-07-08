@@ -6,6 +6,9 @@ RUN yum update -y && \
     yum install -y poppler-utils poppler-cpp-devel && \
     yum clean all
 
+# Copy common package first (needed for requirements.txt)
+COPY common/ ${LAMBDA_TASK_ROOT}/common/
+
 # Copy requirements file (Docker-specific, excludes local packages)
 COPY lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
@@ -14,9 +17,6 @@ RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY lambda-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
 COPY lambda-service/main.py ${LAMBDA_TASK_ROOT}/
 COPY lambda-service/src/ ${LAMBDA_TASK_ROOT}/src/
-
-# Copy common package
-COPY common/ ${LAMBDA_TASK_ROOT}/common/
 
 # Copy centralized UI
 COPY ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
