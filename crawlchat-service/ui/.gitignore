@@ -1,0 +1,2 @@
+# Don't ignore anything in the UI directory - all files should be tracked
+# This ensures the centralized UI is always included in version control 

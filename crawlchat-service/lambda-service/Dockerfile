@@ -13,8 +13,10 @@ RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY lambda-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
 COPY lambda-service/main.py ${LAMBDA_TASK_ROOT}/
 COPY lambda-service/src/ ${LAMBDA_TASK_ROOT}/src/
-COPY lambda-service/templates/ ${LAMBDA_TASK_ROOT}/templates/
-COPY lambda-service/static/ ${LAMBDA_TASK_ROOT}/static/
+
+# Copy centralized UI
+COPY ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
+COPY ui/static/ ${LAMBDA_TASK_ROOT}/static/
 
 # Lambda handler entry point
 CMD ["lambda_handler.handler"]
