@@ -19,14 +19,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
-    # Check if static directory exists
-    if not os.path.exists("static"):
-        logger.warning("Static directory does not exist, creating it")
-        os.makedirs("static", exist_ok=True)
-    
-    # Check if templates directory exists
+    # Check if templates directory exists (for reference only)
     if not os.path.exists("templates"):
-        logger.warning("Templates directory does not exist")
+        logger.info("Templates directory not found (expected in Lambda)")
     
     # Import the FastAPI app
     from main import app
