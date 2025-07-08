@@ -24,12 +24,13 @@ class StorageService:
         self.storage_type = "mongodb"  # Always use MongoDB for Lambda
         self.s3_client = None
         
-        # Debug logging
-        logger.info(f"Storage type: {self.storage_type}")
-        logger.info(f"S3 access key present: {bool(config.s3_access_key)}")
-        logger.info(f"S3 secret key present: {bool(config.s3_secret_key)}")
-        logger.info(f"S3 bucket: {config.s3_bucket}")
-        logger.info(f"S3 region: {config.s3_region}")
+        # Debug logging (only in non-Lambda environments to reduce noise)
+        if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+            logger.info(f"Storage type: {self.storage_type}")
+            logger.info(f"S3 access key present: {bool(config.s3_access_key)}")
+            logger.info(f"S3 secret key present: {bool(config.s3_secret_key)}")
+            logger.info(f"S3 bucket: {config.s3_bucket}")
+            logger.info(f"S3 region: {config.s3_region}")
         
         # Initialize S3 client if configured (for optional S3 backup)
         if config.s3_bucket:
@@ -65,7 +66,11 @@ class StorageService:
                 logger.error(f"Failed to initialize S3 client: {e}")
                 self.s3_client = None
         else:
-            logger.warning("S3 client not available - missing bucket configuration")
+            # Only log warning in non-Lambda environments to reduce noise
+            if not os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+                logger.warning("S3 client not available - missing bucket configuration")
+            else:
+                logger.info("S3 not configured - using MongoDB storage only")
         
         # Initialize GridFS (lazy initialization)
         self.gridfs = None
