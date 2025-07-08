@@ -87,7 +87,6 @@ Resources:
       MemorySize: 1024
       Environment:
         Variables:
-          AWS_REGION: !Ref AWS::Region
           S3_BUCKET: !Ref CrawlChatDataBucket
 
   # Lambda Permission for API Gateway

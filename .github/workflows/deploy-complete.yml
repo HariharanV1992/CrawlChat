@@ -159,8 +159,8 @@ jobs:
         
         echo "📋 Current stack status: $STACK_STATUS"
         
-        if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
-          echo "🗑️  Deleting failed stack in ROLLBACK_COMPLETE state..."
+        if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
+          echo "🗑️  Deleting failed stack in $STACK_STATUS state..."
           aws cloudformation delete-stack \
             --stack-name ${{ env.STACK_NAME }} \
             --region ${{ env.AWS_REGION }}
