@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SQS Queue and Lambda permissions for CrawlChat'
+
+Parameters:
+  QueueName:
+    Type: String
+    Default: 'crawlchat-crawl-tasks'
+    Description: 'Name of the SQS queue for crawl tasks'
+  
+  LambdaExecutionRoleName:
+    Type: String
+    Default: 'lambda-execution-role'
+    Description: 'Name of the Lambda execution role'
+
+Resources:
+  # SQS Queue for crawl tasks
+  CrawlChatCrawlTasksQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref QueueName
+      VisibilityTimeout: 300  # 5 minutes
+      MessageRetentionPeriod: 1209600  # 14 days
+      ReceiveMessageWaitTimeSeconds: 20  # Long polling
+      Tags:
+        - Key: Project
+          Value: CrawlChat
+        - Key: Purpose
+          Value: CrawlTasks
+
+  # IAM Policy for Lambda to access SQS
+  LambdaSQSPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub '${QueueName}-sqs-policy'
+      Roles: 
+        - !Ref LambdaExecutionRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - sqs:SendMessage
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueUrl
+              - sqs:GetQueueAttributes
+            Resource: !GetAtt CrawlChatCrawlTasksQueue.Arn
+
+Outputs:
+  QueueUrl:
+    Description: 'URL of the SQS queue'
+    Value: !Ref CrawlChatCrawlTasksQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-QueueUrl'
+  
+  QueueArn:
+    Description: 'ARN of the SQS queue'
+    Value: !GetAtt CrawlChatCrawlTasksQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-QueueArn' 
