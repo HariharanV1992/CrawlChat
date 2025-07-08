@@ -396,6 +396,7 @@ jobs:
         echo "✅ Lambda API function updated"
     
     - name: Update Lambda environment variables
+      if: false  # Skipping this step as per user request
       run: |
         echo "⚙️ Updating Lambda environment variables..."
         VARS=$(jq -c -n '{
