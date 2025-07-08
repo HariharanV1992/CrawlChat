@@ -90,8 +90,31 @@ jobs:
         IMAGE_TAG: ${{ github.sha }}
       run: |
         echo "🐳 Building Lambda API image..."
+        echo "📋 Build context: $(pwd)"
+        echo "📋 Dockerfile path: lambda-service/Dockerfile"
+        echo "📋 ECR Registry: $ECR_REGISTRY"
+        echo "📋 Image Tag: $IMAGE_TAG"
+        
         cd crawlchat-service
-        docker build --no-cache -f crawler-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
+        echo "📋 Changed to directory: $(pwd)"
+        echo "📋 Directory contents:"
+        ls -la
+        
+        echo "📋 Lambda service contents:"
+        ls -la lambda-service/
+        
+        echo "📋 Common package contents:"
+        ls -la common/
+        
+        docker build --no-cache -f lambda-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Docker build successful"
+        else
+          echo "❌ Docker build failed"
+          exit 1
+        fi
+        
         docker tag $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
         
         echo "📤 Pushing Lambda API image..."
@@ -117,8 +140,25 @@ jobs:
         IMAGE_TAG: ${{ github.sha }}
       run: |
         echo "🐳 Building Crawler image..."
+        echo "📋 Build context: $(pwd)"
+        echo "📋 Dockerfile path: crawler-service/Dockerfile"
+        echo "📋 ECR Registry: $ECR_REGISTRY"
+        echo "📋 Image Tag: $IMAGE_TAG"
+        
         cd crawlchat-service
+        echo "📋 Changed to directory: $(pwd)"
+        echo "📋 Crawler service contents:"
+        ls -la crawler-service/
+        
         docker build --no-cache -f crawler-service/Dockerfile -t $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG .
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Docker build successful"
+        else
+          echo "❌ Docker build failed"
+          exit 1
+        fi
+        
         docker tag $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:latest
         
         echo "📤 Pushing Crawler image..."
