@@ -12,9 +12,23 @@ Parameters:
     Description: Domain name for the API Gateway
   CertificateArn:
     Type: String
-    Description: ARN of the SSL certificate for the domain
+    Default: ""
+    Description: ARN of the SSL certificate for the domain (optional)
 
 Resources:
+  # S3 Bucket for data storage and caching
+  CrawlChatDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: crawlchat-data
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   # API Gateway
   CrawlChatApiGateway:
     Type: AWS::ApiGateway::RestApi
@@ -74,6 +88,7 @@ Resources:
       Environment:
         Variables:
           AWS_REGION: !Ref AWS::Region
+          S3_BUCKET: !Ref CrawlChatDataBucket
           SCRAPINGBEE_API_KEY: "{{resolve:secretsmanager:crawlchat/scrapingbee-api-key:SecretString:api_key}}"
 
   # Lambda Permission for API Gateway
@@ -114,6 +129,15 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:crawlchat/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt CrawlChatDataBucket.Arn
+                  - !Sub "${CrawlChatDataBucket.Arn}/*"
 
   # API Gateway Deployment
   CrawlChatApiDeployment:
@@ -125,9 +149,10 @@ Resources:
       RestApiId: !Ref CrawlChatApiGateway
       StageName: prod
 
-  # Custom Domain Name
+  # Custom Domain Name (conditional)
   CrawlChatCustomDomain:
     Type: AWS::ApiGateway::DomainName
+    Condition: HasCertificate
     Properties:
       DomainName: !Ref DomainName
       RegionalCertificateArn: !Ref CertificateArn
@@ -135,17 +160,19 @@ Resources:
         Types:
           - REGIONAL
 
-  # API Gateway Base Path Mapping
+  # API Gateway Base Path Mapping (conditional)
   CrawlChatBasePathMapping:
     Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasCertificate
     Properties:
       DomainName: !Ref CrawlChatCustomDomain
       RestApiId: !Ref CrawlChatApiGateway
       Stage: !Ref CrawlChatApiDeployment
 
-  # Route53 Record (if hosted zone exists)
+  # Route53 Record (conditional)
   CrawlChatApiRecord:
     Type: AWS::Route53::RecordSet
+    Condition: HasCertificate
     Properties:
       HostedZoneName: crawlchat.site.
       Name: !Ref DomainName
@@ -154,13 +181,19 @@ Resources:
         DNSName: !GetAtt CrawlChatCustomDomain.RegionalDomainName
         HostedZoneId: !GetAtt CrawlChatCustomDomain.RegionalHostedZoneId
 
+Conditions:
+  HasCertificate: !Not [!Equals [!Ref CertificateArn, ""]]
+
 Outputs:
   ApiGatewayUrl:
     Description: "URL of the API Gateway"
     Value: !Sub "https://${CrawlChatApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
   CustomDomainUrl:
     Description: "Custom domain URL for the API"
-    Value: !Sub "https://${DomainName}"
+    Value: !If [HasCertificate, !Sub "https://${DomainName}", "Not configured"]
   LambdaFunctionName:
     Description: "Name of the Lambda function"
-    Value: !Ref CrawlChatCrawlWorkerFunction 
+    Value: !Ref CrawlChatCrawlWorkerFunction
+  S3BucketName:
+    Description: "S3 bucket for data storage and caching"
+    Value: !Ref CrawlChatDataBucket 

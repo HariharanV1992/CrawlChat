@@ -180,14 +180,23 @@ jobs:
     - name: Deploy complete infrastructure
       run: |
         echo "🏗️ Deploying complete infrastructure..."
+        
+        # Build parameter overrides
+        PARAM_OVERRIDES="LambdaImageUri=${{ needs.build-and-push.outputs.lambda-image }} DomainName=${{ env.DOMAIN_NAME }}"
+        
+        # Add certificate if available
+        if [ -n "${{ secrets.CERTIFICATE_ARN }}" ]; then
+          PARAM_OVERRIDES="$PARAM_OVERRIDES CertificateArn=${{ secrets.CERTIFICATE_ARN }}"
+          echo "📋 Using certificate: ${{ secrets.CERTIFICATE_ARN }}"
+        else
+          echo "⚠️  No certificate provided - custom domain will not be configured"
+        fi
+        
         aws cloudformation deploy \
           --template-file infra/crawlchat-complete-infrastructure.yml \
           --stack-name ${{ env.STACK_NAME }} \
           --capabilities CAPABILITY_NAMED_IAM \
-          --parameter-overrides \
-            LambdaImageUri=${{ needs.build-and-push.outputs.lambda-image }} \
-            DomainName=${{ env.DOMAIN_NAME }} \
-            CertificateArn=${{ secrets.CERTIFICATE_ARN }} \
+          --parameter-overrides $PARAM_OVERRIDES \
           --region ${{ env.AWS_REGION }}
         
         echo "✅ Infrastructure deployed successfully"
