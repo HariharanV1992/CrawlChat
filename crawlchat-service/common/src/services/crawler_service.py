@@ -319,6 +319,7 @@ class CrawlerService:
                     "pages_crawled": task.pages_crawled,
                     "documents_downloaded": task.documents_downloaded,
                     "downloaded_files": task.downloaded_files,
+                    "s3_files": task.s3_files,
                     "metadata": task.metadata
                 }}
             )

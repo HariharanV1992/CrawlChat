@@ -77,6 +77,7 @@ class CrawlTask(BaseModel):
     
     # Results
     downloaded_files: List[str] = Field(default=[], description="List of downloaded file paths")
+    s3_files: List[str] = Field(default=[], description="List of S3 file paths")
     metadata: Dict[str, Any] = Field(default={}, description="Task metadata")
 
 
