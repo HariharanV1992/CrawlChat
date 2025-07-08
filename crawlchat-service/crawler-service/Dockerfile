@@ -10,8 +10,11 @@ RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 # Copy crawler code
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
+COPY main.py ${LAMBDA_TASK_ROOT}/
 COPY crawler_main.py ${LAMBDA_TASK_ROOT}/
 COPY src/ ${LAMBDA_TASK_ROOT}/src/
+COPY templates/ ${LAMBDA_TASK_ROOT}/templates/
+COPY static/ ${LAMBDA_TASK_ROOT}/static/
 
 # Lambda handler entry point
 CMD ["lambda_handler.handler"]
