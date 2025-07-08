@@ -93,14 +93,22 @@ def setup_logging(
     logging.getLogger('openai').setLevel(logging.WARNING)
     
     # Application-specific loggers - reduce verbose INFO logs
-    logging.getLogger('src.crawler').setLevel(logging.WARNING)
+    logging.getLogger('src.crawler').setLevel(logging.INFO)  # Allow crawler logs
     logging.getLogger('src.services.chat_service').setLevel(logging.WARNING)
-    logging.getLogger('src.services.crawler_service').setLevel(logging.WARNING)
+    logging.getLogger('src.services.crawler_service').setLevel(logging.INFO)  # Allow crawler service logs
     logging.getLogger('src.services.auth_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.document_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.email_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.aws_background_service').setLevel(logging.WARNING)
     logging.getLogger('src.utils.vector_store_demo').setLevel(logging.ERROR)
+    
+    # Allow crawler-related logs
+    logging.getLogger('crawler').setLevel(logging.INFO)
+    logging.getLogger('crawler.advanced_crawler').setLevel(logging.INFO)
+    logging.getLogger('crawler.proxy_manager').setLevel(logging.INFO)
+    logging.getLogger('crawler.link_extractor').setLevel(logging.INFO)
+    logging.getLogger('crawler.file_downloader').setLevel(logging.INFO)
+    logging.getLogger('crawler.settings_manager').setLevel(logging.INFO)
     
     # Only log important startup/shutdown messages
     if log_level.upper() == "INFO":

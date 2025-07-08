@@ -94,10 +94,14 @@ class CrawlerService:
 
     async def create_crawl_task(self, request: CrawlRequest, user_id: str) -> CrawlResponse:
         """Create a new crawl task."""
+        logger.info(f"Creating crawl task for user {user_id} with URL: {request.url}")
+        
         if not AdvancedCrawler:
+            logger.error("AdvancedCrawler not available - cannot create crawl task")
             raise Exception("Crawler functionality not available")
         
         task_id = str(uuid.uuid4())
+        logger.info(f"Generated task ID: {task_id}")
         
         # Create crawl task
         task = CrawlTask(
@@ -113,11 +117,16 @@ class CrawlerService:
             request_timeout=request.request_timeout
         )
         
-        # Store task
+        # Store task in memory
         self.tasks[task_id] = task
         
         # Save to database
-        await self.db.get_collection("tasks").insert_one(task.dict())
+        try:
+            await self.db.get_collection("tasks").insert_one(task.model_dump())
+            logger.info(f"Task {task_id} saved to database")
+        except Exception as e:
+            logger.error(f"Failed to save task {task_id} to database: {e}")
+            raise
         
         logger.info(f"Created crawl task {task_id} for user {user_id}")
         
@@ -184,14 +193,29 @@ class CrawlerService:
 
     async def start_crawl_task(self, task_id: str) -> CrawlStatus:
         """Start a crawl task."""
+        logger.info(f"Starting crawl task {task_id}")
+        
         if not AdvancedCrawler:
+            logger.error("AdvancedCrawler not available - cannot start crawl task")
             raise Exception("Crawler functionality not available")
         
         task = self.tasks.get(task_id)
         if not task:
-            raise Exception(f"Task {task_id} not found")
+            logger.warning(f"Task {task_id} not found in memory, trying database")
+            # Try to get from database
+            task_data = await self.db.get_collection("tasks").find_one({"task_id": task_id})
+            if task_data:
+                task = CrawlTask(**task_data)
+                self.tasks[task_id] = task
+                logger.info(f"Loaded task {task_id} from database")
+            else:
+                logger.error(f"Task {task_id} not found in database")
+                raise Exception(f"Task {task_id} not found")
+        
+        logger.info(f"Task {task_id} status: {task.status}")
         
         if task.status != TaskStatus.PENDING:
+            logger.warning(f"Task {task_id} is not in pending status (current: {task.status})")
             raise Exception(f"Task {task_id} is not in pending status")
         
         # Update task status
@@ -199,12 +223,18 @@ class CrawlerService:
         task.started_at = datetime.utcnow()
         
         # Save to database
-        await self.db.get_collection("tasks").update_one(
-            {"task_id": task_id},
-            {"$set": {"status": task.status.value, "started_at": task.started_at}}
-        )
+        try:
+            await self.db.get_collection("tasks").update_one(
+                {"task_id": task_id},
+                {"$set": {"status": task.status.value, "started_at": task.started_at}}
+            )
+            logger.info(f"Updated task {task_id} status to RUNNING in database")
+        except Exception as e:
+            logger.error(f"Failed to update task {task_id} status in database: {e}")
+            raise
         
         # Start crawling in background
+        logger.info(f"Creating background task for {task_id}")
         crawl_task = asyncio.create_task(self._run_crawl_task(task))
         self.active_tasks[task_id] = crawl_task
         
@@ -220,8 +250,13 @@ class CrawlerService:
     
     async def _run_crawl_task(self, task: CrawlTask):
         """Run the actual crawl task."""
+        logger.info(f"Starting _run_crawl_task for task {task.task_id}")
+        logger.info(f"Task URL: {task.url}")
+        logger.info(f"Task config: max_pages={task.max_pages}, max_documents={task.max_documents}")
+        
         try:
             # Create crawler configuration
+            logger.info("Creating crawler configuration")
             crawler_config = CrawlConfig(
                 max_documents=task.max_documents,
                 max_pages=task.max_pages,
@@ -235,13 +270,17 @@ class CrawlerService:
                 render=task.render,
                 retry=task.retry
             )
+            logger.info(f"Crawler config created: {crawler_config}")
             
             # Get ScrapingBee API key from environment or task
             api_key = task.proxy_api_key or os.getenv("SCRAPINGBEE_API_KEY") or ""
             if not api_key:
                 logger.warning("No ScrapingBee API key found. Crawling may fail without proxy support.")
+            else:
+                logger.info("ScrapingBee API key found")
             
             # Initialize crawler
+            logger.info("Initializing AdvancedCrawler")
             crawler = AdvancedCrawler(
                 api_key=api_key,
                 base_url=task.url,
@@ -251,9 +290,12 @@ class CrawlerService:
                 delay=task.delay,
                 site_type='generic'
             )
+            logger.info("AdvancedCrawler initialized successfully")
             
             # Start crawling
+            logger.info(f"Starting crawl for URL: {task.url}")
             results = await crawler.crawl(task.url)
+            logger.info(f"Crawl completed with results: {results}")
             
             # Update task with results
             task.status = TaskStatus.COMPLETED
@@ -262,6 +304,8 @@ class CrawlerService:
             task.documents_downloaded = results['crawling_stats']['successful_downloads']
             task.downloaded_files = results['downloaded_files']
             task.metadata = results
+            
+            logger.info(f"Task {task.task_id} completed: {task.documents_downloaded} documents, {task.pages_crawled} pages")
             
             # Save to database
             await self.db.get_collection("tasks").update_one(
@@ -275,11 +319,12 @@ class CrawlerService:
                     "metadata": task.metadata
                 }}
             )
+            logger.info(f"Task {task.task_id} results saved to database")
             
             logger.info(f"Completed crawl task {task.task_id}: {task.documents_downloaded} documents")
             
         except Exception as e:
-            logger.error(f"Crawl task {task.task_id} failed: {e}")
+            logger.error(f"Crawl task {task.task_id} failed: {e}", exc_info=True)
             
             # Update task with error
             task.status = TaskStatus.FAILED
@@ -295,11 +340,13 @@ class CrawlerService:
                     "errors": task.errors
                 }}
             )
+            logger.info(f"Task {task.task_id} marked as FAILED in database")
         
         finally:
             # Remove from active tasks
             if task.task_id in self.active_tasks:
                 del self.active_tasks[task.task_id]
+                logger.info(f"Task {task.task_id} removed from active tasks")
     
     async def get_crawl_status(self, task_id: str) -> CrawlStatus:
         """Get the status of a crawl task."""
