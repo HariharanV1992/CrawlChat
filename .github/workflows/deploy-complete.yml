@@ -8,17 +8,17 @@ on:
       deploy_infrastructure:
         description: 'Deploy/Update Infrastructure'
         required: false
-        default: 'true'
+        default: true
         type: boolean
       deploy_lambda:
         description: 'Deploy Lambda Functions'
         required: false
-        default: 'true'
+        default: true
         type: boolean
       deploy_ui:
         description: 'Deploy UI (if applicable)'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:
@@ -37,6 +37,13 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
     
     - name: Validate CloudFormation templates
       run: |
@@ -84,7 +91,7 @@ jobs:
       run: |
         echo "🐳 Building Lambda API image..."
         cd crawlchat-service
-        docker build --no-cache -f lambda-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
+        docker build --no-cache -f crawler-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
         docker tag $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
         
         echo "📤 Pushing Lambda API image..."
