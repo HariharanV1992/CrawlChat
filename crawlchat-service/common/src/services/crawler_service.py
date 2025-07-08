@@ -652,14 +652,46 @@ class CrawlerService:
                         document = await document_service.create_document(document_data)
                         logger.info(f"Created document record: {document.document_id}")
                         
-                        # Process document (Textract, chunking, vector embedding)
-                        success = await processing_service.process_document(document.document_id)
+                        # Get document content from S3
+                        storage_service = get_storage_service()
+                        content = await storage_service.get_file_content(s3_file_path)
                         
-                        if success:
-                            processed_count += 1
-                            logger.info(f"Successfully processed document: {document.document_id}")
+                        if content:
+                            # Decode content
+                            if isinstance(content, bytes):
+                                content = content.decode('utf-8', errors='ignore')
+                            
+                            # Clean HTML content if needed
+                            if filename.endswith('.html'):
+                                import re
+                                content = re.sub(r'<[^>]+>', '', content)
+                                content = re.sub(r'\s+', ' ', content).strip()
+                            
+                            # Process document with vector store (includes deduplication)
+                            result = await processing_service.process_document_with_vector_store(
+                                document_id=document.document_id,
+                                content=content,
+                                filename=filename,
+                                metadata={
+                                    "source_url": task.url,
+                                    "crawl_task_id": task.task_id,
+                                    "source": "crawled_document"
+                                }
+                            )
+                            
+                            status = result.get("status")
+                            success = status in ["success", "duplicate_skipped"]
+                            
+                            if success:
+                                processed_count += 1
+                                if status == "duplicate_skipped":
+                                    logger.info(f"Document is duplicate, skipped embedding: {document.document_id}")
+                                else:
+                                    logger.info(f"Successfully processed document: {document.document_id}")
+                            else:
+                                logger.error(f"Failed to process document: {document.document_id}")
                         else:
-                            logger.error(f"Failed to process document: {document.document_id}")
+                            logger.warning(f"Could not read content for {s3_file_path}")
                             
                     except Exception as e:
                         logger.error(f"Error processing document {s3_file_path}: {e}")
