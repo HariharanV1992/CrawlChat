@@ -398,41 +398,41 @@ jobs:
     - name: Update Lambda environment variables
       run: |
         echo "⚙️ Updating Lambda environment variables..."
+        VARS=$(jq -c -n '{
+          ENVIRONMENT: "production",
+          S3_BUCKET: "${{ env.S3_BUCKET }}",
+          MONGODB_URI: "${{ secrets.MONGODB_URI }}",
+          DB_NAME: "stock_market_crawler",
+          COLLECTION_PREFIX: "crawler",
+          SCRAPINGBEE_API_KEY: "${{ secrets.SCRAPINGBEE_API_KEY }}",
+          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}",
+          OPENAI_MODEL: "gpt-4o-mini",
+          OPENAI_MAX_TOKENS: "4000",
+          OPENAI_TEMPERATURE: "0.1",
+          SECRET_KEY: "${{ secrets.SECRET_KEY }}",
+          ALGORITHM: "HS256",
+          ACCESS_TOKEN_EXPIRE_MINUTES: "30",
+          CORS_ORIGINS: "[\"https://crawlchat.site\",\"https://www.crawlchat.site\"]",
+          CRAWLER_MAX_WORKERS: "10",
+          CRAWLER_TIMEOUT: "30",
+          CRAWLER_DELAY: "1.0",
+          CRAWLER_MAX_PAGES: "100",
+          CRAWLER_MAX_DOCUMENTS: "20",
+          CRAWLER_USER_AGENT: "StockMarketCrawler/1.0",
+          USE_PROXY: "true",
+          PROXY_API_KEY: "${{ secrets.PROXY_API_KEY }}",
+          S3_DOCUMENTS_PREFIX: "documents/",
+          S3_CRAWLED_DATA_PREFIX: "crawled_data/",
+          MAX_FILE_SIZE_MB: "50",
+          PROCESSING_TIMEOUT: "300",
+          BATCH_SIZE: "10",
+          LOG_LEVEL: "INFO",
+          LOG_FILE: "/var/log/crawlchat/app.log"
+        }')
         aws lambda update-function-configuration \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --environment Variables='{
-            "ENVIRONMENT": "production",
-            "S3_BUCKET": "'${{ env.S3_BUCKET }}'",
-            "MONGODB_URI": "'${{ secrets.MONGODB_URI }}'",
-            "DB_NAME": "stock_market_crawler",
-            "COLLECTION_PREFIX": "crawler",
-            "SCRAPINGBEE_API_KEY": "'${{ secrets.SCRAPINGBEE_API_KEY }}'",
-            "OPENAI_API_KEY": "'${{ secrets.OPENAI_API_KEY }}'",
-            "OPENAI_MODEL": "gpt-4o-mini",
-            "OPENAI_MAX_TOKENS": "4000",
-            "OPENAI_TEMPERATURE": "0.1",
-            "SECRET_KEY": "'${{ secrets.SECRET_KEY }}'",
-            "ALGORITHM": "HS256",
-            "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
-            "CORS_ORIGINS": "[\"https://crawlchat.site\",\"https://www.crawlchat.site\"]",
-            "CRAWLER_MAX_WORKERS": "10",
-            "CRAWLER_TIMEOUT": "30",
-            "CRAWLER_DELAY": "1.0",
-            "CRAWLER_MAX_PAGES": "100",
-            "CRAWLER_MAX_DOCUMENTS": "20",
-            "CRAWLER_USER_AGENT": "StockMarketCrawler/1.0",
-            "USE_PROXY": "true",
-            "PROXY_API_KEY": "'${{ secrets.PROXY_API_KEY }}'",
-            "S3_DOCUMENTS_PREFIX": "documents/",
-            "S3_CRAWLED_DATA_PREFIX": "crawled_data/",
-            "MAX_FILE_SIZE_MB": "50",
-            "PROCESSING_TIMEOUT": "300",
-            "BATCH_SIZE": "10",
-            "LOG_LEVEL": "INFO",
-            "LOG_FILE": "/var/log/crawlchat/app.log"
-          }' \
+          --environment Variables="$VARS" \
           --region ${{ env.AWS_REGION }}
-        
         echo "✅ Environment variables updated"
     
     - name: Update Crawler function (if exists)
