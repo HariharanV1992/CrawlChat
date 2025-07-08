@@ -44,6 +44,21 @@ async def create_session(current_user: UserResponse = Depends(get_current_user))
         logger.error(f"[API] Error creating chat session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/start", response_model=SessionCreateResponse)
+async def start_chat_session(
+    request: dict,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Start a new chat session (compatibility endpoint)."""
+    logger.info(f"[API] Starting chat session for user: {current_user.user_id}")
+    try:
+        response = await chat_service.create_session(current_user.user_id)
+        logger.info(f"[API] Started chat session: {response.session_id} for user: {current_user.user_id}")
+        return response
+    except Exception as e:
+        logger.error(f"[API] Error starting chat session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/sessions", response_model=List[ChatSession])
 async def list_sessions(current_user: UserResponse = Depends(get_current_user)):
     """List all chat sessions for the current user."""
@@ -111,6 +126,52 @@ async def send_message(
                 current_user.user_id, 
                 message.content
             )
+        
+        return MessageResponse(
+            session_id=session_id,
+            role=message.role,
+            content=message.content,
+            timestamp=message.timestamp
+        )
+        
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send message")
+
+@router.post("/message", response_model=MessageResponse)
+async def send_message_compatibility(
+    request: dict,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Send a message (compatibility endpoint)."""
+    try:
+        session_id = request.get("session_id")
+        message_content = request.get("message", "")
+        
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id is required")
+        
+        # Create message object
+        from common.src.models.chat import MessageRole
+        message = MessageCreate(
+            role=MessageRole.USER,
+            content=message_content
+        )
+        
+        # Add user message
+        await chat_service.add_message(
+            session_id, 
+            current_user.user_id, 
+            message.role, 
+            message.content
+        )
+        
+        # Process AI response
+        ai_response = await chat_service.process_ai_response(
+            session_id, 
+            current_user.user_id, 
+            message.content
+        )
         
         return MessageResponse(
             session_id=session_id,

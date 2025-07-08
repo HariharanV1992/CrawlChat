@@ -131,6 +131,25 @@ async def cancel_task(
         logger.error(f"Error cancelling task: {e}")
         raise HTTPException(status_code=500, detail="Failed to cancel task")
 
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task_post(
+    task_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Cancel a running crawl task (POST method for compatibility)."""
+    try:
+        success = await crawler_service.cancel_crawl_task(task_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Task not found or cannot be cancelled")
+        
+        return {"message": f"Task {task_id} cancelled successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling task: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cancel task")
+
 @router.delete("/tasks/{task_id}/delete")
 async def delete_task(
     task_id: str,
