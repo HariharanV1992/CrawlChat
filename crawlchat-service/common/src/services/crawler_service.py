@@ -21,63 +21,87 @@ from common.src.services.document_service import DocumentService
 
 logger = logging.getLogger(__name__)
 
-# Import crawler modules from lambda-service (these are service-specific)
-try:
-    # Try to import from lambda-service crawler directory
-    import sys
-    import os
+# Global variables for lazy loading
+_AdvancedCrawler = None
+_SettingsManager = None
+
+def get_advanced_crawler():
+    """Lazy load AdvancedCrawler to avoid cold start issues."""
+    global _AdvancedCrawler
     
-    # Try multiple possible paths for the crawler modules
-    possible_paths = [
-        # Path for Lambda deployment
-        "/var/task/src",
-        # Path for local development
-        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src'),
-        # Path for common module structure
-        os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src'),
-        # Current directory
-        os.getcwd(),
-        # Lambda task root
-        "/var/task",
-        # Additional Lambda paths
-        "/var/task/lambda-service/src",
-        "/var/task/crawlchat-service/lambda-service/src"
-    ]
-    
-    crawler_imported = False
-    for path in possible_paths:
-        logger.info(f"Trying path: {path}")
-        if os.path.exists(path):
-            logger.info(f"Path exists: {path}")
-            if path not in sys.path:
-                sys.path.insert(0, path)
-                logger.info(f"Added {path} to sys.path")
+    if _AdvancedCrawler is None:
+        try:
+            logger.info("Loading AdvancedCrawler...")
             
-            try:
-                from crawler.advanced_crawler import AdvancedCrawler
-                from crawler.settings_manager import SettingsManager
-                logger.info(f"Successfully imported AdvancedCrawler and related modules from {path}")
-                crawler_imported = True
-                break
-            except ImportError as e:
-                logger.warning(f"Import failed from {path}: {e}")
-                # Remove the path if import failed
-                if path in sys.path:
-                    sys.path.remove(path)
-                continue
-        else:
-            logger.info(f"Path does not exist: {path}")
+            # Try to import from lambda-service crawler directory
+            import sys
+            import os
+            
+            # Try multiple possible paths for the crawler modules
+            possible_paths = [
+                # Path for Lambda deployment
+                "/var/task/src",
+                # Path for local development
+                os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src'),
+                # Path for common module structure
+                os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src'),
+                # Current directory
+                os.getcwd(),
+                # Lambda task root
+                "/var/task",
+                # Additional Lambda paths
+                "/var/task/lambda-service/src",
+                "/var/task/crawlchat-service/lambda-service/src"
+            ]
+            
+            crawler_imported = False
+            for path in possible_paths:
+                logger.info(f"Trying path: {path}")
+                if os.path.exists(path):
+                    logger.info(f"Path exists: {path}")
+                    if path not in sys.path:
+                        sys.path.insert(0, path)
+                        logger.info(f"Added {path} to sys.path")
+                    
+                    try:
+                        from crawler.advanced_crawler import AdvancedCrawler
+                        from crawler.settings_manager import SettingsManager
+                        logger.info(f"Successfully imported AdvancedCrawler and related modules from {path}")
+                        _AdvancedCrawler = AdvancedCrawler
+                        _SettingsManager = SettingsManager
+                        crawler_imported = True
+                        break
+                    except ImportError as e:
+                        logger.warning(f"Import failed from {path}: {e}")
+                        # Remove the path if import failed
+                        if path in sys.path:
+                            sys.path.remove(path)
+                        continue
+                else:
+                    logger.info(f"Path does not exist: {path}")
+            
+            if not crawler_imported:
+                raise ImportError("Could not find crawler modules in any of the expected paths")
+                
+        except ImportError as e:
+            # Fallback for when crawler modules are not available
+            logger.error(f"Failed to import crawler modules: {e}")
+            logger.error(f"Current working directory: {os.getcwd()}")
+            logger.error(f"Python path: {sys.path}")
+            _AdvancedCrawler = None
+            _SettingsManager = None
     
-    if not crawler_imported:
-        raise ImportError("Could not find crawler modules in any of the expected paths")
-        
-except ImportError as e:
-    # Fallback for when crawler modules are not available
-    logger.error(f"Failed to import crawler modules: {e}")
-    logger.error(f"Current working directory: {os.getcwd()}")
-    logger.error(f"Python path: {sys.path}")
-    AdvancedCrawler = None
-    SettingsManager = None
+    return _AdvancedCrawler
+
+def get_settings_manager():
+    """Lazy load SettingsManager to avoid cold start issues."""
+    global _SettingsManager
+    
+    if _SettingsManager is None:
+        # This will trigger the import of both AdvancedCrawler and SettingsManager
+        get_advanced_crawler()
+    
+    return _SettingsManager
 
 class CrawlerService:
     """Crawler service for managing crawl tasks using MongoDB."""
@@ -88,14 +112,15 @@ class CrawlerService:
         self.tasks: Dict[str, CrawlTask] = {}
         self.active_tasks: Dict[str, asyncio.Task] = {}
         
-        # Check if crawler is available
-        if not AdvancedCrawler:
-            logger.warning("AdvancedCrawler not available - crawling functionality disabled")
+        # Don't check crawler availability during initialization
+        # This will be done when actually needed
 
     async def create_crawl_task(self, request: CrawlRequest, user_id: str) -> CrawlResponse:
         """Create a new crawl task."""
         logger.info(f"Creating crawl task for user {user_id} with URL: {request.url}")
         
+        # Check if crawler is available only when needed
+        AdvancedCrawler = get_advanced_crawler()
         if not AdvancedCrawler:
             logger.error("AdvancedCrawler not available - cannot create crawl task")
             raise Exception("Crawler functionality not available")
@@ -195,6 +220,8 @@ class CrawlerService:
         """Start a crawl task."""
         logger.info(f"Starting crawl task {task_id}")
         
+        # Check if crawler is available only when needed
+        AdvancedCrawler = get_advanced_crawler()
         if not AdvancedCrawler:
             logger.error("AdvancedCrawler not available - cannot start crawl task")
             raise Exception("Crawler functionality not available")
@@ -281,10 +308,11 @@ class CrawlerService:
             
             # Initialize crawler
             logger.info("Initializing AdvancedCrawler")
+            AdvancedCrawler = get_advanced_crawler()
             crawler = AdvancedCrawler(
                 api_key=api_key,
                 base_url=task.url,
-                output_dir=task.output_dir or "/tmp/crawled_data",
+                output_dir=task.output_dir,
                 max_depth=2,
                 max_pages=task.max_pages,
                 delay=task.delay,
@@ -552,7 +580,7 @@ class CrawlerService:
             import os
             from pathlib import Path
             
-            output_dir = task.output_dir or "/tmp/crawled_data"
+            output_dir = task.output_dir
             logger.info(f"Uploading crawled files from {output_dir} to S3")
             
             if not os.path.exists(output_dir):
