@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 import urllib3
 from dataclasses import dataclass
 from enum import Enum
+from .s3_cache_manager import S3CacheManager
 
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -90,6 +91,9 @@ class EnhancedScrapingBeeManager:
         
         # Site-specific requirements cache
         self.site_requirements = {}
+        
+        # S3 cache manager
+        self.s3_cache = S3CacheManager()
         
         # Connection pooling
         self.session.mount('http://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
@@ -441,33 +445,33 @@ class EnhancedScrapingBeeManager:
                               for mode, stats in self.request_stats.items()),
         }
     
-    def save_site_requirements(self, filename: str = "/tmp/site_requirements.json"):
-        """Save site requirements to file."""
+    def save_site_requirements(self, filename: str = None):
+        """Save site requirements to S3."""
         try:
             # Convert enum to string for JSON serialization
             serializable_requirements = {
                 domain: mode.value for domain, mode in self.site_requirements.items()
             }
             
-            with open(filename, 'w') as f:
-                json.dump(serializable_requirements, f, indent=2)
-            logger.info(f"Site requirements saved to {filename}")
+            self.s3_cache.save_site_requirements(serializable_requirements)
+            logger.info("Site requirements saved to S3")
         except Exception as e:
-            logger.error(f"Failed to save site requirements: {e}")
+            logger.error(f"Failed to save site requirements to S3: {e}")
     
-    def load_site_requirements(self, filename: str = "/tmp/site_requirements.json"):
-        """Load site requirements from file."""
+    def load_site_requirements(self, filename: str = None):
+        """Load site requirements from S3."""
         try:
-            with open(filename, 'r') as f:
-                requirements = json.load(f)
+            requirements = self.s3_cache.load_site_requirements()
             
             # Convert string back to enum
             self.site_requirements = {
                 domain: ProxyMode(mode) for domain, mode in requirements.items()
             }
-            logger.info(f"Site requirements loaded from {filename}")
+            logger.info("Site requirements loaded from S3")
         except Exception as e:
-            logger.warning(f"Failed to load site requirements: {e}")
+            logger.warning(f"Failed to load site requirements from S3: {e}")
+            # Initialize empty cache on error
+            self.site_requirements = {}
     
     def reset_stats(self):
         """Reset all statistics."""

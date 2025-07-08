@@ -1,0 +1,197 @@
+# CrawlChat Deployment Configuration
+# This file centralizes all deployment settings and environment variables
+
+# AWS Configuration
+aws:
+  region: ap-south-1
+  account_id: "169164939839"
+  
+# Infrastructure Configuration
+infrastructure:
+  stack_name: crawlchat-complete-stack
+  s3_bucket: crawlchat-data
+  domain_name: api.crawlchat.site
+  
+# Lambda Functions Configuration
+lambda:
+  api_function:
+    name: crawlchat-api-function
+    ecr_repository: crawlchat-api-function
+    timeout: 900
+    memory_size: 1024
+    environment:
+      ENVIRONMENT: production
+      S3_BUCKET: crawlchat-data
+      MONGODB_URI: "{{resolve:secretsmanager:crawlchat/mongodb-uri:SecretString:uri}}"
+      DB_NAME: stock_market_crawler
+      COLLECTION_PREFIX: crawler
+      SCRAPINGBEE_API_KEY: "{{resolve:secretsmanager:crawlchat/scrapingbee-api-key:SecretString:api_key}}"
+      OPENAI_API_KEY: "{{resolve:secretsmanager:crawlchat/openai-api-key:SecretString:api_key}}"
+      OPENAI_MODEL: gpt-4o-mini
+      OPENAI_MAX_TOKENS: "4000"
+      OPENAI_TEMPERATURE: "0.1"
+      SECRET_KEY: "{{resolve:secretsmanager:crawlchat/secret-key:SecretString:key}}"
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+      CORS_ORIGINS: '["https://crawlchat.site","https://www.crawlchat.site"]'
+      CRAWLER_MAX_WORKERS: "10"
+      CRAWLER_TIMEOUT: "30"
+      CRAWLER_DELAY: "1.0"
+      CRAWLER_MAX_PAGES: "100"
+      CRAWLER_MAX_DOCUMENTS: "20"
+      CRAWLER_USER_AGENT: StockMarketCrawler/1.0
+      USE_PROXY: "true"
+      PROXY_API_KEY: "{{resolve:secretsmanager:crawlchat/proxy-api-key:SecretString:api_key}}"
+      S3_DOCUMENTS_PREFIX: documents/
+      S3_CRAWLED_DATA_PREFIX: crawled_data/
+      MAX_FILE_SIZE_MB: "50"
+      PROCESSING_TIMEOUT: "300"
+      BATCH_SIZE: "10"
+      LOG_LEVEL: INFO
+      LOG_FILE: /var/log/crawlchat/app.log
+  
+  crawler_function:
+    name: crawlchat-crawler-function
+    ecr_repository: crawlchat-crawler-function
+    timeout: 900
+    memory_size: 1024
+    environment:
+      ENVIRONMENT: production
+      S3_BUCKET: crawlchat-data
+      MONGODB_URI: "{{resolve:secretsmanager:crawlchat/mongodb-uri:SecretString:uri}}"
+      DB_NAME: stock_market_crawler
+      COLLECTION_PREFIX: crawler
+      SCRAPINGBEE_API_KEY: "{{resolve:secretsmanager:crawlchat/scrapingbee-api-key:SecretString:api_key}}"
+      CRAWLER_MAX_WORKERS: "10"
+      CRAWLER_TIMEOUT: "30"
+      CRAWLER_DELAY: "1.0"
+      CRAWLER_MAX_PAGES: "100"
+      CRAWLER_MAX_DOCUMENTS: "20"
+      CRAWLER_USER_AGENT: StockMarketCrawler/1.0
+      USE_PROXY: "true"
+      PROXY_API_KEY: "{{resolve:secretsmanager:crawlchat/proxy-api-key:SecretString:api_key}}"
+      S3_DOCUMENTS_PREFIX: documents/
+      S3_CRAWLED_DATA_PREFIX: crawled_data/
+      LOG_LEVEL: INFO
+      LOG_FILE: /var/log/crawlchat/app.log
+
+# Docker Configuration
+docker:
+  base_image: public.ecr.aws/lambda/python:3.10
+  build_context: crawlchat-service
+  lambda_dockerfile: lambda-service/Dockerfile
+  crawler_dockerfile: crawler-service/Dockerfile
+
+# API Gateway Configuration
+api_gateway:
+  name: crawlchat-api
+  description: CrawlChat API Gateway
+  endpoint_type: REGIONAL
+  stage_name: prod
+  cors:
+    allow_origins: ["https://crawlchat.site", "https://www.crawlchat.site"]
+    allow_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allow_headers: ["*"]
+    allow_credentials: true
+
+# S3 Configuration
+s3:
+  bucket_name: crawlchat-data
+  versioning: true
+  lifecycle_policy:
+    rules:
+      - id: DeleteOldVersions
+        status: Enabled
+        noncurrent_days: 30
+  cors_configuration:
+    - allowed_origins: ["*"]
+      allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+      allowed_headers: ["*"]
+      max_age_seconds: 3000
+
+# Monitoring Configuration
+monitoring:
+  cloudwatch_logs:
+    retention_days: 14
+    log_level: INFO
+  scheduled_tests:
+    cron: "0 */6 * * *"  # Every 6 hours
+  health_checks:
+    - endpoint: /health
+      method: GET
+      expected_status: 200
+    - endpoint: /login
+      method: POST
+      expected_status: 200
+
+# Security Configuration
+security:
+  iam_roles:
+    lambda_execution_role:
+      name: crawlchat-lambda-execution-role
+      policies:
+        - name: lambda-basic-execution
+          arn: arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - name: s3-access
+          document:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - arn:aws:s3:::crawlchat-data
+                  - arn:aws:s3:::crawlchat-data/*
+        - name: secrets-access
+          document:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: arn:aws:secretsmanager:ap-south-1:169164939839:secret:crawlchat/*
+
+# Deployment Triggers
+triggers:
+  automatic:
+    - push:
+        branches: [main]
+        paths:
+          - "crawlchat-service/**"
+          - "infra/**"
+          - ".github/workflows/**"
+  manual:
+    - workflow_dispatch
+    - repository_dispatch
+
+# Required Secrets
+required_secrets:
+  aws:
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+  api_keys:
+    - SCRAPINGBEE_API_KEY
+    - OPENAI_API_KEY
+    - PROXY_API_KEY
+  database:
+    - MONGODB_URI
+  security:
+    - SECRET_KEY
+    - CERTIFICATE_ARN
+
+# Cost Optimization
+cost_optimization:
+  lambda:
+    memory_optimization: true
+    timeout_optimization: true
+    cold_start_optimization: true
+  s3:
+    lifecycle_policies: true
+    intelligent_tiering: false
+  caching:
+    s3_cache_enabled: true
+    cache_ttl_hours: 24
+    cache_cleanup_days: 7 

@@ -1,5 +1,5 @@
 """
-Lambda handler for enhanced crawler with progressive proxy strategy
+Lambda handler for CrawlChat API and Crawler functions
 """
 
 import json
@@ -11,33 +11,76 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from crawler.advanced_crawler import AdvancedCrawler, CrawlScenarios
-from crawler.enhanced_scrapingbee_manager import ProxyMode, JavaScriptScenarios
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def lambda_handler(event, context):
     """
-    Lambda handler for enhanced crawler with progressive proxy strategy.
-    
-    Expected event format:
-    {
-        "url": "https://example.com",
-        "content_type": "generic",  // optional: "news", "ecommerce", "financial", "generic"
-        "use_js_scenario": false,   // optional: whether to use JS scenario
-        "js_scenario": {},          // optional: custom JS scenario
-        "take_screenshot": false,   // optional: take screenshot
-        "download_file": false,     // optional: download as file
-        "country_code": "us",       // optional: proxy geolocation
-        "force_mode": null          // optional: "standard", "premium", "stealth"
-    }
+    Routes API Gateway events to FastAPI (via Mangum), direct events to crawler logic, and SQS events to batch handler.
     """
-    
     try:
-        # Parse event
         logger.info(f"Received event: {json.dumps(event, default=str)}")
+        # API Gateway proxy event
+        if 'httpMethod' in event or 'requestContext' in event:
+            logger.info("Routing to FastAPI application")
+            return handle_api_gateway_request(event, context)
+        # SQS batch event
+        elif 'Records' in event:
+            logger.info("Routing to SQS batch handler")
+            return process_sqs_message(event, context)
+        # Direct Lambda invoke (crawler)
+        else:
+            logger.info("Routing to crawler handler")
+            return handle_crawler_request(event, context)
+    except Exception as e:
+        logger.error(f"Error in lambda handler: {e}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+
+def handle_api_gateway_request(event, context):
+    """Handle API Gateway requests by routing to FastAPI application."""
+    try:
+        # Import FastAPI app
+        from main import app
+        
+        # Convert API Gateway event to ASGI scope
+        scope = {
+            'type': 'http',
+            'http_version': '1.1',
+            'method': event.get('httpMethod', 'GET'),
+            'scheme': 'https',
+            'server': ('api.crawlchat.site', 443),
+            'path': event.get('path', '/'),
+            'query_string': event.get('queryStringParameters', {}),
+            'headers': [(k.lower().encode(), v.encode()) for k, v in event.get('headers', {}).items()],
+            'body': event.get('body', '').encode() if event.get('body') else b'',
+            'client': ('127.0.0.1', 0),
+            'asgi': {'version': '3.0'}
+        }
+        
+        # Create ASGI application
+        from mangum import Mangum
+        handler = Mangum(app, lifespan="off")
+        
+        # Handle the request
+        response = handler(event, context)
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error handling API Gateway request: {e}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': 'Internal server error', 'message': str(e)})
+        }
+
+def handle_crawler_request(event, context):
+    """Handle direct crawler requests."""
+    try:
+        from crawler.advanced_crawler import AdvancedCrawler, CrawlScenarios
+        from crawler.enhanced_scrapingbee_manager import ProxyMode, JavaScriptScenarios
         
         # Extract parameters
         url = event.get('url')
@@ -129,7 +172,7 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        logger.error(f"Error in lambda handler: {e}", exc_info=True)
+        logger.error(f"Error in crawler handler: {e}", exc_info=True)
         
         # Try to get partial stats if crawler was initialized
         partial_stats = {}
@@ -147,7 +190,6 @@ def lambda_handler(event, context):
                 'partial_stats': partial_stats
             })
         }
-
 
 def process_sqs_message(event, context):
     """
@@ -185,6 +227,7 @@ def process_sqs_message(event, context):
                 logger.info(f"Processing batch {batch_id} with {len(urls)} URLs")
                 
                 # Initialize crawler
+                from crawler.advanced_crawler import AdvancedCrawler
                 crawler = AdvancedCrawler(api_key)
                 
                 # Crawl all URLs
@@ -198,16 +241,17 @@ def process_sqs_message(event, context):
                     'batch_id': batch_id,
                     'urls_processed': len(urls),
                     'successful_crawls': sum(1 for r in batch_results if r.get('success')),
-                    'failed_crawls': sum(1 for r in batch_results if not r.get('success')),
                     'results': batch_results,
                     'usage_stats': batch_stats,
                 }
                 
                 results.append(batch_result)
+                
+                # Clean up
                 crawler.close()
                 
             except Exception as e:
-                logger.error(f"Error processing SQS record: {e}")
+                logger.error(f"Error processing SQS record: {e}", exc_info=True)
                 results.append({
                     'error': str(e),
                     'record': record
@@ -216,70 +260,66 @@ def process_sqs_message(event, context):
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'processed_batches': len(results),
-                'results': results
+                'batch_results': results
             }, default=str)
         }
         
     except Exception as e:
-        logger.error(f"Error processing SQS event: {e}", exc_info=True)
+        logger.error(f"Error in SQS handler: {e}", exc_info=True)
         return {
             'statusCode': 500,
-            'body': json.dumps({'error': str(e)})
+            'body': json.dumps({
+                'error': str(e)
+            })
         }
 
-
-# Example usage functions for different scenarios
+# Example functions for testing
 def example_news_site_crawl():
-    """Example: Crawl news site with progressive strategy."""
+    """Example: Crawl a news site with JavaScript scenario."""
     event = {
-        'url': 'https://news.ycombinator.com',
+        'url': 'https://example-news.com',
         'content_type': 'news',
         'use_js_scenario': True,
-        'country_code': 'us'
+        'take_screenshot': False
     }
     return lambda_handler(event, None)
 
 def example_ecommerce_crawl():
-    """Example: Crawl ecommerce site with JS scenario."""
+    """Example: Crawl an e-commerce site with JavaScript scenario."""
     event = {
         'url': 'https://example-store.com',
         'content_type': 'ecommerce',
         'use_js_scenario': True,
-        'js_scenario': CrawlScenarios.ecommerce_scenario(),
-        'country_code': 'us'
+        'take_screenshot': False
     }
     return lambda_handler(event, None)
 
 def example_financial_crawl():
-    """Example: Crawl financial site with stealth mode."""
+    """Example: Crawl a financial site with JavaScript scenario."""
     event = {
-        'url': 'https://financial-reports.com',
+        'url': 'https://example-financial.com',
         'content_type': 'financial',
-        'force_mode': 'stealth',
-        'country_code': 'us'
+        'use_js_scenario': True,
+        'take_screenshot': False
     }
     return lambda_handler(event, None)
 
 def example_screenshot():
-    """Example: Take screenshot of webpage."""
+    """Example: Take a screenshot of a webpage."""
     event = {
         'url': 'https://example.com',
         'take_screenshot': True,
-        'full_page': True,
-        'country_code': 'us'
+        'full_page': True
     }
     return lambda_handler(event, None)
 
 def example_file_download():
-    """Example: Download file from URL."""
+    """Example: Download a file from a URL."""
     event = {
         'url': 'https://example.com/document.pdf',
-        'download_file': True,
-        'country_code': 'us'
+        'download_file': True
     }
     return lambda_handler(event, None)
-
 
 # Export the handler function for Lambda
 handler = lambda_handler 

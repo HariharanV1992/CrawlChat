@@ -1,0 +1,264 @@
+name: Test and Validate Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of tests to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - api
+          - crawler
+          - infrastructure
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
+  push:
+    branches: [ main ]
+    paths:
+      - 'crawlchat-service/tests/**'
+      - '.github/workflows/test-and-validate.yml'
+
+env:
+  AWS_REGION: ap-south-1
+  LAMBDA_FUNCTION_NAME: crawlchat-api-function
+  CRAWLER_FUNCTION_NAME: crawlchat-crawler-function
+  STACK_NAME: crawlchat-complete-stack
+
+jobs:
+  validate-infrastructure:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'infrastructure' || github.event_name == 'schedule' }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Check CloudFormation stack status
+      run: |
+        echo "🔍 Checking CloudFormation stack status..."
+        STACK_STATUS=$(aws cloudformation describe-stacks \
+          --stack-name ${{ env.STACK_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'Stacks[0].StackStatus' \
+          --output text 2>/dev/null || echo "STACK_NOT_FOUND")
+        
+        echo "Stack status: $STACK_STATUS"
+        
+        if [ "$STACK_STATUS" != "CREATE_COMPLETE" ] && [ "$STACK_STATUS" != "UPDATE_COMPLETE" ]; then
+          echo "❌ Stack is not in a healthy state: $STACK_STATUS"
+          exit 1
+        fi
+        
+        echo "✅ Stack is healthy"
+    
+    - name: Check Lambda functions
+      run: |
+        echo "🔍 Checking Lambda functions..."
+        
+        # Check API function
+        API_STATUS=$(aws lambda get-function \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'Configuration.State' \
+          --output text 2>/dev/null || echo "FUNCTION_NOT_FOUND")
+        
+        echo "API function status: $API_STATUS"
+        
+        if [ "$API_STATUS" != "Active" ]; then
+          echo "❌ API function is not active: $API_STATUS"
+          exit 1
+        fi
+        
+        # Check Crawler function
+        CRAWLER_STATUS=$(aws lambda get-function \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'Configuration.State' \
+          --output text 2>/dev/null || echo "FUNCTION_NOT_FOUND")
+        
+        echo "Crawler function status: $CRAWLER_STATUS"
+        
+        if [ "$CRAWLER_STATUS" != "Active" ]; then
+          echo "⚠️ Crawler function is not active: $CRAWLER_STATUS"
+        fi
+        
+        echo "✅ Lambda functions checked"
+    
+    - name: Check S3 bucket
+      run: |
+        echo "🔍 Checking S3 bucket..."
+        BUCKET_NAME="crawlchat-data"
+        
+        if aws s3api head-bucket --bucket $BUCKET_NAME --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          echo "✅ S3 bucket exists and is accessible"
+          
+          # Check bucket versioning
+          VERSIONING=$(aws s3api get-bucket-versioning \
+            --bucket $BUCKET_NAME \
+            --query 'Status' \
+            --output text 2>/dev/null || echo "NotEnabled")
+          
+          echo "Bucket versioning: $VERSIONING"
+        else
+          echo "❌ S3 bucket not found or not accessible"
+          exit 1
+        fi
+
+  test-api:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'api' || github.event_name == 'schedule' }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Test API health endpoint
+      run: |
+        echo "🧪 Testing API health endpoint..."
+        cd crawlchat-service
+        
+        aws lambda invoke \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --payload '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' \
+          --region ${{ env.AWS_REGION }} \
+          health_response.json
+        
+        echo "Health check response:"
+        cat health_response.json | jq .
+        
+        # Check if response is successful
+        STATUS=$(cat health_response.json | jq -r '.statusCode')
+        if [ "$STATUS" != "200" ]; then
+          echo "❌ Health check failed with status: $STATUS"
+          exit 1
+        fi
+        
+        echo "✅ Health check passed"
+    
+    - name: Test API login endpoint
+      run: |
+        echo "🧪 Testing API login endpoint..."
+        cd crawlchat-service
+        
+        aws lambda invoke \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --payload '{"httpMethod":"POST","path":"/login","headers":{"Content-Type":"application/json"},"queryStringParameters":null,"body":"{\"email\":\"test@example.com\",\"password\":\"testpass\"}","isBase64Encoded":false}' \
+          --region ${{ env.AWS_REGION }} \
+          login_response.json
+        
+        echo "Login test response:"
+        cat login_response.json | jq .
+        
+        echo "✅ Login endpoint test completed"
+
+  test-crawler:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'crawler' || github.event_name == 'schedule' }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Test crawler functionality
+      run: |
+        echo "🧪 Testing crawler functionality..."
+        cd crawlchat-service
+        
+        # Test basic crawler
+        aws lambda invoke \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --payload '{"url":"https://example.com"}' \
+          --region ${{ env.AWS_REGION }} \
+          crawler_response.json
+        
+        echo "Crawler test response:"
+        cat crawler_response.json | jq .
+        
+        # Check if crawler response has expected structure
+        SUCCESS=$(cat crawler_response.json | jq -r '.body | fromjson | .success')
+        if [ "$SUCCESS" != "true" ] && [ "$SUCCESS" != "false" ]; then
+          echo "❌ Crawler response format is invalid"
+          exit 1
+        fi
+        
+        echo "✅ Crawler functionality test completed"
+    
+    - name: Test S3 caching
+      run: |
+        echo "🧪 Testing S3 caching functionality..."
+        
+        # Check if cache files exist in S3
+        BUCKET_NAME="crawlchat-data"
+        
+        CACHE_FILES=$(aws s3 ls s3://$BUCKET_NAME/cache/ --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+        
+        if [ -n "$CACHE_FILES" ]; then
+          echo "✅ S3 cache files found:"
+          echo "$CACHE_FILES"
+        else
+          echo "⚠️ No S3 cache files found (this is normal for first deployment)"
+        fi
+
+  generate-report:
+    runs-on: ubuntu-latest
+    needs: [validate-infrastructure, test-api, test-crawler]
+    if: always()
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Generate test report
+      run: |
+        echo "📊 Test and Validation Report"
+        echo "============================"
+        echo ""
+        echo "🔍 Infrastructure Validation: ${{ needs.validate-infrastructure.result }}"
+        echo "🧪 API Tests: ${{ needs.test-api.result }}"
+        echo "🕷️ Crawler Tests: ${{ needs.test-crawler.result }}"
+        echo ""
+        echo "📋 Test Summary:"
+        echo "   - CloudFormation Stack: ${{ needs.validate-infrastructure.result }}"
+        echo "   - Lambda Functions: ${{ needs.validate-infrastructure.result }}"
+        echo "   - S3 Bucket: ${{ needs.validate-infrastructure.result }}"
+        echo "   - API Health: ${{ needs.test-api.result }}"
+        echo "   - API Login: ${{ needs.test-api.result }}"
+        echo "   - Crawler Function: ${{ needs.test-crawler.result }}"
+        echo "   - S3 Caching: ${{ needs.test-crawler.result }}"
+        echo ""
+        
+        if [ "${{ needs.validate-infrastructure.result }}" == "success" ] && \
+           [ "${{ needs.test-api.result }}" == "success" ] && \
+           [ "${{ needs.test-crawler.result }}" == "success" ]; then
+          echo "🎉 All tests passed! Deployment is healthy."
+        else
+          echo "⚠️ Some tests failed. Check the logs above for details."
+          exit 1
+        fi 

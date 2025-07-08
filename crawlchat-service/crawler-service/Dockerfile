@@ -7,14 +7,13 @@ RUN yum update -y && \
     yum clean all
 
 # Copy requirements file (Docker-specific, excludes local packages)
-COPY crawler-service/requirements-docker.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+COPY lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
-# Copy crawler code
-COPY crawler-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
-COPY crawler-service/main.py ${LAMBDA_TASK_ROOT}/
-COPY crawler-service/crawler_main.py ${LAMBDA_TASK_ROOT}/
-COPY crawler-service/src/ ${LAMBDA_TASK_ROOT}/src/
+# Copy lambda service code (updated with S3 caching)
+COPY lambda-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
+COPY lambda-service/main.py ${LAMBDA_TASK_ROOT}/
+COPY lambda-service/src/ ${LAMBDA_TASK_ROOT}/src/
 
 # Copy common package
 COPY common/ ${LAMBDA_TASK_ROOT}/common/

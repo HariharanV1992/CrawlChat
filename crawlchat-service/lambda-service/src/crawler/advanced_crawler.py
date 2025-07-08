@@ -27,7 +27,7 @@ class AdvancedCrawler:
     
     def __init__(self, api_key: str = None, settings: Dict[str, Any] = None):
         self.settings_manager = SettingsManager()
-        self.settings = settings or self.settings_manager.get_settings()
+        self.settings = settings or self.settings_manager.get_all_settings()
         
         # Initialize enhanced ScrapingBee manager
         api_key = api_key or os.getenv('SCRAPINGBEE_API_KEY')

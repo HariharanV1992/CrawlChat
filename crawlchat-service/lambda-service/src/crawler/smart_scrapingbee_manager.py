@@ -9,6 +9,7 @@ import json
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
 import urllib3
+from .s3_cache_manager import S3CacheManager
 
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -43,6 +44,9 @@ class SmartScrapingBeeManager:
         
         # Site-specific JS requirements (cache)
         self.site_js_requirements = {}
+        
+        # S3 cache manager
+        self.s3_cache = S3CacheManager()
         
         # Connection pooling
         self.session.mount('http://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
@@ -199,23 +203,23 @@ class SmartScrapingBeeManager:
             'cost_savings': round(no_js_cost, 4),  # Money saved by using no-JS first
         }
     
-    def save_site_requirements(self, filename: str = "/tmp/site_js_requirements.json"):
-        """Save site JS requirements to file."""
+    def save_site_requirements(self, filename: str = None):
+        """Save site JS requirements to S3."""
         try:
-            with open(filename, 'w') as f:
-                json.dump(self.site_js_requirements, f, indent=2)
-            logger.info(f"Site JS requirements saved to {filename}")
+            self.s3_cache.save_site_js_requirements(self.site_js_requirements)
+            logger.info("Site JS requirements saved to S3")
         except Exception as e:
-            logger.error(f"Failed to save site requirements: {e}")
+            logger.error(f"Failed to save site requirements to S3: {e}")
     
-    def load_site_requirements(self, filename: str = "/tmp/site_js_requirements.json"):
-        """Load site JS requirements from file."""
+    def load_site_requirements(self, filename: str = None):
+        """Load site JS requirements from S3."""
         try:
-            with open(filename, 'r') as f:
-                self.site_js_requirements = json.load(f)
-            logger.info(f"Site JS requirements loaded from {filename}")
+            self.site_js_requirements = self.s3_cache.load_site_js_requirements()
+            logger.info("Site JS requirements loaded from S3")
         except Exception as e:
-            logger.warning(f"Failed to load site requirements: {e}")
+            logger.warning(f"Failed to load site requirements from S3: {e}")
+            # Initialize empty cache on error
+            self.site_js_requirements = {}
     
     def close(self):
         """Close the session."""

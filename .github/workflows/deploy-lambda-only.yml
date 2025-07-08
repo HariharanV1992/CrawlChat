@@ -1,0 +1,186 @@
+name: Deploy Lambda Functions Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      function_name:
+        description: 'Lambda Function Name (leave empty for all)'
+        required: false
+        type: string
+      force_rebuild:
+        description: 'Force rebuild Docker images'
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches: [ main ]
+    paths:
+      - 'crawlchat-service/lambda-service/**'
+      - 'crawlchat-service/crawler-service/**'
+      - 'crawlchat-service/common/**'
+      - '.github/workflows/deploy-lambda-only.yml'
+
+env:
+  AWS_REGION: ap-south-1
+  LAMBDA_ECR_REPOSITORY: crawlchat-api-function
+  CRAWLER_ECR_REPOSITORY: crawlchat-crawler-function
+  LAMBDA_FUNCTION_NAME: crawlchat-api-function
+  CRAWLER_FUNCTION_NAME: crawlchat-crawler-function
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build and push Lambda API image
+      id: build-lambda
+      if: ${{ github.event.inputs.function_name == '' || github.event.inputs.function_name == env.LAMBDA_FUNCTION_NAME }}
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        echo "🐳 Building Lambda API image..."
+        cd crawlchat-service
+        
+        BUILD_ARGS=""
+        if [ "${{ github.event.inputs.force_rebuild }}" == "true" ]; then
+          BUILD_ARGS="--no-cache"
+        fi
+        
+        docker build $BUILD_ARGS -f lambda-service/Dockerfile -t $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
+        
+        echo "📤 Pushing Lambda API image..."
+        docker push $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG
+        docker push $ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:latest
+        
+        echo "lambda-image=$ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "✅ Lambda API image built and pushed"
+    
+    - name: Build and push Crawler image
+      id: build-crawler
+      if: ${{ github.event.inputs.function_name == '' || github.event.inputs.function_name == env.CRAWLER_FUNCTION_NAME }}
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        echo "🐳 Building Crawler image..."
+        cd crawlchat-service
+        
+        BUILD_ARGS=""
+        if [ "${{ github.event.inputs.force_rebuild }}" == "true" ]; then
+          BUILD_ARGS="--no-cache"
+        fi
+        
+        docker build $BUILD_ARGS -f crawler-service/Dockerfile -t $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:latest
+        
+        echo "📤 Pushing Crawler image..."
+        docker push $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG
+        docker push $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:latest
+        
+        echo "crawler-image=$ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "✅ Crawler image built and pushed"
+    
+    - name: Update Lambda API function
+      if: ${{ github.event.inputs.function_name == '' || github.event.inputs.function_name == env.LAMBDA_FUNCTION_NAME }}
+      run: |
+        echo "🔄 Updating Lambda API function..."
+        aws lambda update-function-code \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --image-uri ${{ steps.build-lambda.outputs.lambda-image }} \
+          --region ${{ env.AWS_REGION }}
+        
+        echo "⏳ Waiting for Lambda update..."
+        aws lambda wait function-updated \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --region ${{ env.AWS_REGION }}
+        
+        echo "✅ Lambda API function updated"
+    
+    - name: Update Crawler function
+      if: ${{ github.event.inputs.function_name == '' || github.event.inputs.function_name == env.CRAWLER_FUNCTION_NAME }}
+      run: |
+        echo "🔄 Updating Crawler function..."
+        if aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+          aws lambda update-function-code \
+            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+            --image-uri ${{ steps.build-crawler.outputs.crawler-image }} \
+            --region ${{ env.AWS_REGION }}
+          
+          aws lambda wait function-updated \
+            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Crawler function updated"
+        else
+          echo "⚠️ Crawler function not found - skipping"
+        fi
+    
+    - name: Test functions
+      run: |
+        echo "🧪 Testing updated functions..."
+        cd crawlchat-service
+        
+        # Test Lambda API function
+        if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.LAMBDA_FUNCTION_NAME }}" ]; then
+          echo "Testing Lambda API function..."
+          aws lambda invoke \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --payload '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' \
+            --region ${{ env.AWS_REGION }} \
+            api_response.json
+          
+          echo "API Health check response:"
+          cat api_response.json | jq .
+        fi
+        
+        # Test Crawler function
+        if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.CRAWLER_FUNCTION_NAME }}" ]; then
+          if aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Testing Crawler function..."
+            aws lambda invoke \
+              --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+              --payload '{"url":"https://example.com"}' \
+              --region ${{ env.AWS_REGION }} \
+              crawler_response.json
+            
+            echo "Crawler test response:"
+            cat crawler_response.json | jq .
+          fi
+        fi
+        
+        echo "✅ Function tests completed"
+    
+    - name: Deployment summary
+      run: |
+        echo "🎉 Lambda Functions Deployment Summary"
+        echo "====================================="
+        echo ""
+        echo "✅ Lambda API Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+        echo "✅ Crawler Function: ${{ env.CRAWLER_FUNCTION_NAME }}"
+        echo ""
+        echo "🖼️ Lambda API Image: ${{ steps.build-lambda.outputs.lambda-image }}"
+        echo "🖼️ Crawler Image: ${{ steps.build-crawler.outputs.crawler-image }}"
+        echo ""
+        echo "📋 Next Steps:"
+        echo "   1. Test your API endpoints"
+        echo "   2. Monitor CloudWatch logs"
+        echo "   3. Verify S3 caching functionality"
+        echo "   4. Test ScrapingBee integration" 
