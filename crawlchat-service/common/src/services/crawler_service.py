@@ -615,7 +615,7 @@ class CrawlerService:
             try:
                 from common.src.services.document_processing_service import DocumentProcessingService
                 from common.src.services.document_service import DocumentService
-                from common.src.models.documents import DocumentCreate
+                from common.src.models.documents import Document
                 from pathlib import Path
                 import uuid
                 
@@ -632,7 +632,8 @@ class CrawlerService:
                         filename = Path(s3_file_path).name
                         document_id = str(uuid.uuid4())
                         
-                        document_data = DocumentCreate(
+                        # Create document record using Document model directly
+                        document_data = Document(
                             document_id=document_id,
                             filename=filename,
                             file_path=s3_file_path,
