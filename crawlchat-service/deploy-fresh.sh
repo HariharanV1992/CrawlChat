@@ -46,7 +46,7 @@ fi
 # Step 2: Build and push Docker image
 echo "🐳 Building Docker image..."
 cd crawler-service
-docker build -t $ECR_REPOSITORY:latest .
+docker build -f crawler-service/Dockerfile -t $ECR_REPOSITORY:latest ..
 
 echo "🔐 Logging into ECR..."
 aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
