@@ -18,6 +18,7 @@ from common.src.core.config import config
 from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
 from common.src.services.document_service import DocumentService
+from common.src.services.sqs_helper import sqs_helper
 
 logger = logging.getLogger(__name__)
 
@@ -216,57 +217,32 @@ class CrawlerService:
     async def set_task_cancelled(self, task_id: str) -> bool:
         return await self.update_task_status(task_id, TaskStatus.CANCELLED)
 
-    async def start_crawl_task(self, task_id: str) -> CrawlStatus:
-        """Start a crawl task."""
-        logger.info(f"Starting crawl task {task_id}")
-        
-        # Check if crawler is available only when needed
-        AdvancedCrawler = get_advanced_crawler()
-        if not AdvancedCrawler:
-            logger.error("AdvancedCrawler not available - cannot start crawl task")
-            raise Exception("Crawler functionality not available")
-        
+    async def start_crawl_task(self, task_id: str, user_id: str = None) -> CrawlStatus:
+        """Start a crawl task by sending it to SQS."""
+        logger.info(f"[SQS] Enqueuing crawl task {task_id}")
+        # Set status to running in DB
         task = self.tasks.get(task_id)
         if not task:
-            logger.warning(f"Task {task_id} not found in memory, trying database")
-            # Try to get from database
             task_data = await self.db.get_collection("tasks").find_one({"task_id": task_id})
             if task_data:
                 task = CrawlTask(**task_data)
                 self.tasks[task_id] = task
-                logger.info(f"Loaded task {task_id} from database")
             else:
                 logger.error(f"Task {task_id} not found in database")
                 raise Exception(f"Task {task_id} not found")
-        
-        logger.info(f"Task {task_id} status: {task.status}")
-        
         if task.status != TaskStatus.PENDING:
             logger.warning(f"Task {task_id} is not in pending status (current: {task.status})")
             raise Exception(f"Task {task_id} is not in pending status")
-        
-        # Update task status
+        # Set to running
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.utcnow()
-        
-        # Save to database
-        try:
-            await self.db.get_collection("tasks").update_one(
-                {"task_id": task_id},
-                {"$set": {"status": task.status.value, "started_at": task.started_at}}
-            )
-            logger.info(f"Updated task {task_id} status to RUNNING in database")
-        except Exception as e:
-            logger.error(f"Failed to update task {task_id} status in database: {e}")
-            raise
-        
-        # Start crawling in background
-        logger.info(f"Creating background task for {task_id}")
-        crawl_task = asyncio.create_task(self._run_crawl_task(task))
-        self.active_tasks[task_id] = crawl_task
-        
-        logger.info(f"Started crawl task {task_id}")
-        
+        await self.db.get_collection("tasks").update_one(
+            {"task_id": task_id},
+            {"$set": {"status": task.status.value, "started_at": task.started_at}}
+        )
+        # Send to SQS
+        sqs_helper.send_crawl_task(task_id, user_id or task.user_id)
+        logger.info(f"[SQS] Task {task_id} enqueued for crawling")
         return CrawlStatus(
             task_id=task_id,
             status=task.status.value,
