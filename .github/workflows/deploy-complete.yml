@@ -100,6 +100,15 @@ jobs:
         
         echo "lambda-image=$ECR_REGISTRY/${{ env.LAMBDA_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
         echo "✅ Lambda API image built and pushed"
+        
+        # Validate that the image was actually pushed
+        echo "🔍 Validating image push..."
+        if aws ecr describe-images --repository-name ${{ env.LAMBDA_ECR_REPOSITORY }} --image-ids imageTag=$IMAGE_TAG --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+          echo "✅ Image validation successful"
+        else
+          echo "❌ Image validation failed - image not found in ECR"
+          exit 1
+        fi
     
     - name: Build and push Crawler image
       id: build-crawler
@@ -205,8 +214,29 @@ jobs:
       run: |
         echo "🏗️ Deploying complete infrastructure..."
         
+        # Validate that we have a valid image URI
+        LAMBDA_IMAGE_URI="${{ needs.build-and-push.outputs.lambda-image }}"
+        echo "📋 Lambda Image URI: $LAMBDA_IMAGE_URI"
+        
+        if [ -z "$LAMBDA_IMAGE_URI" ]; then
+          echo "❌ Lambda Image URI is empty - cannot deploy"
+          exit 1
+        fi
+        
+        # Validate that the image exists in ECR
+        echo "🔍 Validating image exists in ECR..."
+        IMAGE_TAG=$(echo "$LAMBDA_IMAGE_URI" | sed 's/.*://')
+        REPO_NAME=$(echo "$LAMBDA_IMAGE_URI" | sed 's/.*\///' | sed 's/:.*//')
+        
+        if ! aws ecr describe-images --repository-name $REPO_NAME --image-ids imageTag=$IMAGE_TAG --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+          echo "❌ Image not found in ECR - cannot deploy"
+          exit 1
+        fi
+        
+        echo "✅ Image validation successful"
+        
         # Build parameter overrides
-        PARAM_OVERRIDES="LambdaImageUri=${{ needs.build-and-push.outputs.lambda-image }} DomainName=${{ env.DOMAIN_NAME }}"
+        PARAM_OVERRIDES="LambdaImageUri=$LAMBDA_IMAGE_URI DomainName=${{ env.DOMAIN_NAME }}"
         
         # Add certificate if available
         if [ -n "${{ secrets.CERTIFICATE_ARN }}" ]; then
