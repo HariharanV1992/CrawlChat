@@ -20,7 +20,7 @@ Resources:
   CrawlChatDataBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: crawlchat-data
+      BucketName: !Sub "crawlchat-data-${AWS::AccountId}-${AWS::Region}"
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
