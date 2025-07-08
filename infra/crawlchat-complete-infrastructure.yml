@@ -89,7 +89,6 @@ Resources:
         Variables:
           AWS_REGION: !Ref AWS::Region
           S3_BUCKET: !Ref CrawlChatDataBucket
-          SCRAPINGBEE_API_KEY: "{{resolve:secretsmanager:crawlchat/scrapingbee-api-key:SecretString:api_key}}"
 
   # Lambda Permission for API Gateway
   CrawlChatLambdaPermission:
@@ -125,10 +124,7 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: "*"
-              - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:crawlchat/*"
+
               - Effect: Allow
                 Action:
                   - s3:GetObject
