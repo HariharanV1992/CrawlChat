@@ -990,9 +990,9 @@ Please provide a helpful response:"""
             user_id = session_data.get("user_id")
             logger.info(f"[EMBEDDING] Found session {session_id} for user {user_id}")
             
-            # Import services
+            # Import unified document processor
+            from common.src.services.unified_document_processor import unified_document_processor
             from common.src.services.storage_service import StorageService
-            from common.src.services.document_service import document_service
             
             try:
                 logger.info(f"[EMBEDDING] Creating embeddings for uploaded document: {document.filename}")
@@ -1000,107 +1000,42 @@ Please provide a helpful response:"""
                 # Get document content from S3
                 storage_service = StorageService()
                 s3_key = document.file_path
-                content = await storage_service.get_file_content(s3_key)
+                file_content = await storage_service.get_file_content(s3_key)
                 
-                if content:
-                    # Process the document to extract text content
-                    logger.info(f"[EMBEDDING] Processing document content for: {document.filename}")
-                    
-                    # For PDFs, we need to extract text using AWS Textract directly
-                    if document.filename.lower().endswith('.pdf'):
-                        try:
-                            # Use AWS Textract service directly for better reliability
-                            from common.src.services.aws_textract_service import textract_service, DocumentType
-                            
-                            logger.info(f"[EMBEDDING] Using AWS Textract for PDF: {document.filename}")
-                            
-                            # Get the file content from S3
-                            file_content = await storage_service.get_file_content(s3_key)
-                            if file_content:
-                                # ALWAYS use Textract for PDFs (no local fallback)
-                                logger.info(f"[EMBEDDING] Forcing Textract extraction for PDF: {document.filename}")
-                                text_content, page_count = await textract_service.upload_to_s3_and_extract(
-                                    file_content, 
-                                    document.filename, 
-                                    DocumentType.GENERAL,
-                                    user_id
-                                )
-                                if text_content and text_content.strip():
-                                    content = text_content
-                                    logger.info(f"[EMBEDDING] Successfully extracted {len(content)} characters from PDF using Textract: {document.filename}")
-                                    logger.info(f"[EMBEDDING] PDF content preview: {content[:200]}...")
-                                else:
-                                    logger.warning(f"[EMBEDDING] No content extracted from PDF using Textract: {document.filename}")
-                                    content = f"Could not extract text from PDF: {document.filename}"
-                            else:
-                                logger.warning(f"[EMBEDDING] Could not read file content for PDF: {document.filename}")
-                                content = f"Could not read file content: {document.filename}"
-                        except Exception as e:
-                            logger.error(f"[EMBEDDING] Error processing PDF with Textract {document.filename}: {e}")
-                            content = f"Error processing PDF: {e}"
-                    
-                    # TODO: In production, use preprocessing service for better reliability
-                    # For now, we continue with direct Textract processing
-                    # In the future, this should be:
-                    # 1. Upload to preprocessing service
-                    # 2. Wait for preprocessing completion
-                    # 3. Use preprocessed document with Textract
-                    else:
-                        # For other file types, decode bytes
-                        if isinstance(content, bytes):
-                            content = content.decode('utf-8', errors='ignore')
-                        
-                        # Clean content if needed
-                        if document.filename.endswith('.html'):
-                            import re
-                            content = re.sub(r'<[^>]+>', '', content)
-                            content = re.sub(r'\s+', ' ', content).strip()
-                    
-                    # Process document with vector store (includes deduplication)
-                    result = await document_processing_service.process_document_with_vector_store(
-                        document_id=document.document_id,
-                        content=content,
+                if file_content:
+                    # Process document using unified processor
+                    result = await unified_document_processor.process_document(
+                        file_content=file_content,
                         filename=document.filename,
+                        user_id=user_id,
+                        session_id=session_id,
                         metadata={
                             "session_id": session_id,
                             "user_id": user_id,
                             "source": "uploaded_document",
                             "file_path": document.file_path
                         },
-                        session_id=session_id
+                        source="uploaded"
                     )
                     
-                    status = result.get("status")
-                    success = status in ["success", "duplicate_skipped"]
-                    
-                    if success:
-                        if status == "duplicate_skipped":
-                            logger.info(f"[EMBEDDING] Document is duplicate, skipped embedding: {document.filename}")
-                            completion_message = f"📋 Document already exists in this session (duplicate detected): {document.filename}. You can now ask questions about it."
-                            # For duplicates, don't increment document count
-                            logger.info(f"[EMBEDDING] Duplicate document - not incrementing document count")
-                        else:
-                            logger.info(f"[EMBEDDING] Successfully created embeddings for uploaded document: {document.filename}")
-                            completion_message = f"🎉 Document processed successfully! You can now ask questions about {document.filename}."
-                            # For new documents, increment document count
-                            await mongodb.get_collection("chat_sessions").update_one(
-                                {"session_id": session_id, "user_id": user_id},
-                                {"$inc": {"document_count": 1}}
-                            )
-                            logger.info(f"[EMBEDDING] New document - incremented document count")
-                        # Add completion message (always add, no duplicate check)
+                    if result.get("status") == "success":
+                        logger.info(f"[EMBEDDING] Successfully processed uploaded document: {document.filename}")
+                        completion_message = f"🎉 Document processed successfully! You can now ask questions about {document.filename}."
+                        # Increment document count
+                        await mongodb.get_collection("chat_sessions").update_one(
+                            {"session_id": session_id, "user_id": user_id},
+                            {"$inc": {"document_count": 1}}
+                        )
+                        logger.info(f"[EMBEDDING] New document - incremented document count")
+                        # Add completion message
                         completion_success = await self.add_message(session_id, user_id, MessageRole.SYSTEM, completion_message)
                         logger.info(f"[EMBEDDING] Added completion message: {completion_success}")
-                        # Refresh session data to get updated messages
-                        session_data = await mongodb.get_collection("chat_sessions").find_one({"session_id": session_id})
                     else:
-                        logger.warning(f"[EMBEDDING] Failed to create embeddings for uploaded document: {document.filename}")
-                        # Update error message
+                        logger.warning(f"[EMBEDDING] Failed to process uploaded document: {document.filename}")
                         error_message = f"❌ Failed to process uploaded document: {document.filename}"
                         await self.add_message(session_id, user_id, MessageRole.SYSTEM, error_message)
                 else:
                     logger.warning(f"[EMBEDDING] Could not read content for uploaded document: {document.filename}")
-                    # Update error message
                     error_message = f"❌ Could not read content for uploaded document: {document.filename}"
                     await self.add_message(session_id, user_id, MessageRole.SYSTEM, error_message)
                     

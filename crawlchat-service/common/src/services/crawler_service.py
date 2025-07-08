@@ -611,46 +611,15 @@ class CrawlerService:
                 logger.warning(f"No S3 files to process for task {task.task_id}")
                 return
             
-            # Import document processing services
+            # Import unified document processor
             try:
-                from common.src.services.document_processing_service import DocumentProcessingService
-                from common.src.services.document_service import DocumentService
-                from common.src.models.documents import Document
-                from pathlib import Path
-                import uuid
-                
-                document_service = DocumentService()
-                processing_service = DocumentProcessingService()
+                from common.src.services.unified_document_processor import unified_document_processor
                 
                 processed_count = 0
                 
                 for s3_file_path in task.s3_files:
                     try:
                         logger.info(f"Processing document: {s3_file_path}")
-                        
-                        # Create document record
-                        filename = Path(s3_file_path).name
-                        document_id = str(uuid.uuid4())
-                        
-                        # Create document record using Document model directly
-                        document_data = Document(
-                            document_id=document_id,
-                            filename=filename,
-                            file_path=s3_file_path,
-                            file_size=0,  # Will be updated after processing
-                            document_type=self._get_document_type(Path(filename).suffix),
-                            user_id=task.user_id,
-                            task_id=task.task_id,
-                            metadata={
-                                "source_url": task.url,
-                                "crawl_task_id": task.task_id,
-                                "crawled_at": task.completed_at.isoformat() if task.completed_at else None
-                            }
-                        )
-                        
-                        # Create document in database
-                        document = await document_service.create_document(document_data)
-                        logger.info(f"Created document record: {document.document_id}")
                         
                         # Get document content from S3
                         storage_service = get_storage_service()
@@ -662,34 +631,30 @@ class CrawlerService:
                                 content = content.decode('utf-8', errors='ignore')
                             
                             # Clean HTML content if needed
+                            filename = Path(s3_file_path).name
                             if filename.endswith('.html'):
                                 import re
                                 content = re.sub(r'<[^>]+>', '', content)
                                 content = re.sub(r'\s+', ' ', content).strip()
                             
-                            # Process document with vector store (includes deduplication)
-                            result = await processing_service.process_document_with_vector_store(
-                                document_id=document.document_id,
+                            # Process crawled content using unified processor
+                            result = await unified_document_processor.process_crawled_content(
                                 content=content,
                                 filename=filename,
+                                user_id=task.user_id,
                                 metadata={
                                     "source_url": task.url,
                                     "crawl_task_id": task.task_id,
-                                    "source": "crawled_document"
+                                    "crawled_at": task.completed_at.isoformat() if task.completed_at else None,
+                                    "s3_key": s3_file_path
                                 }
                             )
                             
-                            status = result.get("status")
-                            success = status in ["success", "duplicate_skipped"]
-                            
-                            if success:
+                            if result.get("status") == "success":
                                 processed_count += 1
-                                if status == "duplicate_skipped":
-                                    logger.info(f"Document is duplicate, skipped embedding: {document.document_id}")
-                                else:
-                                    logger.info(f"Successfully processed document: {document.document_id}")
+                                logger.info(f"Successfully processed document: {result.get('document_id')}")
                             else:
-                                logger.error(f"Failed to process document: {document.document_id}")
+                                logger.error(f"Failed to process document: {filename}")
                         else:
                             logger.warning(f"Could not read content for {s3_file_path}")
                             
@@ -700,7 +665,7 @@ class CrawlerService:
                 logger.info(f"Processed {processed_count}/{len(task.s3_files)} documents for task {task.task_id}")
                 
             except ImportError as e:
-                logger.warning(f"Document processing services not available: {e}")
+                logger.warning(f"Unified document processor not available: {e}")
                 logger.warning("Documents will not be processed for chat functionality")
                 
         except Exception as e:

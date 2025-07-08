@@ -3,49 +3,120 @@ Documents API endpoints for Stock Market Crawler.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
 from typing import List, Optional
 
 from common.src.models.documents import (
     Document, DocumentCreate, DocumentUpdate, DocumentResponse, DocumentListResponse, DocumentType, DocumentStatus, DocumentUpload
 )
 from common.src.services.document_service import document_service
+from common.src.services.unified_document_processor import unified_document_processor
 from common.src.api.dependencies import get_current_user
 from common.src.models.auth import UserResponse
 from common.src.core.exceptions import DocumentProcessingError
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["documents"])
 
-@router.post("/upload", response_model=Document)
+class DocumentUploadRequest(BaseModel):
+    session_id: Optional[str] = None
+    metadata: Optional[dict] = None
+
+@router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    task_id: Optional[str] = Query(None),
+    session_id: Optional[str] = Form(None),
+    metadata: Optional[str] = Form(None),
     current_user: UserResponse = Depends(get_current_user)
 ):
-    """Upload a document."""
+    """Upload and process a document using the unified document processor."""
     try:
-        # Read file content
-        content = await file.read()
+        logger.info(f"[API] Uploading document: {file.filename} for user: {current_user.user_id}")
         
-        # Create upload data
-        upload_data = DocumentCreate(
-            filename=file.filename,
-            content=content,
+        # Read file content
+        file_content = await file.read()
+        
+        # Parse metadata if provided
+        parsed_metadata = None
+        if metadata:
+            try:
+                import json
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON metadata")
+        
+        # Process document using unified processor
+        result = await unified_document_processor.process_document(
+            file_content=file_content,
+            filename=file.filename or "unknown",
             user_id=current_user.user_id,
-            task_id=task_id
+            session_id=session_id,
+            metadata=parsed_metadata,
+            source="uploaded"
         )
         
-        # Upload document
-        document = await document_service.upload_document(upload_data)
-        return document
-        
-    except DocumentProcessingError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        if result.get("status") == "success":
+            return {
+                "message": "Document uploaded and processed successfully",
+                "document_id": result.get("document_id"),
+                "filename": result.get("filename"),
+                "content_length": result.get("content_length", 0),
+                "vector_store_result": result.get("vector_store_result")
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Document processing failed: {result.get('error', 'Unknown error')}"
+            )
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error uploading document: {e}")
-        raise HTTPException(status_code=500, detail="Failed to upload document")
+        logger.error(f"[API] Error uploading document: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@router.post("/process-crawled")
+async def process_crawled_content(
+    content: str,
+    filename: str,
+    session_id: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Process crawled content using the unified document processor."""
+    try:
+        logger.info(f"[API] Processing crawled content: {filename} for user: {current_user.user_id}")
+        
+        # Process crawled content
+        result = await unified_document_processor.process_crawled_content(
+            content=content,
+            filename=filename,
+            user_id=current_user.user_id,
+            session_id=session_id,
+            metadata=metadata
+        )
+        
+        if result.get("status") == "success":
+            return {
+                "message": "Crawled content processed successfully",
+                "document_id": result.get("document_id"),
+                "filename": result.get("filename"),
+                "content_length": result.get("content_length", 0),
+                "vector_store_result": result.get("vector_store_result")
+            }
+        else:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Content processing failed: {result.get('error', 'Unknown error')}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] Error processing crawled content: {e}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 @router.post("/process", response_model=DocumentResponse)
 async def process_document(
