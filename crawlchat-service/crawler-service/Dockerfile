@@ -1,8 +1,10 @@
 # ---------- FINAL LAMBDA IMAGE ----------
 FROM public.ecr.aws/lambda/python:3.10
 
-# Install system dependencies for web crawling
-RUN yum update -y && yum clean all
+# Install system dependencies for web crawling and PDF processing
+RUN yum update -y && \
+    yum install -y poppler-utils poppler-cpp-devel && \
+    yum clean all
 
 # Copy requirements file (Docker-specific, excludes local packages)
 COPY crawler-service/requirements-docker.txt ${LAMBDA_TASK_ROOT}/requirements.txt
