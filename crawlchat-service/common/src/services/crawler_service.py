@@ -8,6 +8,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+import os
 
 from common.src.core.database import mongodb
 from common.src.models.crawler import CrawlTask, TaskStatus, CrawlConfig, CrawlRequest, CrawlResponse, CrawlStatus, CrawlResult
@@ -235,10 +236,16 @@ class CrawlerService:
                 retry=task.retry
             )
             
+            # Get ScrapingBee API key from environment or task
+            api_key = task.proxy_api_key or os.getenv("SCRAPINGBEE_API_KEY") or ""
+            if not api_key:
+                logger.warning("No ScrapingBee API key found. Crawling may fail without proxy support.")
+            
             # Initialize crawler
             crawler = AdvancedCrawler(
-                api_key=task.proxy_api_key or "",
-                output_dir=task.output_dir,
+                api_key=api_key,
+                base_url=task.url,
+                output_dir=task.output_dir or "/tmp/crawled_data",
                 max_depth=2,
                 max_pages=task.max_pages,
                 delay=task.delay,
