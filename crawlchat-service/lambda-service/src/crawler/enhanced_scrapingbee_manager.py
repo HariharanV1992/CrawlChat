@@ -76,7 +76,7 @@ class EnhancedScrapingBeeManager:
         
         # Base options
         self.base_options = base_options or {
-            "country_code": "us",
+            "country_code": "in",  # Use India proxies for ap-south-1 region
             "block_ads": True,
             "block_resources": False,
         }

@@ -52,7 +52,7 @@ def lambda_handler(event, context):
         js_scenario = event.get('js_scenario')
         take_screenshot = event.get('take_screenshot', False)
         download_file = event.get('download_file', False)
-        country_code = event.get('country_code', 'us')
+        country_code = event.get('country_code', 'in')  # Default to India for ap-south-1 region
         force_mode = event.get('force_mode')
         
         # Initialize enhanced crawler

@@ -36,7 +36,7 @@ class AdvancedCrawler:
         
         # Configure base options
         base_options = {
-            "country_code": self.settings.get("country_code", "us"),
+            "country_code": self.settings.get("country_code", "in"),  # Default to India for ap-south-1
             "block_ads": self.settings.get("block_ads", True),
             "block_resources": self.settings.get("block_resources", False),
         }
