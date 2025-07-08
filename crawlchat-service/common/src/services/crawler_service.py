@@ -590,7 +590,7 @@ class CrawlerService:
                             user_id=task.user_id,
                             metadata={
                                 "original_path": relative_path,
-                                "source_url": task.base_url
+                                "source_url": task.url
                             }
                         )
                         

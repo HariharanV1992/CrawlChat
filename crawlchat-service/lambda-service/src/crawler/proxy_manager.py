@@ -112,11 +112,11 @@ class ScrapingBeeProxyManager:
         """Get cost estimate."""
         return self.smart_manager.get_cost_estimate()
     
-    def save_site_requirements(self, filename: str = "site_js_requirements.json"):
+    def save_site_requirements(self, filename: str = "/tmp/site_js_requirements.json"):
         """Save site JS requirements."""
         self.smart_manager.save_site_requirements(filename)
     
-    def load_site_requirements(self, filename: str = "site_js_requirements.json"):
+    def load_site_requirements(self, filename: str = "/tmp/site_js_requirements.json"):
         """Load site JS requirements."""
         self.smart_manager.load_site_requirements(filename)
     
