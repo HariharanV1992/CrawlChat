@@ -431,7 +431,7 @@ jobs:
         }')
         aws lambda update-function-configuration \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --environment Variables="$VARS" \
+          --environment "Variables=$VARS" \
           --region ${{ env.AWS_REGION }}
         echo "✅ Environment variables updated"
     
