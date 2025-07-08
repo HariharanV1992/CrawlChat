@@ -122,7 +122,8 @@ class AdvancedCrawler:
             
             # Extract links for next level
             if depth < self.max_depth:
-                links = self.link_extractor.extract_links(content, url)
+                page_links, document_links = self.link_extractor.extract_links(content, url, self.visited_urls)
+                links = page_links + document_links
                 logger.info(f"Found {len(links)} links on {url}")
                 
                 # Crawl links with delay

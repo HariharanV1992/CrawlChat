@@ -20,7 +20,105 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def create_default_settings_files():
+    """Create default settings files in /tmp directory."""
+    try:
+        # Create /tmp directory if it doesn't exist
+        os.makedirs("/tmp", exist_ok=True)
+        
+        # Default stock market settings
+        stock_market_settings = {
+            "crawler_settings": {
+                "max_pages": 5,
+                "delay": 2,
+                "min_year": 2015,
+                "max_year": 2025,
+                "max_workers": 3,
+                "use_selenium": False,  # Disable in Lambda
+                "max_documents": 10,
+                "min_file_size_bytes": 1000,
+                "selenium_timeout": 30,
+                "selenium_wait_time": 3,
+                "max_retries": 3,
+                "retry_delay": 5
+            },
+            "proxy_settings": {
+                "use_proxy": True,
+                "timeout": 30,
+                "proxy_api_key": "",
+                "proxy_method": "api_endpoint",
+                "min_file_size": 1024,
+                "output_dir": "/tmp/crawled_data",  # Use /tmp in Lambda
+                "single_page_mode": False,
+                "connection_limit": 100,
+                "tcp_connector_limit": 50,
+                "keepalive_timeout": 30,
+                "enable_compression": True,
+                "total_timeout": 1800,
+                "page_timeout": 60,
+                "request_timeout": 30,
+                "max_pages_without_documents": 20,
+                "relevant_keywords": [
+                    "stock", "market", "financial", "investor", "earnings", "revenue",
+                    "profit", "dividend", "share", "equity", "trading", "quote",
+                    "annual", "quarterly", "report", "statement", "filing", "sec",
+                    "board", "governance", "corporate", "news", "announcement"
+                ],
+                "exclude_patterns": [
+                    "login", "admin", "private", "internal", "test", "dev",
+                    "temp", "cache", "session", "cookie", "tracking", "advertisement",
+                    "ad", "banner", "social", "facebook", "twitter", "linkedin",
+                    "youtube", "instagram", "subscribe", "newsletter", "contact",
+                    "about", "careers", "jobs", "support", "help", "faq"
+                ],
+                "document_extensions": [".pdf", ".doc", ".docx", ".xlsx", ".xls", ".ppt", ".pptx", ".txt", ".csv"],
+                "scrapingbee_api_key": "",
+                "scrapingbee_options": {
+                    "premium_proxy": True,
+                    "country_code": "us",
+                    "block_ads": True,
+                    "block_resources": False
+                }
+            },
+            "keyword_settings": {
+                "url_keywords": [],
+                "content_keywords": [],
+                "snippet_keywords": []
+            }
+        }
+        
+        # Default site JS requirements
+        site_js_requirements = {
+            "www.aboutamazon.com": True,
+            "www.business-standard.com": False,
+            "www.moneycontrol.com": False,
+            "www.ndtv.com": False,
+            "www.livemint.com": False,
+            "www.financialexpress.com": False,
+            "www.economictimes.indiatimes.com": False,
+            "www.screener.in": False
+        }
+        
+        # Save stock market settings
+        with open("/tmp/stock_market_settings.json", "w") as f:
+            json.dump(stock_market_settings, f, indent=2)
+        logger.info("✅ Created /tmp/stock_market_settings.json")
+        
+        # Save site JS requirements
+        with open("/tmp/site_js_requirements.json", "w") as f:
+            json.dump(site_js_requirements, f, indent=2)
+        logger.info("✅ Created /tmp/site_js_requirements.json")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Error creating settings files: {e}")
+        return False
+
 try:
+    # Create default settings files on Lambda initialization
+    create_default_settings_files()
+    
     # Check if templates directory exists (for reference only)
     if not os.path.exists("templates"):
         logger.info("Templates directory not found (expected in Lambda)")

@@ -314,6 +314,9 @@ class CrawlerService:
             # Upload crawled files to S3
             await self._upload_crawled_files_to_s3(task)
             
+            # Process documents for chat (Textract, chunking, vector embedding)
+            await self._process_crawled_documents(task)
+            
             # Save to database
             await self.db.get_collection("tasks").update_one(
                 {"task_id": task.task_id},
@@ -598,6 +601,78 @@ class CrawlerService:
                 
         except Exception as e:
             logger.error(f"Error uploading crawled files to S3: {e}")
+
+    async def _process_crawled_documents(self, task: CrawlTask):
+        """Process crawled documents for chat (Textract, chunking, vector embedding)."""
+        try:
+            logger.info(f"Processing {len(task.s3_files) if task.s3_files else 0} crawled documents for task {task.task_id}")
+            
+            if not task.s3_files:
+                logger.warning(f"No S3 files to process for task {task.task_id}")
+                return
+            
+            # Import document processing services
+            try:
+                from common.src.services.document_processing_service import DocumentProcessingService
+                from common.src.services.document_service import DocumentService
+                from common.src.models.documents import DocumentCreate
+                from pathlib import Path
+                import uuid
+                
+                document_service = DocumentService()
+                processing_service = DocumentProcessingService()
+                
+                processed_count = 0
+                
+                for s3_file_path in task.s3_files:
+                    try:
+                        logger.info(f"Processing document: {s3_file_path}")
+                        
+                        # Create document record
+                        filename = Path(s3_file_path).name
+                        document_id = str(uuid.uuid4())
+                        
+                        document_data = DocumentCreate(
+                            document_id=document_id,
+                            filename=filename,
+                            file_path=s3_file_path,
+                            file_size=0,  # Will be updated after processing
+                            document_type=self._get_document_type(Path(filename).suffix),
+                            user_id=task.user_id,
+                            task_id=task.task_id,
+                            metadata={
+                                "source_url": task.url,
+                                "crawl_task_id": task.task_id,
+                                "crawled_at": task.completed_at.isoformat() if task.completed_at else None
+                            }
+                        )
+                        
+                        # Create document in database
+                        document = await document_service.create_document(document_data)
+                        logger.info(f"Created document record: {document.document_id}")
+                        
+                        # Process document (Textract, chunking, vector embedding)
+                        success = await processing_service.process_document(document.document_id)
+                        
+                        if success:
+                            processed_count += 1
+                            logger.info(f"Successfully processed document: {document.document_id}")
+                        else:
+                            logger.error(f"Failed to process document: {document.document_id}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing document {s3_file_path}: {e}")
+                        continue
+                
+                logger.info(f"Processed {processed_count}/{len(task.s3_files)} documents for task {task.task_id}")
+                
+            except ImportError as e:
+                logger.warning(f"Document processing services not available: {e}")
+                logger.warning("Documents will not be processed for chat functionality")
+                
+        except Exception as e:
+            logger.error(f"Error processing crawled documents for task {task.task_id}: {e}")
+            task.errors.append(f"Document processing failed: {str(e)}")
 
 # Global crawler service instance
 crawler_service = CrawlerService() 

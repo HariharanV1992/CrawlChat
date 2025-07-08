@@ -199,7 +199,7 @@ class SmartScrapingBeeManager:
             'cost_savings': round(no_js_cost, 4),  # Money saved by using no-JS first
         }
     
-    def save_site_requirements(self, filename: str = "site_js_requirements.json"):
+    def save_site_requirements(self, filename: str = "/tmp/site_js_requirements.json"):
         """Save site JS requirements to file."""
         try:
             with open(filename, 'w') as f:
@@ -208,7 +208,7 @@ class SmartScrapingBeeManager:
         except Exception as e:
             logger.error(f"Failed to save site requirements: {e}")
     
-    def load_site_requirements(self, filename: str = "site_js_requirements.json"):
+    def load_site_requirements(self, filename: str = "/tmp/site_js_requirements.json"):
         """Load site JS requirements from file."""
         try:
             with open(filename, 'r') as f:

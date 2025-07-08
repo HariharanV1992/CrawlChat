@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class SettingsManager:
     """Manages all settings and configuration for the crawler."""
     
-    def __init__(self, settings_file="stock_market_settings.json"):
+    def __init__(self, settings_file="/tmp/stock_market_settings.json"):
         self.settings_file = settings_file
         self.settings = load_settings_from_file(settings_file)
         

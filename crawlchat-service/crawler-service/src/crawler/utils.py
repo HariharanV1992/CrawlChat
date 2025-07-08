@@ -72,7 +72,7 @@ def sanitize_filename(filename: str) -> str:
         sanitized = 'unnamed_file'
     return sanitized
 
-def load_settings_from_file(settings_file="stock_market_settings.json"):
+def load_settings_from_file(settings_file="/tmp/stock_market_settings.json"):
     """Load settings and keywords from JSON file"""
     try:
         # Try multiple possible locations for the settings file
