@@ -828,13 +828,41 @@
             }
         }
 
-        function addTask(taskData) {
+        async function addTask(taskData) {
             activeTasks[taskData.task_id] = {
                 ...taskData,
                 status: 'pending',
                 progress: { documents_downloaded: 0, pages_crawled: 0 }
             };
             updateTasksDisplay();
+            
+            // Automatically start the task
+            try {
+                const headers = {};
+                if (window.authToken) {
+                    headers['Authorization'] = `Bearer ${window.authToken}`;
+                }
+
+                const startResponse = await fetch(`/api/v1/crawler/tasks/${taskData.task_id}/start`, {
+                    method: 'POST',
+                    headers: headers
+                });
+
+                if (startResponse.ok) {
+                    console.log(`Task ${taskData.task_id} started successfully`);
+                    // Update the task status to running
+                    activeTasks[taskData.task_id].status = 'running';
+                    updateTasksDisplay();
+                } else {
+                    console.error(`Failed to start task ${taskData.task_id}:`, startResponse.status);
+                    const errorText = await startResponse.text();
+                    console.error('Start task error:', errorText);
+                }
+            } catch (error) {
+                console.error(`Error starting task ${taskData.task_id}:`, error);
+            }
+            
+            // Start polling for status updates
             pollTaskStatus(taskData.task_id);
         }
 

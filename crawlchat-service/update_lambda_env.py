@@ -44,7 +44,7 @@ def update_lambda_environment():
         "LOG_FILE": "/var/log/crawlchat/app.log",
         "PROXY_API_KEY": "YOUR_PROXY_API_KEY_HERE",
         "USE_PROXY": "true",
-        "SCRAPINGBEE_API_KEY": "",
+        "SCRAPINGBEE_API_KEY": "YOUR_SCRAPINGBEE_API_KEY_HERE",
         "SCRAPINGBEE_OPTIONS": "{}",
         "PROXY_METHOD": "api_endpoint",
         "MIN_FILE_SIZE": "1024",
@@ -83,7 +83,7 @@ def update_lambda_environment():
         print()
         print("Updated variables:")
         for key, value in environment_variables.items():
-            if key in ['MONGODB_URI', 'OPENAI_API_KEY', 'SECRET_KEY', 'PROXY_API_KEY']:
+            if key in ['MONGODB_URI', 'OPENAI_API_KEY', 'SECRET_KEY', 'PROXY_API_KEY', 'SCRAPINGBEE_API_KEY']:
                 print(f"- {key}: [configured]")
             else:
                 print(f"- {key}: {value}")
