@@ -330,30 +330,43 @@ class CrawlerService:
     
     async def cancel_crawl_task(self, task_id: str) -> bool:
         """Cancel a crawl task."""
-        task = self.tasks.get(task_id)
-        if not task:
-            raise Exception(f"Task {task_id} not found")
-        
-        if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-            raise Exception(f"Task {task_id} cannot be cancelled")
-        
-        # Cancel active task
-        if task_id in self.active_tasks:
-            self.active_tasks[task_id].cancel()
-            del self.active_tasks[task_id]
-        
-        # Update task status
-        task.status = TaskStatus.CANCELLED
-        task.completed_at = datetime.utcnow()
-        
-        # Save to database
-        await self.db.get_collection("tasks").update_one(
-            {"task_id": task_id},
-            {"$set": {"status": task.status.value, "completed_at": task.completed_at}}
-        )
-        
-        logger.info(f"Cancelled crawl task {task_id}")
-        return True
+        try:
+            # Get task from database
+            task = await self.get_task_status(task_id)
+            if not task:
+                logger.warning(f"Task {task_id} not found for cancellation")
+                return False
+            
+            if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                logger.warning(f"Task {task_id} cannot be cancelled - status is {task.status}")
+                return False
+            
+            # Cancel active task if it exists
+            if task_id in self.active_tasks:
+                self.active_tasks[task_id].cancel()
+                del self.active_tasks[task_id]
+                logger.info(f"Cancelled active task {task_id}")
+            
+            # Update task status to cancelled
+            task.status = TaskStatus.CANCELLED
+            task.completed_at = datetime.utcnow()
+            
+            # Save to database
+            await self.db.get_collection("tasks").update_one(
+                {"task_id": task_id},
+                {"$set": {"status": task.status.value, "completed_at": task.completed_at}}
+            )
+            
+            # Also update in-memory task if it exists
+            if task_id in self.tasks:
+                self.tasks[task_id] = task
+            
+            logger.info(f"Cancelled crawl task {task_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error cancelling crawl task {task_id}: {e}")
+            return False
     
     async def get_crawl_results(self, task_id: str) -> CrawlResult:
         """Get the results of a completed crawl task."""
