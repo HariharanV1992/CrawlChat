@@ -34,7 +34,7 @@ class AWSConfig:
                         "function_name": "stock-market-crawler-background-processor"
                     },
                     "s3": {
-                        "bucket_name": os.getenv("S3_BUCKET_NAME", "stock-market-crawler-data"),
+                        "bucket_name": os.getenv("S3_BUCKET_NAME") or os.getenv("S3_BUCKET", "stock-market-crawler-data"),
                         "documents_prefix": "documents/",
                         "crawled_data_prefix": "crawled_data/",
                         "uploaded_documents_prefix": "uploaded_documents/",

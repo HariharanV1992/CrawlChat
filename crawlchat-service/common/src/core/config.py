@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     local_storage_path: str = Field(default_factory=lambda: "/tmp/data" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else "./data", description="Local storage path")
     s3_access_key: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID", description="S3 access key")
     s3_secret_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY", description="S3 secret key")
-    s3_bucket: Optional[str] = Field(default="stock-market-crawler-data", alias="S3_BUCKET_NAME", description="S3 bucket name")
+    s3_bucket: Optional[str] = Field(default=None, alias="S3_BUCKET", description="S3 bucket name")
     s3_region: str = Field(default="us-east-1", alias="AWS_REGION", description="S3 region")
     
     # AWS S3 Configuration (for compatibility with existing code)
