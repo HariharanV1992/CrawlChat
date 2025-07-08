@@ -122,11 +122,13 @@ class AdvancedCrawler:
             
             # Extract links for next level
             if depth < self.max_depth:
-                links = self.link_extractor.extract_links(content, url)
-                logger.info(f"Found {len(links)} links on {url}")
+                soup = BeautifulSoup(content, 'html.parser')
+                page_links, document_links = self.link_extractor.extract_links(soup, url, self.visited_urls)
+                all_links = page_links + document_links
+                logger.info(f"Found {len(all_links)} links on {url} ({len(page_links)} pages, {len(document_links)} documents)")
                 
                 # Crawl links with delay
-                for link in links[:10]:  # Limit links per page
+                for link in all_links[:10]:  # Limit links per page
                     if len(self.visited_urls) >= self.max_pages:
                         break
                     
