@@ -13,7 +13,7 @@ import os
 from common.src.core.database import mongodb
 from common.src.models.crawler import CrawlTask, TaskStatus, CrawlConfig, CrawlRequest, CrawlResponse, CrawlStatus, CrawlResult
 from common.src.models.documents import Document, DocumentType
-from common.src.services.storage_service import get_storage_service
+from common.src.services.unified_storage_service import unified_storage_service
 from common.src.core.config import config
 from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
@@ -566,28 +566,36 @@ class CrawlerService:
                 logger.warning(f"Output directory {output_dir} does not exist")
                 return
             
-            # Get storage service
-            storage_service = get_storage_service()
-            
             # Find all files in the output directory
             uploaded_files = []
             for root, dirs, files in os.walk(output_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     try:
-                        # Create S3 key based on file path
+                        # Read file content
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        # Create filename based on file path
                         relative_path = os.path.relpath(file_path, output_dir)
-                        s3_key = f"crawled_documents/{task.task_id}/{relative_path}"
+                        filename = f"{relative_path.replace('/', '_')}.html"
                         
-                        logger.info(f"Uploading {file_path} to S3 key: {s3_key}")
+                        logger.info(f"Uploading {file_path} to S3 as: {filename}")
                         
-                        # Upload file
-                        success = await storage_service.upload_file(file_path, s3_key)
-                        if success:
-                            uploaded_files.append(s3_key)
-                            logger.info(f"Successfully uploaded: {s3_key}")
-                        else:
-                            logger.error(f"Failed to upload: {file_path}")
+                        # Upload using unified storage service
+                        result = await unified_storage_service.upload_crawled_content(
+                            content=content,
+                            filename=filename,
+                            task_id=task.task_id,
+                            user_id=task.user_id,
+                            metadata={
+                                "original_path": relative_path,
+                                "source_url": task.base_url
+                            }
+                        )
+                        
+                        uploaded_files.append(result["s3_key"])
+                        logger.info(f"Successfully uploaded: {result['s3_key']}")
                             
                     except Exception as e:
                         logger.error(f"Error uploading {file_path}: {e}")

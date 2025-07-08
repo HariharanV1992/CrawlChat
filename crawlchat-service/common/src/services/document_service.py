@@ -17,7 +17,7 @@ from common.src.models.documents import (
     DocumentProcessResponse, DocumentList
 )
 from common.src.core.exceptions import DocumentProcessingError
-from common.src.services.storage_service import get_storage_service
+from common.src.services.unified_storage_service import unified_storage_service
 from common.src.core.database import mongodb
 from common.src.core.aws_config import aws_config
 
@@ -63,13 +63,14 @@ class DocumentService:
             # Generate unique document ID
             document_id = str(uuid.uuid4())
             
-            # Store file using storage service
-            storage_service = get_storage_service()
-            file_path = await storage_service.store_file(
-                file_content, 
-                upload_data.filename, 
-                upload_data.user_id
+            # Store file using unified storage service
+            result = await unified_storage_service.upload_user_document(
+                file_content=file_content,
+                filename=upload_data.filename,
+                user_id=upload_data.user_id,
+                content_type=self._get_content_type(file_extension)
             )
+            file_path = result["s3_key"]
             
             # Create document record
             document = Document(

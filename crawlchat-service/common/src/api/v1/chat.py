@@ -16,7 +16,7 @@ from common.src.api.dependencies import get_current_user
 from common.src.models.auth import UserResponse
 from common.src.services.aws_background_service import aws_background_service
 from common.src.services.document_service import document_service
-from common.src.services.storage_service import get_storage_service
+from common.src.services.unified_storage_service import unified_storage_service
 from common.src.core.exceptions import ChatError
 
 logger = logging.getLogger(__name__)
@@ -330,25 +330,14 @@ async def upload_document(
         if file_size > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB")
         
-        # Upload to S3 (using IAM role)
-        storage_service = get_storage_service()
-        
-        # Generate unique filename
-        import uuid
-        import os
-        from datetime import datetime
-        
-        timestamp = int(datetime.now().timestamp())
-        unique_id = str(uuid.uuid4())[:8]
-        file_extension = os.path.splitext(file.filename)[1]
-        s3_filename = f"uploaded_documents/{current_user.user_id}/{timestamp}_{unique_id}{file_extension}"
-        
-        # Upload to S3 using IAM role
-        s3_key = await storage_service.upload_file_from_bytes(
-            file_content, 
-            s3_filename, 
+        # Upload to S3 using unified storage service
+        result = await unified_storage_service.upload_user_document(
+            file_content=file_content,
+            filename=file.filename,
+            user_id=current_user.user_id,
             content_type=file.content_type
         )
+        s3_key = result["s3_key"]
         
         # Debug logging to see what's being returned
         logger.info(f"[DEBUG] API received s3_key: {s3_key}")

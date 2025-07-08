@@ -997,10 +997,9 @@ Please provide a helpful response:"""
             try:
                 logger.info(f"[EMBEDDING] Creating embeddings for uploaded document: {document.filename}")
                 
-                # Get document content from S3
-                storage_service = StorageService()
+                # Get document content from S3 using unified storage service
                 s3_key = document.file_path
-                file_content = await storage_service.get_file_content(s3_key)
+                file_content = await unified_storage_service.get_file_content(s3_key)
                 
                 if file_content:
                     # Process document using unified processor

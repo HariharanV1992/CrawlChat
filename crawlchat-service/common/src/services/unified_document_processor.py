@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 import io
 
-from common.src.services.storage_service import StorageService
+from common.src.services.unified_storage_service import unified_storage_service
 from common.src.services.vector_store_service import vector_store_service
 from common.src.services.aws_textract_service import textract_service, DocumentType as TextractDocumentType
 from common.src.core.database import mongodb
@@ -34,7 +34,8 @@ class UnifiedDocumentProcessor:
     """
     
     def __init__(self):
-        self.storage_service = StorageService()
+        # Use unified storage service
+        pass
         
     async def process_document(
         self,
@@ -258,15 +259,20 @@ class UnifiedDocumentProcessor:
         try:
             logger.info(f"[UNIFIED_PROCESSOR] Extracting text from PDF: {filename}")
             
-            # Upload PDF to S3 for Textract processing
-            s3_key = f"temp_pdfs/{uuid.uuid4()}/{filename}"
-            upload_success = await self.storage_service.upload_file_content(file_content, s3_key)
+            # Upload PDF to S3 for Textract processing using unified storage
+            result = await unified_storage_service.upload_temp_file(
+                file_content=file_content,
+                filename=filename,
+                purpose="textract_pdf"
+            )
             
-            if not upload_success:
+            if not result:
                 return {
                     "status": "error",
                     "error": "Failed to upload PDF to S3"
                 }
+            
+            s3_key = result["s3_key"]
             
             # Process with Textract
             bucket_name = config.s3_bucket
@@ -276,7 +282,7 @@ class UnifiedDocumentProcessor:
             
             # Clean up temporary file
             try:
-                await self.storage_service.delete_file(s3_key)
+                await unified_storage_service.delete_file(s3_key)
             except:
                 pass  # Don't fail if cleanup fails
             
@@ -304,15 +310,20 @@ class UnifiedDocumentProcessor:
         try:
             logger.info(f"[UNIFIED_PROCESSOR] Extracting text from image: {filename}")
             
-            # Upload image to S3 for Textract processing
-            s3_key = f"temp_images/{uuid.uuid4()}/{filename}"
-            upload_success = await self.storage_service.upload_file_content(file_content, s3_key)
+            # Upload image to S3 for Textract processing using unified storage
+            result = await unified_storage_service.upload_temp_file(
+                file_content=file_content,
+                filename=filename,
+                purpose="textract_image"
+            )
             
-            if not upload_success:
+            if not result:
                 return {
                     "status": "error",
                     "error": "Failed to upload image to S3"
                 }
+            
+            s3_key = result["s3_key"]
             
             # Process with Textract
             bucket_name = config.s3_bucket
@@ -322,7 +333,7 @@ class UnifiedDocumentProcessor:
             
             # Clean up temporary file
             try:
-                await self.storage_service.delete_file(s3_key)
+                await unified_storage_service.delete_file(s3_key)
             except:
                 pass
             
