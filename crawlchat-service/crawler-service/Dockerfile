@@ -22,5 +22,5 @@ COPY ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
 COPY ui/static/ ${LAMBDA_TASK_ROOT}/static/
 
 # Lambda handler entry point
-CMD ["lambda_handler.handler"]
+CMD ["lambda_handler.lambda_handler"]
     
