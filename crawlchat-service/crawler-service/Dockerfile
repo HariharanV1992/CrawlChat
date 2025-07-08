@@ -14,7 +14,7 @@ COPY main.py ${LAMBDA_TASK_ROOT}/
 COPY crawler_main.py ${LAMBDA_TASK_ROOT}/
 COPY src/ ${LAMBDA_TASK_ROOT}/src/
 
-# Copy centralized UI
+# Copy centralized UI (from parent directory context)
 COPY ../ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
 COPY ../ui/static/ ${LAMBDA_TASK_ROOT}/static/
 

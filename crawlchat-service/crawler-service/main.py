@@ -51,6 +51,7 @@ from common.src.api.v1.chat import router as chat_router
 from common.src.api.v1.crawler import router as crawler_router
 from common.src.api.v1.documents import router as documents_router
 from common.src.api.v1.vector_store import router as vector_store_router
+from common.src.api.v1.preprocessing import router as preprocessing_router
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -385,6 +386,7 @@ app.include_router(chat_router, prefix="/api/v1/chat")
 app.include_router(crawler_router, prefix="/api/v1/crawler")
 app.include_router(documents_router, prefix="/api/v1/documents")
 app.include_router(vector_store_router, prefix="/api/v1")
+app.include_router(preprocessing_router, prefix="/api/v1")
 
 # Mount static files - handle Lambda environment gracefully
 # Determine the correct static directory path based on environment
