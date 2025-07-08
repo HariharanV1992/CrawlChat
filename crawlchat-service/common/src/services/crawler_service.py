@@ -307,6 +307,9 @@ class CrawlerService:
             
             logger.info(f"Task {task.task_id} completed: {task.documents_downloaded} documents, {task.pages_crawled} pages")
             
+            # Upload crawled files to S3
+            await self._upload_crawled_files_to_s3(task)
+            
             # Save to database
             await self.db.get_collection("tasks").update_one(
                 {"task_id": task.task_id},
@@ -541,6 +544,55 @@ class CrawlerService:
         except Exception as e:
             logger.error(f"Error getting task documents: {e}")
             return None
+
+    async def _upload_crawled_files_to_s3(self, task: CrawlTask):
+        """Upload crawled files to S3."""
+        try:
+            import os
+            from pathlib import Path
+            
+            output_dir = task.output_dir or "/tmp/crawled_data"
+            logger.info(f"Uploading crawled files from {output_dir} to S3")
+            
+            if not os.path.exists(output_dir):
+                logger.warning(f"Output directory {output_dir} does not exist")
+                return
+            
+            # Get storage service
+            storage_service = get_storage_service()
+            
+            # Find all files in the output directory
+            uploaded_files = []
+            for root, dirs, files in os.walk(output_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    try:
+                        # Create S3 key based on file path
+                        relative_path = os.path.relpath(file_path, output_dir)
+                        s3_key = f"crawled_documents/{task.task_id}/{relative_path}"
+                        
+                        logger.info(f"Uploading {file_path} to S3 key: {s3_key}")
+                        
+                        # Upload file
+                        success = await storage_service.upload_file(file_path, s3_key)
+                        if success:
+                            uploaded_files.append(s3_key)
+                            logger.info(f"Successfully uploaded: {s3_key}")
+                        else:
+                            logger.error(f"Failed to upload: {file_path}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error uploading {file_path}: {e}")
+            
+            # Update task with S3 file paths
+            if uploaded_files:
+                task.s3_files = uploaded_files
+                logger.info(f"Uploaded {len(uploaded_files)} files to S3 for task {task.task_id}")
+            else:
+                logger.warning(f"No files were uploaded to S3 for task {task.task_id}")
+                
+        except Exception as e:
+            logger.error(f"Error uploading crawled files to S3: {e}")
 
 # Global crawler service instance
 crawler_service = CrawlerService() 
