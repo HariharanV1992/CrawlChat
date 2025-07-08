@@ -14,6 +14,7 @@ from common.src.core.database import mongodb
 from common.src.models.crawler import CrawlTask, TaskStatus, CrawlConfig, CrawlRequest, CrawlResponse, CrawlStatus, CrawlResult
 from common.src.models.documents import Document, DocumentType
 from common.src.services.unified_storage_service import unified_storage_service
+from common.src.services.storage_service import get_storage_service
 from common.src.core.config import config
 from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
@@ -578,7 +579,11 @@ class CrawlerService:
                         
                         # Create filename based on file path
                         relative_path = os.path.relpath(file_path, output_dir)
-                        filename = f"{relative_path.replace('/', '_')}.html"
+                        # Don't add .html if the file already has an extension
+                        if '.' in relative_path.split('/')[-1]:
+                            filename = relative_path.replace('/', '_')
+                        else:
+                            filename = f"{relative_path.replace('/', '_')}.html"
                         
                         logger.info(f"Uploading {file_path} to S3 as: {filename}")
                         
