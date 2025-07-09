@@ -141,9 +141,22 @@ jobs:
         # Test Lambda API function
         if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.LAMBDA_FUNCTION_NAME }}" ]; then
           echo "Testing Lambda API function..."
+          
+          # Create health endpoint payload
+          cat > health_payload.json << 'EOF'
+          {
+            "httpMethod": "GET",
+            "path": "/health",
+            "headers": {},
+            "queryStringParameters": null,
+            "body": null,
+            "isBase64Encoded": false
+          }
+          EOF
+          
           aws lambda invoke \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --payload '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' \
+            --payload file://health_payload.json \
             --region ${{ env.AWS_REGION }} \
             api_response.json
           
@@ -155,9 +168,17 @@ jobs:
         if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.CRAWLER_FUNCTION_NAME }}" ]; then
           if aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
             echo "Testing Crawler function..."
+            
+            # Create crawler payload
+            cat > crawler_payload.json << 'EOF'
+            {
+              "url": "https://example.com"
+            }
+            EOF
+            
             aws lambda invoke \
               --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-              --payload '{"url":"https://example.com"}' \
+              --payload file://crawler_payload.json \
               --region ${{ env.AWS_REGION }} \
               crawler_response.json
             
