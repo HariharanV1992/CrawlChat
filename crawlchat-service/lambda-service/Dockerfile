@@ -5,18 +5,18 @@ FROM public.ecr.aws/lambda/python:3.10
 RUN yum update -y && yum install -y poppler-utils poppler-cpp-devel && yum clean all
 
 # Copy your app code
-COPY crawlchat-service/lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
-COPY crawlchat-service/common/ ${LAMBDA_TASK_ROOT}/common/
+COPY lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
+COPY common/ ${LAMBDA_TASK_ROOT}/common/
 ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/common"
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 # Copy lambda service files
-COPY crawlchat-service/lambda-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
-COPY crawlchat-service/lambda-service/main.py ${LAMBDA_TASK_ROOT}/
+COPY lambda-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
+COPY lambda-service/main.py ${LAMBDA_TASK_ROOT}/
 
 # Copy centralized UI
-COPY crawlchat-service/ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
-COPY crawlchat-service/ui/static/ ${LAMBDA_TASK_ROOT}/static/
+COPY ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
+COPY ui/static/ ${LAMBDA_TASK_ROOT}/static/
 
 # Lambda handler entry point
 CMD ["lambda_handler.handler"]
