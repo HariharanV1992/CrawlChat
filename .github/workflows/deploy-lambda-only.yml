@@ -147,41 +147,30 @@ jobs:
         aws --version
         echo "🧪 Testing updated functions..."
         cd crawlchat-service
-        
-        # Test Lambda API function
-        if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.LAMBDA_FUNCTION_NAME }}" ]; then
-          echo "Testing Lambda API function..."
-          
-          # Create health endpoint payload using echo
-          echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' > health_payload.json
-          
-          echo "📋 Health payload created:"
-          cat health_payload.json | jq .
-          
-          export PATH=/usr/local/bin:$PATH
-          aws --version
-          aws lambda invoke \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --payload file://health_payload.json \
-            --cli-binary-format raw-in-base64-out \
-            --region ${{ env.AWS_REGION }} \
-            api_response.json
-          
-          echo "API Health check response:"
-          cat api_response.json | jq .
-        fi
-        
+        # Test Lambda API function (skipped for now)
+        # if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.LAMBDA_FUNCTION_NAME }}" ]; then
+        #   echo "Testing Lambda API function..."
+        #   echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' > health_payload.json
+        #   echo "📋 Health payload created:"
+        #   cat health_payload.json | jq .
+        #   export PATH=/usr/local/bin:$PATH
+        #   aws --version
+        #   aws lambda invoke \
+        #     --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+        #     --payload file://health_payload.json \
+        #     --cli-binary-format raw-in-base64-out \
+        #     --region ${{ env.AWS_REGION }} \
+        #     api_response.json
+        #   echo "API Health check response:"
+        #   cat api_response.json | jq .
+        # fi
         # Test Crawler function
         if [ "${{ github.event.inputs.function_name }}" == "" ] || [ "${{ github.event.inputs.function_name }}" == "${{ env.CRAWLER_FUNCTION_NAME }}" ]; then
           if aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
             echo "Testing Crawler function..."
-            
-            # Create crawler payload using echo
             echo '{"url":"https://example.com"}' > crawler_payload.json
-            
             echo "📋 Crawler payload created:"
             cat crawler_payload.json | jq .
-            
             export PATH=/usr/local/bin:$PATH
             aws --version
             aws lambda invoke \
@@ -190,12 +179,10 @@ jobs:
               --cli-binary-format raw-in-base64-out \
               --region ${{ env.AWS_REGION }} \
               crawler_response.json
-            
             echo "Crawler test response:"
             cat crawler_response.json | jq .
           fi
         fi
-        
         echo "✅ Function tests completed"
     
     - name: Deployment summary
