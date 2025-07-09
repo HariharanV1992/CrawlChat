@@ -30,7 +30,7 @@ env:
 jobs:
   validate-infrastructure:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'infrastructure' || github.event_name == 'schedule' }}
+    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'infrastructure' || github.event_name == 'schedule' || github.event_name == 'push' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -115,7 +115,7 @@ jobs:
 
   test-api:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'api' || github.event_name == 'schedule' }}
+    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'api' || github.event_name == 'schedule' || github.event_name == 'push' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -180,7 +180,7 @@ jobs:
 
   test-crawler:
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'crawler' || github.event_name == 'schedule' }}
+    if: ${{ github.event.inputs.test_type == 'all' || github.event.inputs.test_type == 'crawler' || github.event_name == 'schedule' || github.event_name == 'push' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
