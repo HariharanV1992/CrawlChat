@@ -138,10 +138,13 @@ jobs:
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install
-        aws --version
+        echo "/usr/local/bin:$PATH" >> $GITHUB_PATH
+        /usr/local/bin/aws --version
     
     - name: Test functions
       run: |
+        export PATH=/usr/local/bin:$PATH
+        aws --version
         echo "🧪 Testing updated functions..."
         cd crawlchat-service
         
@@ -155,6 +158,8 @@ jobs:
           echo "📋 Health payload created:"
           cat health_payload.json | jq .
           
+          export PATH=/usr/local/bin:$PATH
+          aws --version
           aws lambda invoke \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
             --payload file://health_payload.json \
@@ -177,6 +182,8 @@ jobs:
             echo "📋 Crawler payload created:"
             cat crawler_payload.json | jq .
             
+            export PATH=/usr/local/bin:$PATH
+            aws --version
             aws lambda invoke \
               --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
               --payload file://crawler_payload.json \
