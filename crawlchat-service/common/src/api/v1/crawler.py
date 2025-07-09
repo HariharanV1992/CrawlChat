@@ -3,6 +3,7 @@ Crawler API endpoints for Stock Market Crawler.
 """
 
 import logging
+import traceback
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional, Dict, Any
 
@@ -25,17 +26,33 @@ async def create_crawl_task(
     current_user: UserResponse = Depends(get_current_user)
 ):
     """Create a new crawl task."""
+    print(f"=== CREATING CRAWL TASK VIA API ===")
+    print(f"User ID: {current_user.user_id}")
+    print(f"Request URL: {request.url}")
+    print(f"Max documents: {request.max_documents}")
+    print(f"Max pages: {request.max_pages}")
+    
+    logger.info(f"API: Creating crawl task for user {current_user.user_id} with URL: {request.url}")
+    
     try:
+        print("Calling crawler_service.create_crawl_task...")
         response = await crawler_service.create_crawl_task(
             request=request,
             user_id=current_user.user_id
         )
+        print(f"Crawl task created successfully: {response.task_id}")
+        logger.info(f"API: Crawl task created successfully: {response.task_id}")
         return response
     except CrawlerError as e:
+        error_msg = f"API: CrawlerError creating crawl task: {e}"
+        logger.error(error_msg)
+        print(f"ERROR: {error_msg}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        import traceback
-        logger.error(f"Error creating crawl task: {e} (type={type(e)}, repr={repr(e)})\n{traceback.format_exc()}")
+        error_msg = f"API: Error creating crawl task: {e} (type={type(e)}, repr={repr(e)})"
+        logger.error(error_msg)
+        print(f"ERROR: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Failed to create crawl task")
 
 @router.post("/tasks/{task_id}/start")
@@ -44,17 +61,32 @@ async def start_crawl_task(
     current_user: UserResponse = Depends(get_current_user)
 ):
     """Start a crawl task."""
+    print(f"=== STARTING CRAWL TASK VIA API ===")
+    print(f"Task ID: {task_id}")
+    print(f"User ID: {current_user.user_id}")
+    
+    logger.info(f"API: Starting crawl task {task_id} for user {current_user.user_id}")
+    
     try:
+        print("Calling crawler_service.start_crawl_task...")
         success = await crawler_service.start_crawl_task(task_id)
         if not success:
+            error_msg = f"API: Task {task_id} not found or cannot be started"
+            logger.error(error_msg)
+            print(f"ERROR: {error_msg}")
             raise HTTPException(status_code=404, detail="Task not found or cannot be started")
         
+        print(f"Task {task_id} started successfully")
+        logger.info(f"API: Task {task_id} started successfully")
         return {"message": f"Task {task_id} started successfully"}
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error starting crawl task: {e}")
+        error_msg = f"API: Error starting crawl task: {e}"
+        logger.error(error_msg)
+        print(f"ERROR: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Failed to start crawl task")
 
 @router.get("/tasks/{task_id}", response_model=CrawlStatus)
