@@ -132,17 +132,8 @@ jobs:
         echo "🧪 Testing API health endpoint..."
         cd crawlchat-service
         
-        # Create JSON payload file to avoid encoding issues
-        cat > health_payload.json << 'EOF'
-        {
-          "httpMethod": "GET",
-          "path": "/health",
-          "headers": {},
-          "queryStringParameters": null,
-          "body": null,
-          "isBase64Encoded": false
-        }
-        EOF
+        # Create JSON payload file using echo to avoid encoding issues
+        echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' > health_payload.json
         
         echo "📋 Health payload:"
         cat health_payload.json | jq .
@@ -170,19 +161,8 @@ jobs:
         echo "🧪 Testing API login endpoint..."
         cd crawlchat-service
         
-        # Create JSON payload file to avoid encoding issues
-        cat > login_payload.json << 'EOF'
-        {
-          "httpMethod": "POST",
-          "path": "/login",
-          "headers": {
-            "Content-Type": "application/json"
-          },
-          "queryStringParameters": null,
-          "body": "{\"email\":\"test@example.com\",\"password\":\"testpass\"}",
-          "isBase64Encoded": false
-        }
-        EOF
+        # Create JSON payload file using echo to avoid encoding issues
+        echo '{"httpMethod":"POST","path":"/login","headers":{"Content-Type":"application/json"},"queryStringParameters":null,"body":"{\"email\":\"test@example.com\",\"password\":\"testpass\"}","isBase64Encoded":false}' > login_payload.json
         
         echo "📋 Login payload:"
         cat login_payload.json | jq .
@@ -217,12 +197,8 @@ jobs:
         echo "🧪 Testing crawler functionality..."
         cd crawlchat-service
         
-        # Create JSON payload file to avoid encoding issues
-        cat > crawler_payload.json << 'EOF'
-        {
-          "url": "https://example.com"
-        }
-        EOF
+        # Create JSON payload file using echo to avoid encoding issues
+        echo '{"url":"https://example.com"}' > crawler_payload.json
         
         echo "📋 Crawler payload:"
         cat crawler_payload.json | jq .

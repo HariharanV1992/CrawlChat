@@ -478,17 +478,11 @@ jobs:
         echo "🧪 Testing Lambda API function..."
         cd crawlchat-service
         
-        # Create health endpoint payload
-        cat > health_payload.json << 'EOF'
-        {
-          "httpMethod": "GET",
-          "path": "/health",
-          "headers": {},
-          "queryStringParameters": null,
-          "body": null,
-          "isBase64Encoded": false
-        }
-        EOF
+        # Create health endpoint payload using echo to avoid encoding issues
+        echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' > health_payload.json
+        
+        echo "📋 Health payload created:"
+        cat health_payload.json | jq .
         
         # Test health endpoint
         aws lambda invoke \
@@ -500,12 +494,11 @@ jobs:
         echo "📄 Health check response:"
         cat response.json | jq .
         
-        # Create crawler endpoint payload
-        cat > crawler_payload.json << 'EOF'
-        {
-          "url": "https://example.com"
-        }
-        EOF
+        # Create crawler endpoint payload using echo
+        echo '{"url":"https://example.com"}' > crawler_payload.json
+        
+        echo "📋 Crawler payload created:"
+        cat crawler_payload.json | jq .
         
         # Test crawler endpoint
         aws lambda invoke \
