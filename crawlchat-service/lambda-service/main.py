@@ -1,5 +1,6 @@
 """
 Main FastAPI application for Stock Market Crawler Service
+Updated for deployment testing - Triggering GitHub Actions deployment
 """
 
 import logging
