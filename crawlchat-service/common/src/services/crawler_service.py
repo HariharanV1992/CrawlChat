@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import os
+import traceback
 
 from common.src.core.database import mongodb
 from common.src.models.crawler import CrawlTask, TaskStatus, CrawlConfig, CrawlRequest, CrawlResponse, CrawlStatus, CrawlResult
@@ -119,52 +120,81 @@ class CrawlerService:
 
     async def create_crawl_task(self, request: CrawlRequest, user_id: str) -> CrawlResponse:
         """Create a new crawl task."""
+        print(f"=== CREATING CRAWL TASK ===")
+        print(f"User ID: {user_id}")
+        print(f"URL: {request.url}")
+        print(f"Max documents: {request.max_documents}")
+        print(f"Max pages: {request.max_pages}")
+        
         logger.info(f"Creating crawl task for user {user_id} with URL: {request.url}")
         
-        # Check if crawler is available only when needed
-        AdvancedCrawler = get_advanced_crawler()
-        if not AdvancedCrawler:
-            logger.error("AdvancedCrawler not available - cannot create crawl task")
-            raise Exception("Crawler functionality not available")
-        
-        task_id = str(uuid.uuid4())
-        logger.info(f"Generated task ID: {task_id}")
-        
-        # Create crawl task
-        task = CrawlTask(
-            task_id=task_id,
-            user_id=user_id,
-            url=str(request.url),
-            max_documents=request.max_documents,
-            max_pages=request.max_pages,
-            max_workers=request.max_workers,
-            delay=request.delay,
-            total_timeout=request.total_timeout,
-            page_timeout=request.page_timeout,
-            request_timeout=request.request_timeout
-        )
-        
-        # Store task in memory
-        self.tasks[task_id] = task
-        
-        # Save to database
         try:
-            await self.db.get_collection("tasks").insert_one(task.model_dump())
-            logger.info(f"Task {task_id} saved to database")
+            # Check if crawler is available only when needed
+            print("Checking if AdvancedCrawler is available...")
+            AdvancedCrawler = get_advanced_crawler()
+            if not AdvancedCrawler:
+                error_msg = "AdvancedCrawler not available - cannot create crawl task"
+                logger.error(error_msg)
+                print(f"ERROR: {error_msg}")
+                raise Exception("Crawler functionality not available")
+            
+            print("AdvancedCrawler is available")
+            
+            task_id = str(uuid.uuid4())
+            logger.info(f"Generated task ID: {task_id}")
+            print(f"Generated task ID: {task_id}")
+            
+            # Create crawl task
+            print("Creating CrawlTask object...")
+            task = CrawlTask(
+                task_id=task_id,
+                user_id=user_id,
+                url=str(request.url),
+                max_documents=request.max_documents,
+                max_pages=request.max_pages,
+                max_workers=request.max_workers,
+                delay=request.delay,
+                total_timeout=request.total_timeout,
+                page_timeout=request.page_timeout,
+                request_timeout=request.request_timeout
+            )
+            print("CrawlTask object created successfully")
+            
+            # Store task in memory
+            print("Storing task in memory...")
+            self.tasks[task_id] = task
+            
+            # Save to database
+            print("Saving task to database...")
+            try:
+                await self.db.get_collection("tasks").insert_one(task.model_dump())
+                logger.info(f"Task {task_id} saved to database")
+                print(f"Task {task_id} saved to database successfully")
+            except Exception as e:
+                error_msg = f"Failed to save task {task_id} to database: {e}"
+                logger.error(error_msg)
+                print(f"ERROR: {error_msg}")
+                print(f"Traceback: {traceback.format_exc()}")
+                raise
+            
+            logger.info(f"Created crawl task {task_id} for user {user_id}")
+            print(f"Created crawl task {task_id} for user {user_id}")
+            
+            return CrawlResponse(
+                task_id=task_id,
+                status=task.status.value,
+                message="Crawl task created successfully",
+                url=str(request.url),
+                max_documents=request.max_documents,
+                created_at=task.created_at
+            )
+            
         except Exception as e:
-            logger.error(f"Failed to save task {task_id} to database: {e}")
+            error_msg = f"Error creating crawl task: {e}"
+            logger.error(error_msg, exc_info=True)
+            print(f"ERROR: {error_msg}")
+            print(f"Traceback: {traceback.format_exc()}")
             raise
-        
-        logger.info(f"Created crawl task {task_id} for user {user_id}")
-        
-        return CrawlResponse(
-            task_id=task_id,
-            status=task.status.value,
-            message="Crawl task created successfully",
-            url=str(request.url),
-            max_documents=request.max_documents,
-            created_at=task.created_at
-        )
 
     async def get_task_status(self, task_id: str) -> Optional[CrawlTask]:
         doc = await self.db.get_collection("tasks").find_one({"task_id": task_id})
@@ -220,37 +250,94 @@ class CrawlerService:
 
     async def start_crawl_task(self, task_id: str, user_id: str = None) -> CrawlStatus:
         """Start a crawl task by sending it to SQS."""
+        print(f"=== STARTING CRAWL TASK ===")
+        print(f"Task ID: {task_id}")
+        print(f"User ID: {user_id}")
+        
         logger.info(f"[SQS] Enqueuing crawl task {task_id}")
-        # Set status to running in DB
-        task = self.tasks.get(task_id)
-        if not task:
-            task_data = await self.db.get_collection("tasks").find_one({"task_id": task_id})
-            if task_data:
-                task = CrawlTask(**task_data)
-                self.tasks[task_id] = task
-            else:
-                logger.error(f"Task {task_id} not found in database")
-                raise Exception(f"Task {task_id} not found")
-        if task.status != TaskStatus.PENDING:
-            logger.warning(f"Task {task_id} is not in pending status (current: {task.status})")
-            raise Exception(f"Task {task_id} is not in pending status")
-        # Set to running
-        task.status = TaskStatus.RUNNING
-        task.started_at = datetime.utcnow()
-        await self.db.get_collection("tasks").update_one(
-            {"task_id": task_id},
-            {"$set": {"status": task.status.value, "started_at": task.started_at}}
-        )
-        # Send to SQS
-        sqs_helper.send_crawl_task(task_id, user_id or task.user_id)
-        logger.info(f"[SQS] Task {task_id} enqueued for crawling")
-        return CrawlStatus(
-            task_id=task_id,
-            status=task.status.value,
-            progress={"pages_crawled": 0, "documents_downloaded": 0},
-            documents_downloaded=0,
-            pages_crawled=0
-        )
+        
+        try:
+            # Set status to running in DB
+            print("Getting task from memory or database...")
+            task = self.tasks.get(task_id)
+            if not task:
+                print("Task not found in memory, checking database...")
+                task_data = await self.db.get_collection("tasks").find_one({"task_id": task_id})
+                if task_data:
+                    task = CrawlTask(**task_data)
+                    self.tasks[task_id] = task
+                    print(f"Task {task_id} found in database")
+                else:
+                    error_msg = f"Task {task_id} not found in database"
+                    logger.error(error_msg)
+                    print(f"ERROR: {error_msg}")
+                    raise Exception(f"Task {task_id} not found")
+            
+            print(f"Current task status: {task.status}")
+            if task.status != TaskStatus.PENDING:
+                error_msg = f"Task {task_id} is not in pending status (current: {task.status})"
+                logger.warning(error_msg)
+                print(f"WARNING: {error_msg}")
+                raise Exception(f"Task {task_id} is not in pending status")
+            
+            # Set to running
+            print("Updating task status to RUNNING...")
+            task.status = TaskStatus.RUNNING
+            task.started_at = datetime.utcnow()
+            
+            try:
+                await self.db.get_collection("tasks").update_one(
+                    {"task_id": task_id},
+                    {"$set": {"status": task.status.value, "started_at": task.started_at}}
+                )
+                print(f"Task {task_id} status updated to RUNNING in database")
+            except Exception as e:
+                error_msg = f"Failed to update task {task_id} status in database: {e}"
+                logger.error(error_msg)
+                print(f"ERROR: {error_msg}")
+                print(f"Traceback: {traceback.format_exc()}")
+                raise
+            
+            # Send to SQS
+            print("Sending task to SQS...")
+            try:
+                sqs_helper.send_crawl_task(task_id, user_id or task.user_id)
+                logger.info(f"[SQS] Task {task_id} enqueued for crawling")
+                print(f"[SQS] Task {task_id} enqueued for crawling successfully")
+            except Exception as e:
+                error_msg = f"Failed to send task {task_id} to SQS: {e}"
+                logger.error(error_msg)
+                print(f"ERROR: {error_msg}")
+                print(f"Traceback: {traceback.format_exc()}")
+                
+                # Revert task status to PENDING since SQS send failed
+                try:
+                    task.status = TaskStatus.PENDING
+                    await self.db.get_collection("tasks").update_one(
+                        {"task_id": task_id},
+                        {"$set": {"status": task.status.value}}
+                    )
+                    print(f"Reverted task {task_id} status to PENDING")
+                except Exception as revert_error:
+                    logger.error(f"Failed to revert task status: {revert_error}")
+                    print(f"ERROR: Failed to revert task status: {revert_error}")
+                
+                raise
+            
+            return CrawlStatus(
+                task_id=task_id,
+                status=task.status.value,
+                progress={"pages_crawled": 0, "documents_downloaded": 0},
+                documents_downloaded=0,
+                pages_crawled=0
+            )
+            
+        except Exception as e:
+            error_msg = f"Error starting crawl task {task_id}: {e}"
+            logger.error(error_msg, exc_info=True)
+            print(f"ERROR: {error_msg}")
+            print(f"Traceback: {traceback.format_exc()}")
+            raise
     
     async def _run_crawl_task(self, task: CrawlTask):
         """Run the actual crawl task."""

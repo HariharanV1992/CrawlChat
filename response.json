@@ -1,1 +1,1 @@
-{"statusCode": 400, "body": "{\"error\": \"URL is required\"}"}
+{"statusCode": 500, "body": "{\"error\": \"Internal server error\", \"message\": \"The adapter was unable to infer a handler to use for the event. This is likely related to how the Lambda function was invoked. (Are you testing locally? Make sure the request payload is valid for a supported handler.)\"}"}

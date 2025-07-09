@@ -12,6 +12,9 @@ from datetime import datetime
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Add parent directory to path for common module
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
