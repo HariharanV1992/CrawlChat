@@ -478,35 +478,39 @@ jobs:
         echo "🧪 Testing Lambda API function..."
         cd crawlchat-service
         
-        # Test with minimal payload first
-        echo "📋 Testing with minimal payload..."
+        # Test with minimal API Gateway payload
+        echo "📋 Testing with minimal API Gateway payload..."
+        python3 -c "import json; open('minimal_payload.json', 'w', encoding='utf-8').write(json.dumps({'httpMethod': 'GET', 'path': '/', 'headers': {}, 'queryStringParameters': None, 'body': None, 'isBase64Encoded': False}))"
+        
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload '{}' \
+          --payload file://minimal_payload.json \
           --region ${{ env.AWS_REGION }} \
           test_response.json
         
         echo "📄 Test response:"
         cat test_response.json | jq .
         
-        # Test crawler endpoint (direct invoke, not API Gateway)
+        # Test crawler endpoint with proper UTF-8 encoding
         echo "📋 Testing crawler endpoint..."
+        python3 -c "import json; open('crawler_payload.json', 'w', encoding='utf-8').write(json.dumps({'url': 'https://example.com'}))"
+        
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload "{\"url\":\"https://example.com\"}" \
+          --payload file://crawler_payload.json \
           --region ${{ env.AWS_REGION }} \
           crawler_response.json
         
         echo "📄 Crawler test response:"
         cat crawler_response.json | jq .
         
-        # Test API Gateway format with base64 encoding
+        # Test API Gateway format with proper UTF-8 encoding
         echo "📋 Testing API Gateway format..."
-        echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' | base64 > health_payload.b64
+        python3 -c "import json; open('health_payload.json', 'w', encoding='utf-8').write(json.dumps({'httpMethod': 'GET', 'path': '/health', 'headers': {}, 'queryStringParameters': None, 'body': None, 'isBase64Encoded': False}))"
         
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload fileb://health_payload.b64 \
+          --payload file://health_payload.json \
           --region ${{ env.AWS_REGION }} \
           response.json
         
