@@ -127,6 +127,9 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
     
+    - name: Set PYTHONPATH for src imports
+      run: echo "PYTHONPATH=./crawlchat-service/common:$PYTHONPATH" >> $GITHUB_ENV
+    
     - name: Test API health endpoint
       run: |
         echo "🧪 Testing API health endpoint..."
