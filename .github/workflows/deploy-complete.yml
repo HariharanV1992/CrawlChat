@@ -480,37 +480,31 @@ jobs:
         
         # Test with minimal API Gateway payload
         echo "📋 Testing with minimal API Gateway payload..."
-        python3 -c "import json; open('minimal_payload.json', 'w', encoding='utf-8').write(json.dumps({'httpMethod': 'GET', 'path': '/', 'headers': {}, 'queryStringParameters': None, 'body': None, 'isBase64Encoded': False}))"
-        
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload file://minimal_payload.json \
+          --payload '{"httpMethod":"GET","path":"/","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' \
           --region ${{ env.AWS_REGION }} \
           test_response.json
         
         echo "📄 Test response:"
         cat test_response.json | jq .
         
-        # Test crawler endpoint with proper UTF-8 encoding
+        # Test crawler endpoint
         echo "📋 Testing crawler endpoint..."
-        python3 -c "import json; open('crawler_payload.json', 'w', encoding='utf-8').write(json.dumps({'url': 'https://example.com'}))"
-        
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload file://crawler_payload.json \
+          --payload '{"url":"https://example.com"}' \
           --region ${{ env.AWS_REGION }} \
           crawler_response.json
         
         echo "📄 Crawler test response:"
         cat crawler_response.json | jq .
         
-        # Test API Gateway format with proper UTF-8 encoding
-        echo "📋 Testing API Gateway format..."
-        python3 -c "import json; open('health_payload.json', 'w', encoding='utf-8').write(json.dumps({'httpMethod': 'GET', 'path': '/health', 'headers': {}, 'queryStringParameters': None, 'body': None, 'isBase64Encoded': False}))"
-        
+        # Test API Gateway health endpoint
+        echo "📋 Testing API Gateway health endpoint..."
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload file://health_payload.json \
+          --payload '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' \
           --region ${{ env.AWS_REGION }} \
           response.json
         
