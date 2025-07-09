@@ -489,18 +489,7 @@ jobs:
         echo "📄 Test response:"
         cat test_response.json | jq .
         
-        # Test health endpoint with proper escaping
-        echo "📋 Testing health endpoint..."
-        aws lambda invoke \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload "{\"httpMethod\":\"GET\",\"path\":\"/health\",\"headers\":{},\"queryStringParameters\":null,\"body\":null,\"isBase64Encoded\":false}" \
-          --region ${{ env.AWS_REGION }} \
-          response.json
-        
-        echo "📄 Health check response:"
-        cat response.json | jq .
-        
-        # Test crawler endpoint with proper escaping
+        # Test crawler endpoint (direct invoke, not API Gateway)
         echo "📋 Testing crawler endpoint..."
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
@@ -510,6 +499,19 @@ jobs:
         
         echo "📄 Crawler test response:"
         cat crawler_response.json | jq .
+        
+        # Test API Gateway format with base64 encoding
+        echo "📋 Testing API Gateway format..."
+        echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' | base64 > health_payload.b64
+        
+        aws lambda invoke \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --payload fileb://health_payload.b64 \
+          --region ${{ env.AWS_REGION }} \
+          response.json
+        
+        echo "📄 Health check response:"
+        cat response.json | jq .
         
         echo "✅ Function tests completed"
 
