@@ -132,9 +132,24 @@ jobs:
         echo "🧪 Testing API health endpoint..."
         cd crawlchat-service
         
+        # Create JSON payload file to avoid encoding issues
+        cat > health_payload.json << 'EOF'
+        {
+          "httpMethod": "GET",
+          "path": "/health",
+          "headers": {},
+          "queryStringParameters": null,
+          "body": null,
+          "isBase64Encoded": false
+        }
+        EOF
+        
+        echo "📋 Health payload:"
+        cat health_payload.json | jq .
+        
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' \
+          --payload file://health_payload.json \
           --region ${{ env.AWS_REGION }} \
           health_response.json
         
@@ -155,9 +170,26 @@ jobs:
         echo "🧪 Testing API login endpoint..."
         cd crawlchat-service
         
+        # Create JSON payload file to avoid encoding issues
+        cat > login_payload.json << 'EOF'
+        {
+          "httpMethod": "POST",
+          "path": "/login",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "queryStringParameters": null,
+          "body": "{\"email\":\"test@example.com\",\"password\":\"testpass\"}",
+          "isBase64Encoded": false
+        }
+        EOF
+        
+        echo "📋 Login payload:"
+        cat login_payload.json | jq .
+        
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload '{"httpMethod":"POST","path":"/login","headers":{"Content-Type":"application/json"},"queryStringParameters":null,"body":"{\"email\":\"test@example.com\",\"password\":\"testpass\"}","isBase64Encoded":false}' \
+          --payload file://login_payload.json \
           --region ${{ env.AWS_REGION }} \
           login_response.json
         
@@ -185,10 +217,20 @@ jobs:
         echo "🧪 Testing crawler functionality..."
         cd crawlchat-service
         
+        # Create JSON payload file to avoid encoding issues
+        cat > crawler_payload.json << 'EOF'
+        {
+          "url": "https://example.com"
+        }
+        EOF
+        
+        echo "📋 Crawler payload:"
+        cat crawler_payload.json | jq .
+        
         # Test basic crawler
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload '{"url":"https://example.com"}' \
+          --payload file://crawler_payload.json \
           --region ${{ env.AWS_REGION }} \
           crawler_response.json
         
