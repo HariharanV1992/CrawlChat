@@ -478,32 +478,33 @@ jobs:
         echo "🧪 Testing Lambda API function..."
         cd crawlchat-service
         
-        # Create health endpoint payload using echo to avoid encoding issues
-        echo '{"httpMethod":"GET","path":"/health","headers":{},"queryStringParameters":null,"body":null,"isBase64Encoded":false}' > health_payload.json
-        
-        echo "📋 Health payload created:"
-        cat health_payload.json | jq .
-        
-        # Test health endpoint
+        # Test with minimal payload first
+        echo "📋 Testing with minimal payload..."
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload file://health_payload.json \
+          --payload '{}' \
+          --region ${{ env.AWS_REGION }} \
+          test_response.json
+        
+        echo "📄 Test response:"
+        cat test_response.json | jq .
+        
+        # Test health endpoint with proper escaping
+        echo "📋 Testing health endpoint..."
+        aws lambda invoke \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --payload "{\"httpMethod\":\"GET\",\"path\":\"/health\",\"headers\":{},\"queryStringParameters\":null,\"body\":null,\"isBase64Encoded\":false}" \
           --region ${{ env.AWS_REGION }} \
           response.json
         
         echo "📄 Health check response:"
         cat response.json | jq .
         
-        # Create crawler endpoint payload using echo
-        echo '{"url":"https://example.com"}' > crawler_payload.json
-        
-        echo "📋 Crawler payload created:"
-        cat crawler_payload.json | jq .
-        
-        # Test crawler endpoint
+        # Test crawler endpoint with proper escaping
+        echo "📋 Testing crawler endpoint..."
         aws lambda invoke \
           --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload file://crawler_payload.json \
+          --payload "{\"url\":\"https://example.com\"}" \
           --region ${{ env.AWS_REGION }} \
           crawler_response.json
         
