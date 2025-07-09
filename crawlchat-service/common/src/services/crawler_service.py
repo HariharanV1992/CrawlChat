@@ -42,7 +42,7 @@ def get_advanced_crawler():
             
             # Try multiple possible paths for the crawler modules
             possible_paths = [
-                # Path for Lambda deployment
+                # Path for Lambda deployment (primary)
                 "/var/task/src",
                 # Path for local development
                 os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src'),

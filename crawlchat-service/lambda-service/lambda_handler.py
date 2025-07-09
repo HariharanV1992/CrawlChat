@@ -26,6 +26,9 @@ print(f"Python version: {sys.version}")
 print(f"Current working directory: {os.getcwd()}")
 print(f"Environment variables: AWS_LAMBDA_FUNCTION_NAME={os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}")
 
+from common.src.services.crawler_service import crawler_service
+import asyncio
+
 def lambda_handler(event, context):
     """
     Routes API Gateway events to FastAPI (via Mangum), direct events to crawler logic, and SQS events to batch handler.
@@ -258,93 +261,45 @@ def handle_crawler_request(event, context):
         }
 
 def process_sqs_message(event, context):
-    """
-    Process SQS messages for batch crawling.
-    
-    Expected SQS message format:
-    {
-        "urls": ["https://example1.com", "https://example2.com"],
-        "content_type": "generic",
-        "batch_id": "unique-batch-id"
-    }
-    """
     print("=== PROCESSING SQS MESSAGE ===")
-    
     try:
         logger.info(f"Processing SQS event: {json.dumps(event, default=str)}")
         print(f"Processing SQS event with {len(event.get('Records', []))} records")
-        
-        results = []
-        api_key = os.getenv('SCRAPINGBEE_API_KEY')
-        
-        if not api_key:
-            logger.error("SCRAPINGBEE_API_KEY not configured")
-            print("ERROR: SCRAPINGBEE_API_KEY not configured")
-            return {
-                'statusCode': 500,
-                'body': json.dumps({'error': 'SCRAPINGBEE_API_KEY not configured'})
-            }
-        
-        # Process each SQS record
+
+        loop = asyncio.get_event_loop()
         for record in event.get('Records', []):
             try:
                 logger.info(f"Processing record: {record}")
                 print(f"Processing record: {record}")
-                
+
                 # Parse SQS message
                 message_body = json.loads(record['body'])
-                urls = message_body.get('urls', [])
-                content_type = message_body.get('content_type', 'generic')
-                batch_id = message_body.get('batch_id', 'unknown')
-                
-                logger.info(f"Processing batch {batch_id} with {len(urls)} URLs")
-                print(f"Processing batch {batch_id} with {len(urls)} URLs")
-                
-                # Initialize crawler
-                from crawler.advanced_crawler import AdvancedCrawler
-                crawler = AdvancedCrawler(api_key)
-                
-                # Crawl all URLs
-                batch_results = crawler.crawl_multiple_urls(urls, content_type)
-                
-                # Get batch statistics
-                batch_stats = crawler.get_usage_stats()
-                
-                # Prepare batch result
-                batch_result = {
-                    'batch_id': batch_id,
-                    'urls_processed': len(urls),
-                    'successful_crawls': sum(1 for r in batch_results if r.get('success')),
-                    'results': batch_results,
-                    'usage_stats': batch_stats,
-                }
-                
-                results.append(batch_result)
-                
-                # Clean up
-                crawler.close()
-                
+                task_id = message_body.get('task_id')
+                user_id = message_body.get('user_id')
+
+                # Fetch the full task from DB
+                task = loop.run_until_complete(crawler_service.get_task_status(task_id))
+                print(f"Fetched task from DB: {task}")
+                if not task or not getattr(task, 'url', None):
+                    print(f"ERROR: Task {task_id} not found or URL missing!")
+                    continue
+
+                # Actually run the crawl
+                loop.run_until_complete(crawler_service._run_crawl_task(task))
+
             except Exception as e:
                 error_msg = f"Error processing SQS record: {e}"
                 logger.error(error_msg, exc_info=True)
                 print(f"ERROR: {error_msg}")
                 print(f"Traceback: {traceback.format_exc()}")
-                results.append({
-                    'error': str(e),
-                    'traceback': traceback.format_exc(),
-                    'record': record
-                })
-        
-        logger.info(f"Processed {len(results)} records")
-        print(f"Processed {len(results)} records")
-        
+
+        logger.info("Processed all records")
+        print("Processed all records")
         return {
             'statusCode': 200,
-            'body': json.dumps({
-                'batch_results': results
-            }, default=str)
+            'body': json.dumps({'message': 'Processed all records'})
         }
-        
+
     except Exception as e:
         error_msg = f"Error in SQS handler: {e}"
         logger.error(error_msg, exc_info=True)
@@ -352,10 +307,7 @@ def process_sqs_message(event, context):
         print(f"Traceback: {traceback.format_exc()}")
         return {
             'statusCode': 500,
-            'body': json.dumps({
-                'error': str(e),
-                'traceback': traceback.format_exc()
-            })
+            'body': json.dumps({'error': str(e), 'traceback': traceback.format_exc()})
         }
 
 # Example functions for testing

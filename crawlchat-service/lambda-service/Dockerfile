@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY lambda-service/lambda_handler.py ${LAMBDA_TASK_ROOT}/
 COPY lambda-service/main.py ${LAMBDA_TASK_ROOT}/
 
+# Copy crawler modules
+COPY lambda-service/src/crawler/ ${LAMBDA_TASK_ROOT}/src/crawler/
+
 # Copy centralized UI
 COPY ui/templates/ ${LAMBDA_TASK_ROOT}/templates/
 COPY ui/static/ ${LAMBDA_TASK_ROOT}/static/
