@@ -57,7 +57,22 @@ async def login(user_login: UserLogin, response: Response):
         logger.info(f"Login response prepared for email: {user_login.email}")
         logger.info(f"Response data: access_token={result.access_token[:10]}..., user_id={result.user.user_id}")
         
-        return result
+        # Convert to dict to ensure proper serialization
+        response_dict = {
+            "access_token": result.access_token,
+            "token_type": result.token_type,
+            "user": {
+                "user_id": result.user.user_id,
+                "username": result.user.username,
+                "email": result.user.email,
+                "created_at": result.user.created_at.isoformat(),
+                "is_active": result.user.is_active
+            },
+            "expires_in": result.expires_in
+        }
+        
+        logger.info(f"Returning response dict: {response_dict}")
+        return response_dict
     except AuthenticationError as e:
         logger.error(f"Authentication error for email {user_login.email}: {e}")
         raise HTTPException(status_code=401, detail=str(e))
