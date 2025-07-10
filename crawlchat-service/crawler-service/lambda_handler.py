@@ -20,7 +20,13 @@ def get_crawler_service() -> EnhancedCrawlerService:
     """Get or create the enhanced crawler service instance."""
     global crawler_service
     if crawler_service is None:
-        crawler_service = EnhancedCrawlerService()
+        # Get API key from environment variable
+        api_key = os.environ.get('SCRAPINGBEE_API_KEY')
+        if not api_key:
+            logger.warning("SCRAPINGBEE_API_KEY not found in environment variables")
+            api_key = "demo_key"  # Fallback for testing
+        
+        crawler_service = EnhancedCrawlerService(api_key)
     return crawler_service
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -101,7 +107,7 @@ def handle_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get crawler service and perform crawl
         service = get_crawler_service()
-        result = service.crawl_with_limit(url, max_doc_count)
+        result = service.crawl_with_max_docs(url, max_doc_count)
         
         return {
             'statusCode': 200,
@@ -142,7 +148,7 @@ def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get crawler service and perform crawl
         service = get_crawler_service()
-        result = service.crawl_with_limit(url, max_doc_count)
+        result = service.crawl_with_max_docs(url, max_doc_count)
         
         # Add task information to result
         result['task_id'] = task_id
