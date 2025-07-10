@@ -31,7 +31,7 @@ beautifulsoup4==4.12.0
 lxml==4.9.0
 selenium==4.15.0
 webdriver-manager==4.0.0
-scrapingbee==1.0.0
+scrapingbee==2.0.1
 
 # Document processing - Unified preprocessing with text extraction
 PyPDF2==3.0.0
