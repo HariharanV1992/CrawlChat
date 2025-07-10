@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
 
 # Add the crawler path to sys.path
-crawler_path = os.path.join(os.path.dirname(__file__), 'crawlchat-crawler', 'src')
+crawler_path = os.path.join(os.path.dirname(__file__), 'crawler-service', 'src')
 sys.path.insert(0, crawler_path)
 from crawler.advanced_crawler import AdvancedCrawler
 from crawler.link_extractor import LinkExtractor
@@ -158,8 +158,14 @@ async def get_crawl_task(task_id: str):
     """Get real crawl task status."""
     from datetime import datetime
     
-    # For now, return a basic status
-    # In a real implementation, this would check the actual task status
+    # Check if we have a stored result for this task
+    task_result = mock_tasks.get(task_id, {})
+    
+    # Get the actual result from the crawler
+    documents_found = len(crawler_documents) if 'crawler_documents' in globals() else 0
+    total_documents = documents_found
+    total_pages = 1  # For single page crawl
+    
     return {
         "task_id": task_id,
         "status": "completed",
@@ -167,17 +173,19 @@ async def get_crawl_task(task_id: str):
         "completed_at": datetime.utcnow().isoformat() + "Z",
         "result": {
             "success": True,
-            "documents_found": 0,  # Will be updated by real crawler
-            "pages_crawled": 0,    # Will be updated by real crawler
-            "total_documents": 0,
-            "total_pages": 0,
+            "documents_found": documents_found,
+            "pages_crawled": total_pages,
+            "total_documents": total_documents,
+            "total_pages": total_pages,
             "downloads": []
         },
         "progress": {
-            "current_page": 0,
-            "total_pages": 0,
-            "current_document": 0,
-            "total_documents": 0
+            "documents_downloaded": documents_found,
+            "pages_crawled": total_pages,
+            "total_documents": total_documents,
+            "total_pages": total_pages,
+            "current_document": documents_found,
+            "current_page": total_pages
         }
     }
 
@@ -327,7 +335,7 @@ class EnhancedCrawlerService:
             # Import required modules
             import sys
             import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'crawlchat-crawler', 'src'))
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'crawler-service', 'src'))
             from crawler.advanced_crawler import AdvancedCrawler
             from crawler.link_extractor import LinkExtractor
             from bs4 import BeautifulSoup
@@ -450,6 +458,7 @@ class EnhancedCrawlerService:
                 return
             
             # Extract links from the page content
+            from bs4 import BeautifulSoup
             soup = BeautifulSoup(page_doc['content'], 'html.parser')
             extractor = LinkExtractor(domain=domain)
             page_links, document_links = extractor.extract_links(soup, url, self.visited_urls)

@@ -1,1 +1,1 @@
-{"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"status\": \"healthy\", \"service\": \"crawler_service\"}"}
+{"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"task_id\": \"f40a838f-c30e-4da3-9873-1ba7c7876d13\", \"status\": \"queued\", \"message\": \"Crawl task created and queued for processing\"}"}

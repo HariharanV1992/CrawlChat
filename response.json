@@ -1,1 +1,1 @@
-{"errorMessage": "Handler 'handler' missing on module 'lambda_handler'", "errorType": "Runtime.HandlerNotFound", "requestId": "", "stackTrace": []}
+{"statusCode": 500, "headers": {"Content-Type": "application/json"}, "body": "{\"error\": \"Task start failed: Event loop is closed\"}"}

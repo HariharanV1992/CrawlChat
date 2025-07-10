@@ -58,9 +58,9 @@ try:
     # Add the crawler path to sys.path
     # Try multiple possible paths for Lambda container
     possible_paths = [
-        os.path.join(os.path.dirname(__file__), '..', 'crawlchat-crawler', 'src'),  # Local development
-        os.path.join('/var/task', 'crawlchat-crawler', 'src'),  # Lambda container
-        os.path.join(os.getcwd(), 'crawlchat-crawler', 'src'),  # Current working directory
+        os.path.join(os.path.dirname(__file__), '..', 'crawler-service', 'src'),  # Local development
+        os.path.join('/var/task', 'crawler-service', 'src'),  # Lambda container
+        os.path.join(os.getcwd(), 'crawler-service', 'src'),  # Current working directory
     ]
     
     crawler_path = None
