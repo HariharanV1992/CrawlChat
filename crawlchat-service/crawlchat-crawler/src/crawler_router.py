@@ -47,7 +47,7 @@ except ImportError as e:
             def get_scrapingbee_params(**kwargs):
                 return {"error": "Config not available"}
 
-router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
+router = APIRouter(tags=["crawler"])
 
 @router.get("/health")
 async def crawler_health():
