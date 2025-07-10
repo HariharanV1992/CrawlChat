@@ -13,7 +13,7 @@ boto3>=1.26.0
 botocore>=1.29.0
 
 # Email
-smtplib2>=0.2.1
+# smtplib is part of Python standard library
 
 # Utilities
 python-multipart>=0.0.6 

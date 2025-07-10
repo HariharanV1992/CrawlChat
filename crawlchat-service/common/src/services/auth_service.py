@@ -12,7 +12,10 @@ from common.src.core.exceptions import AuthenticationError, DatabaseError
 import uuid
 from common.src.core.database import mongodb
 import logging
-from common.src.services.email_service import EmailService
+try:
+    from common.src.services.email_service import EmailService
+except ImportError:
+    EmailService = None
 from datetime import timedelta
 import os
 
@@ -219,8 +222,15 @@ class AuthService:
                 raise AuthenticationError("Email already registered")
             
             # Generate confirmation token
-            email_service = EmailService()
-            confirmation_token = email_service.generate_confirmation_token()
+            if EmailService:
+                email_service = EmailService()
+                confirmation_token = email_service.generate_confirmation_token()
+            else:
+                # Fallback token generation
+                import secrets
+                import string
+                alphabet = string.ascii_letters + string.digits
+                confirmation_token = ''.join(secrets.choice(alphabet) for _ in range(32))
             confirmation_expires = datetime.utcnow() + timedelta(hours=24)
             
             # Create new user (active by default for now)
@@ -244,17 +254,20 @@ class AuthService:
             logger.info(f"Created new user: {user_create.username} ({user_create.email})")
             
             # Send confirmation email (optional)
-            try:
-                email_service = EmailService()
-                email_sent = email_service.send_confirmation_email(
-                    user_create.email, 
-                    user_create.username, 
-                    confirmation_token
-                )
-                if not email_sent:
-                    logger.warning(f"Failed to send confirmation email to {user_create.email}")
-            except Exception as e:
-                logger.error(f"Error sending confirmation email: {e}")
+            if EmailService:
+                try:
+                    email_service = EmailService()
+                    email_sent = email_service.send_confirmation_email(
+                        user_create.email, 
+                        user_create.username, 
+                        confirmation_token
+                    )
+                    if not email_sent:
+                        logger.warning(f"Failed to send confirmation email to {user_create.email}")
+                except Exception as e:
+                    logger.error(f"Error sending confirmation email: {e}")
+            else:
+                logger.warning("EmailService not available - skipping confirmation email")
             
             return user
         except Exception as e:
@@ -398,11 +411,14 @@ class AuthService:
             )
             
             # Send welcome email
-            try:
-                email_service = EmailService()
-                email_service.send_welcome_email(user.email, user.username)
-            except Exception as e:
-                logger.error(f"Error sending welcome email: {e}")
+            if EmailService:
+                try:
+                    email_service = EmailService()
+                    email_service.send_welcome_email(user.email, user.username)
+                except Exception as e:
+                    logger.error(f"Error sending welcome email: {e}")
+            else:
+                logger.warning("EmailService not available - skipping welcome email")
             
             logger.info(f"Email confirmed for user: {user.username}")
             return True
