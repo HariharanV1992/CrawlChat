@@ -1217,11 +1217,11 @@
                         <div class="flex-1 min-w-0">
                             <div class="flex justify-between items-start mb-3">
                                 <div class="flex-1 min-w-0">
-                                    <h4 class="font-medium text-gray-900 truncate">${task.url}</h4>
-                                    <p class="text-sm text-gray-600">Task ID: ${task.task_id}</p>
+                                    <h4 class="font-medium text-gray-900 truncate">${task.url || 'No URL'}</h4>
+                                    <p class="text-sm text-gray-600">Task ID: ${task.task_id || 'N/A'}</p>
                                 </div>
                                 <span class="px-2 py-1 text-xs font-medium rounded-full ${statusColor} ml-2 flex-shrink-0">
-                                    ${task.status}
+                                    ${task.status || 'Unknown'}
                                 </span>
                             </div>
                             
@@ -1289,7 +1289,7 @@
                                             <span class="text-red-800 font-medium">Crawl failed</span>
                                         </div>
                                         <p class="text-red-700 text-sm mt-1">
-                                            ${task.error_message || 'An error occurred during crawling.'}
+                                            ${task.error_message || task.error || 'An error occurred during crawling.'}
                                         </p>
                                     </div>
                                     <div class="flex space-x-2">
