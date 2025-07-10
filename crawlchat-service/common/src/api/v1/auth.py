@@ -43,16 +43,17 @@ async def login(user_login: UserLogin, response: Response):
         
         logger.info(f"Login successful for email: {user_login.email}, setting cookie")
         
+        # Temporarily comment out cookie setting to test API Gateway
         # Set HTTP-only cookie for server-side authentication
-        response.set_cookie(
-            key="access_token",
-            value=result.access_token,
-            httponly=True,
-            secure=True,  # MUST be True for HTTPS
-            samesite="none",  # MUST be 'none' for cross-site cookies
-            max_age=3600,  # 1 hour
-            domain=".crawlchat.site"  # Ensures cookie is sent to all subdomains
-        )
+        # response.set_cookie(
+        #     key="access_token",
+        #     value=result.access_token,
+        #     httponly=True,
+        #     secure=True,  # MUST be True for HTTPS
+        #     samesite="none",  # MUST be 'none' for cross-site cookies
+        #     max_age=3600,  # 1 hour
+        #     domain=".crawlchat.site"  # Ensures cookie is sent to all subdomains
+        # )
         
         logger.info(f"Login response prepared for email: {user_login.email}")
         logger.info(f"Response data: access_token={result.access_token[:10]}..., user_id={result.user.user_id}")
