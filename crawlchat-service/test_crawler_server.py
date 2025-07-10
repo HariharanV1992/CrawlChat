@@ -147,6 +147,30 @@ async def get_chat_session(session_id: str):
     """Mock chat session endpoint."""
     return {"session_id": session_id, "messages": []}
 
+@app.get("/api/v1/chat/sessions/{session_id}/messages")
+async def get_chat_messages(session_id: str):
+    """Mock chat messages endpoint."""
+    return {
+        "session_id": session_id,
+        "messages": [
+            {
+                "id": "msg_1",
+                "role": "assistant",
+                "content": "Hello! I'm your AI assistant. How can I help you today?",
+                "timestamp": "2024-01-01T00:00:00Z"
+            }
+        ]
+    }
+
+@app.post("/api/v1/chat/sessions/{session_id}/chat")
+async def send_chat_message(session_id: str):
+    """Mock send chat message endpoint."""
+    return {
+        "session_id": session_id,
+        "response": "Thank you for your message! I'm here to help you with any questions you have.",
+        "timestamp": "2024-01-01T00:00:00Z"
+    }
+
 @app.post("/api/v1/chat/sessions")
 async def create_chat_session():
     """Mock create chat session endpoint."""
@@ -547,30 +571,23 @@ async def health():
     """Health check endpoint."""
     return {"status": "healthy", "service": "crawler_test_server"}
 
-# Import crawler router
-try:
-    from crawler_router import router as crawler_router
-    logger.info("Successfully imported crawler router")
-    app.include_router(crawler_router, prefix="/api/v1/crawler")
-except ImportError as e:
-    logger.error(f"Failed to import crawler router: {e}")
-    
-    # Create a fallback router
-    from fastapi import APIRouter
-    fallback_router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
-    
-    @fallback_router.get("/health")
-    async def crawler_health_fallback():
-        try:
-            return {"status": "crawler_not_available", "error": "Crawler router not available"}
-        except Exception as e:
-            return {"status": "crawler_not_available", "error": str(e)}
-    
-    @fallback_router.get("/config")
-    async def crawler_config_fallback():
-        return {"status": "crawler_not_available", "error": "Crawler router not available"}
-    
-    app.include_router(fallback_router)
+# Create crawler router fallback (since crawler_router module is not available in test server)
+from fastapi import APIRouter
+crawler_router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
+
+@crawler_router.get("/health")
+async def crawler_health():
+    return {"status": "healthy", "service": "crawler_test_server"}
+
+@crawler_router.get("/config")
+async def crawler_config():
+    return {"status": "available", "service": "crawler_test_server"}
+
+@crawler_router.post("/crawl")
+async def crawler_crawl():
+    return {"status": "available", "service": "crawler_test_server"}
+
+app.include_router(crawler_router)
 
 if __name__ == "__main__":
     logger.info("Starting Crawler Test Server...")

@@ -117,8 +117,26 @@ class AuthService:
             user = await self.get_user_by_username(username_or_email)
             if not user:
                 user = await self.get_user_by_email(username_or_email)
+            
+            # If no user found, check if this is a default user creation attempt
             if not user:
                 logger.warning(f"Authentication failed: User not found for {username_or_email}")
+                
+                # Check if this is a default user login attempt
+                if username_or_email in ["admin@example.com", "admin"] and password == "admin123":
+                    logger.info("Creating default admin user on first login attempt")
+                    try:
+                        await self.ensure_default_user()
+                        # Try to get the user again
+                        user = await self.get_user_by_username("admin")
+                        if not user:
+                            user = await self.get_user_by_email("admin@example.com")
+                        if user:
+                            logger.info("Default admin user created and retrieved successfully")
+                            return user
+                    except Exception as e:
+                        logger.error(f"Failed to create default user: {e}")
+                
                 return None
             
             # Try to verify password
@@ -201,7 +219,8 @@ class AuthService:
                 raise AuthenticationError("Email already registered")
             
             # Generate confirmation token
-            confirmation_token = EmailService.generate_confirmation_token()
+            email_service = EmailService()
+            confirmation_token = email_service.generate_confirmation_token()
             confirmation_expires = datetime.utcnow() + timedelta(hours=24)
             
             # Create new user (active by default for now)
@@ -244,11 +263,6 @@ class AuthService:
     async def ensure_default_user(self):
         """Create a default admin user if no users exist, or fix existing users' password hashes."""
         try:
-            # Skip this during Lambda startup to avoid timeouts
-            if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
-                logger.info("Skipping ensure_default_user during Lambda startup")
-                return
-            
             await self._ensure_mongodb_connected()
             
             # Get all users
@@ -384,7 +398,8 @@ class AuthService:
             
             # Send welcome email
             try:
-                EmailService.send_welcome_email(user.email, user.username)
+                email_service = EmailService()
+                email_service.send_welcome_email(user.email, user.username)
             except Exception as e:
                 logger.error(f"Error sending welcome email: {e}")
             
@@ -408,7 +423,8 @@ class AuthService:
                 return False  # Already confirmed
             
             # Generate new confirmation token
-            confirmation_token = EmailService.generate_confirmation_token()
+            email_service = EmailService()
+            confirmation_token = email_service.generate_confirmation_token()
             confirmation_expires = datetime.utcnow() + timedelta(hours=24)
             
             # Update user with new token
@@ -424,7 +440,8 @@ class AuthService:
             )
             
             # Send confirmation email
-            email_sent = EmailService.send_confirmation_email(
+            email_service = EmailService()
+            email_sent = email_service.send_confirmation_email(
                 user.email, 
                 user.username, 
                 confirmation_token
