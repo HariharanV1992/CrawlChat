@@ -28,6 +28,7 @@ beautifulsoup4>=4.9.3
 lxml>=4.6.3
 selenium>=4.15.0
 webdriver-manager>=4.0.0
+scrapingbee>=1.0.0
 
 # Document processing - Essential dependencies only
 PyPDF2>=3.0.0
