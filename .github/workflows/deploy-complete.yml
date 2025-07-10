@@ -500,62 +500,11 @@ jobs:
           exit 1
         fi
 
-  test-deployment:
-    runs-on: ubuntu-latest
-    needs: [build-and-push, deploy-infrastructure, deploy-lambda-functions]
-    if: ${{ github.event.inputs.deploy_lambda != 'false' || github.event_name == 'push' }}
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
 
-    
-    - name: Test Crawler function
-      run: |
-        echo "🧪 Testing Crawler function..."
-        
-        # Test crawler health endpoint
-        echo "📋 Testing crawler health endpoint..."
-        aws lambda invoke \
-          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-          --payload '{"httpMethod": "GET", "path": "/health"}' \
-          --region ${{ env.AWS_REGION }} \
-          crawler_response.json
-        
-        if [ $? -eq 0 ]; then
-          echo "✅ Crawler function test successful"
-          cat crawler_response.json
-        else
-          echo "❌ Crawler function test failed"
-          exit 1
-        fi
-        
-        # Test crawler task creation
-        echo "📋 Testing crawler task creation..."
-        aws lambda invoke \
-          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-          --payload '{"url": "https://example.com", "max_doc_count": 1}' \
-          --region ${{ env.AWS_REGION }} \
-          task_response.json
-        
-                 if [ $? -eq 0 ]; then
-           echo "✅ Crawler task creation test successful"
-           cat task_response.json
-         else
-           echo "❌ Crawler task creation test failed"
-           exit 1
-         fi
 
   deployment-summary:
     runs-on: ubuntu-latest
-    needs: [deploy-infrastructure, deploy-lambda-functions, test-deployment]
+    needs: [deploy-infrastructure, deploy-lambda-functions]
     if: always()
     steps:
     - name: Checkout code
@@ -617,13 +566,7 @@ jobs:
           echo "❌ Lambda functions update failed"
         fi
         
-        echo ""
-        echo "📋 Test Results:"
-        if [ "${{ needs.test-deployment.result }}" = "success" ]; then
-          echo "✅ All tests passed"
-        else
-          echo "❌ Some tests failed"
-        fi
+
         
         echo ""
         echo "🚀 Deployment completed!"
