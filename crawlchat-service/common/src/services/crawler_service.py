@@ -41,20 +41,21 @@ def get_advanced_crawler():
             import os
             
             # Try multiple possible paths for the crawler modules
+            # Prioritize lambda-service version which has the correct __init__ signature
             possible_paths = [
-                # Path for Lambda deployment (primary)
+                # Path for Lambda deployment (primary) - lambda-service version
                 "/var/task/src",
-                # Path for local development
+                # Path for local development - lambda-service version
                 os.path.join(os.path.dirname(__file__), '..', '..', '..', 'lambda-service', 'src'),
-                # Path for common module structure
+                # Additional Lambda paths - lambda-service version
+                "/var/task/lambda-service/src",
+                "/var/task/crawlchat-service/lambda-service/src",
+                # Fallback paths (avoid crawler-service version)
                 os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src'),
                 # Current directory
                 os.getcwd(),
                 # Lambda task root
                 "/var/task",
-                # Additional Lambda paths
-                "/var/task/lambda-service/src",
-                "/var/task/crawlchat-service/lambda-service/src"
             ]
             
             crawler_imported = False
@@ -69,11 +70,36 @@ def get_advanced_crawler():
                     try:
                         from crawler.advanced_crawler import AdvancedCrawler
                         from crawler.settings_manager import SettingsManager
-                        logger.info(f"Successfully imported AdvancedCrawler and related modules from {path}")
-                        _AdvancedCrawler = AdvancedCrawler
-                        _SettingsManager = SettingsManager
-                        crawler_imported = True
-                        break
+                        
+                        # Verify this is the lambda-service version by checking __init__ signature
+                        import inspect
+                        init_signature = inspect.signature(AdvancedCrawler.__init__)
+                        init_params = list(init_signature.parameters.keys())
+                        
+                        logger.info(f"AdvancedCrawler __init__ parameters: {init_params}")
+                        
+                        # Lambda-service version should have api_key and settings parameters
+                        # Crawler-service version has base_url parameter which we don't want
+                        if 'base_url' in init_params:
+                            logger.warning(f"Found crawler-service version at {path} (has base_url parameter), skipping...")
+                            # Remove the path if it's the wrong version
+                            if path in sys.path:
+                                sys.path.remove(path)
+                            continue
+                        
+                        if 'api_key' in init_params:
+                            logger.info(f"Successfully imported lambda-service AdvancedCrawler from {path}")
+                            _AdvancedCrawler = AdvancedCrawler
+                            _SettingsManager = SettingsManager
+                            crawler_imported = True
+                            break
+                        else:
+                            logger.warning(f"AdvancedCrawler at {path} has unexpected signature: {init_params}")
+                            # Remove the path if import failed
+                            if path in sys.path:
+                                sys.path.remove(path)
+                            continue
+                            
                     except ImportError as e:
                         logger.warning(f"Import failed from {path}: {e}")
                         # Remove the path if import failed
@@ -84,7 +110,7 @@ def get_advanced_crawler():
                     logger.info(f"Path does not exist: {path}")
             
             if not crawler_imported:
-                raise ImportError("Could not find crawler modules in any of the expected paths")
+                raise ImportError("Could not find lambda-service crawler modules in any of the expected paths")
                 
         except ImportError as e:
             # Fallback for when crawler modules are not available
@@ -156,7 +182,24 @@ class CrawlerService:
                 delay=request.delay,
                 total_timeout=request.total_timeout,
                 page_timeout=request.page_timeout,
-                request_timeout=request.request_timeout
+                request_timeout=request.request_timeout,
+                # ScrapingBee parameters
+                render_js=request.render_js,
+                block_ads=request.block_ads,
+                block_resources=request.block_resources,
+                wait=request.wait,
+                wait_for=request.wait_for,
+                wait_browser=request.wait_browser,
+                window_width=request.window_width,
+                window_height=request.window_height,
+                premium_proxy=request.premium_proxy,
+                country_code=request.country_code,
+                stealth_proxy=request.stealth_proxy,
+                own_proxy=request.own_proxy,
+                forward_headers=request.forward_headers,
+                forward_headers_pure=request.forward_headers_pure,
+                download_file=request.download_file,
+                scraping_config=request.scraping_config
             )
             print("CrawlTask object created successfully")
             
@@ -359,7 +402,15 @@ class CrawlerService:
                 use_proxy=task.use_proxy,
                 proxy_api_key=task.proxy_api_key,
                 render=task.render,
-                retry=task.retry
+                retry=task.retry,
+                window_width=task.window_width,
+                window_height=task.window_height,
+                premium_proxy=task.premium_proxy,
+                country_code=task.country_code,
+                stealth_proxy=task.stealth_proxy,
+                own_proxy=task.own_proxy,
+                forward_headers=task.forward_headers,
+                forward_headers_pure=task.forward_headers_pure
             )
             logger.info(f"Crawler config created: {crawler_config}")
             
@@ -374,49 +425,109 @@ class CrawlerService:
             logger.info("Initializing AdvancedCrawler")
             AdvancedCrawler = get_advanced_crawler()
             crawler = AdvancedCrawler(
-                api_key=api_key,
-                base_url=task.url,
-                output_dir=task.output_dir,
-                max_depth=2,
-                max_pages=task.max_pages,
-                delay=task.delay,
-                site_type='generic'
+                api_key=api_key
             )
             logger.info("AdvancedCrawler initialized successfully")
             
             # Start crawling
             logger.info(f"Starting crawl for URL: {task.url}")
-            results = await crawler.crawl(task.url)
+            results = crawler.crawl_url(
+                url=task.url,
+                render_js=task.render_js,
+                block_ads=task.block_ads,
+                block_resources=task.block_resources,
+                wait=task.wait,
+                wait_for=task.wait_for,
+                wait_browser=task.wait_browser,
+                window_width=task.window_width,
+                window_height=task.window_height,
+                premium_proxy=task.premium_proxy,
+                country_code=task.country_code,
+                stealth_proxy=task.stealth_proxy,
+                own_proxy=task.own_proxy,
+                forward_headers=task.forward_headers,
+                forward_headers_pure=task.forward_headers_pure,
+                download_file=task.download_file,
+                scraping_config=task.scraping_config
+            )
             logger.info(f"Crawl completed with results: {results}")
             
             # Update task with results
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.utcnow()
-            task.pages_crawled = results['crawling_stats']['total_urls_visited']
-            task.documents_downloaded = results['crawling_stats']['successful_downloads']
-            task.downloaded_files = results['downloaded_files']
-            task.metadata = results
+            
+            # Handle different result formats
+            if results.get('success', False):
+                # Lambda service format
+                task.pages_crawled = 1  # Single URL crawl
+                task.documents_downloaded = 1 if results.get('content') else 0
+                task.downloaded_files = [task.url] if results.get('content') else []
+                task.metadata = results
+                
+                # Save content to temporary file for S3 upload
+                if results.get('content'):
+                    import tempfile
+                    import os
+                    from pathlib import Path
+                    
+                    # Create temporary file
+                    temp_dir = "/tmp/crawled"
+                    os.makedirs(temp_dir, exist_ok=True)
+                    
+                    # Create filename from URL
+                    from urllib.parse import urlparse
+                    parsed_url = urlparse(task.url)
+                    domain = parsed_url.netloc
+                    path = parsed_url.path.strip('/') or 'index'
+                    filename = f"{domain}_{path.replace('/', '_')}.html"
+                    
+                    temp_file_path = os.path.join(temp_dir, filename)
+                    
+                    # Save content to file
+                    with open(temp_file_path, 'w', encoding='utf-8') as f:
+                        f.write(results['content'])
+                    
+                    # Update task with local file path
+                    task.downloaded_files = [temp_file_path]
+                    task.output_dir = temp_dir
+                    
+                    logger.info(f"Saved crawled content to {temp_file_path}")
+            else:
+                # Handle failure
+                task.status = TaskStatus.FAILED
+                task.errors.append(results.get('error', 'Unknown error'))
+                task.metadata = results
             
             logger.info(f"Task {task.task_id} completed: {task.documents_downloaded} documents, {task.pages_crawled} pages")
             
-            # Upload crawled files to S3
-            await self._upload_crawled_files_to_s3(task)
-            
-            # Process documents for chat (Textract, chunking, vector embedding)
-            await self._process_crawled_documents(task)
+            # Only upload and process if crawl was successful
+            if task.status == TaskStatus.COMPLETED and task.documents_downloaded > 0:
+                # Upload crawled files to S3
+                await self._upload_crawled_files_to_s3(task)
+                
+                # Process documents for chat (Textract, chunking, vector embedding)
+                await self._process_crawled_documents(task)
+            else:
+                logger.info(f"Skipping S3 upload and document processing for failed task {task.task_id}")
             
             # Save to database
+            update_data = {
+                "status": task.status.value,
+                "completed_at": task.completed_at,
+                "pages_crawled": task.pages_crawled,
+                "documents_downloaded": task.documents_downloaded,
+                "downloaded_files": task.downloaded_files,
+                "s3_files": task.s3_files,
+                "metadata": task.metadata
+            }
+            
+            # Add errors if any
+            if task.errors:
+                update_data["errors"] = task.errors
+            
             await self.db.get_collection("tasks").update_one(
                 {"task_id": task.task_id},
-                {"$set": {
-                    "status": task.status.value,
-                    "completed_at": task.completed_at,
-                    "pages_crawled": task.pages_crawled,
-                    "documents_downloaded": task.documents_downloaded,
-                    "downloaded_files": task.downloaded_files,
-                    "s3_files": task.s3_files,
-                    "metadata": task.metadata
-                }}
+                {"$set": update_data}
             )
             logger.info(f"Task {task.task_id} results saved to database")
             
