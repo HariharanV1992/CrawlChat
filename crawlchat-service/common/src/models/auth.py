@@ -14,9 +14,31 @@ class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="Username")
 
 
-class UserCreate(UserBase):
+class UserCreate(BaseModel):
     """User creation model."""
+    email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., min_length=8, description="Password (min 8 characters)")
+    username: Optional[str] = Field(None, min_length=3, max_length=50, description="Username (auto-generated from email if not provided)")
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Auto-generate username from email if not provided
+        if not self.username:
+            # Extract username part from email (before @)
+            email_username = self.email.split('@')[0]
+            # Clean up username (remove special characters, limit length)
+            import re
+            clean_username = re.sub(r'[^a-zA-Z0-9_]', '', email_username)
+            # Ensure minimum length and add random suffix if needed
+            if len(clean_username) < 3:
+                import secrets
+                import string
+                suffix = ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(3))
+                clean_username = f"user{suffix}"
+            elif len(clean_username) > 50:
+                clean_username = clean_username[:47] + "..."
+            
+            self.username = clean_username
 
 
 class UserLogin(BaseModel):
