@@ -25,8 +25,14 @@ logger.info(f"Lambda handler initialized - Python version: {sys.version}")
 logger.info(f"Current working directory: {os.getcwd()}")
 logger.info(f"AWS_LAMBDA_FUNCTION_NAME: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}")
 
-from common.src.services.crawler_service import crawler_service
-from common.src.core.database import mongodb
+# Import from local src structure instead of common
+try:
+    from src.services.crawler_service import crawler_service
+    from src.core.database import mongodb
+except ImportError:
+    # Fallback for local development
+    crawler_service = None
+    mongodb = None
 import asyncio
 
 def lambda_handler(event, context):
@@ -109,9 +115,9 @@ def handle_crawler_request(event, context):
     try:
         logger.info("Importing crawler modules...")
         
-        from crawler.advanced_crawler import AdvancedCrawler, CrawlScenarios
-        from crawler.enhanced_scrapingbee_manager import ProxyMode, JavaScriptScenarios
-        from crawler.enhanced_crawler_service import EnhancedCrawlerService
+        from src.crawler.advanced_crawler import AdvancedCrawler, CrawlScenarios
+        from src.crawler.enhanced_scrapingbee_manager import ProxyMode, JavaScriptScenarios
+        from src.crawler.enhanced_crawler_service import EnhancedCrawlerService
         
         logger.info("Crawler modules imported successfully")
         
