@@ -35,9 +35,13 @@ async def register(user_create: UserCreate):
 async def login(user_login: UserLogin, response: Response):
     """Authenticate user and return access token."""
     try:
+        logger.info(f"Login attempt for email: {user_login.email}")
         result = await auth_service.login_user(user_login.email, user_login.password)
         if not result:
+            logger.warning(f"Login failed for email: {user_login.email} - invalid credentials")
             raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+        logger.info(f"Login successful for email: {user_login.email}, setting cookie")
         
         # Set HTTP-only cookie for server-side authentication
         response.set_cookie(
@@ -50,12 +54,15 @@ async def login(user_login: UserLogin, response: Response):
             domain=".crawlchat.site"  # Ensures cookie is sent to all subdomains
         )
         
+        logger.info(f"Login response prepared for email: {user_login.email}")
+        logger.info(f"Response data: access_token={result.access_token[:10]}..., user_id={result.user.user_id}")
+        
         return result
     except AuthenticationError as e:
-        logger.error(f"Error logging in user: {e}")
+        logger.error(f"Authentication error for email {user_login.email}: {e}")
         raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
-        logger.error(f"Error logging in user: {e}")
+        logger.error(f"Unexpected error during login for email {user_login.email}: {e}")
         raise HTTPException(status_code=500, detail="Login failed")
 
 @router.post("/logout")

@@ -112,6 +112,12 @@ def handle_api_gateway_request(event, context):
         # Handle the request
         response = handler(event, context)
         logger.info("Request handled successfully")
+        logger.info(f"Response type: {type(response)}")
+        logger.info(f"Response keys: {list(response.keys()) if isinstance(response, dict) else 'not a dict'}")
+        if isinstance(response, dict):
+            logger.info(f"Response statusCode: {response.get('statusCode')}")
+            logger.info(f"Response headers: {response.get('headers', {})}")
+            logger.info(f"Response body length: {len(response.get('body', ''))}")
         return response
         
     except Exception as e:
