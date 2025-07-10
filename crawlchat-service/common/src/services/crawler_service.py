@@ -183,23 +183,23 @@ class CrawlerService:
                 total_timeout=request.total_timeout,
                 page_timeout=request.page_timeout,
                 request_timeout=request.request_timeout,
-                # ScrapingBee parameters
-                render_js=request.render_js,
-                block_ads=request.block_ads,
-                block_resources=request.block_resources,
-                wait=request.wait,
-                wait_for=request.wait_for,
-                wait_browser=request.wait_browser,
-                window_width=request.window_width,
-                window_height=request.window_height,
-                premium_proxy=request.premium_proxy,
-                country_code=request.country_code,
-                stealth_proxy=request.stealth_proxy,
-                own_proxy=request.own_proxy,
-                forward_headers=request.forward_headers,
-                forward_headers_pure=request.forward_headers_pure,
-                download_file=request.download_file,
-                scraping_config=request.scraping_config
+                # ScrapingBee parameters - use getattr with defaults
+                render_js=getattr(request, 'render_js', True),
+                block_ads=getattr(request, 'block_ads', False),
+                block_resources=getattr(request, 'block_resources', True),
+                wait=getattr(request, 'wait', None),
+                wait_for=getattr(request, 'wait_for', None),
+                wait_browser=getattr(request, 'wait_browser', None),
+                window_width=getattr(request, 'window_width', 1920),
+                window_height=getattr(request, 'window_height', 1080),
+                premium_proxy=getattr(request, 'premium_proxy', False),
+                country_code=getattr(request, 'country_code', 'in'),
+                stealth_proxy=getattr(request, 'stealth_proxy', False),
+                own_proxy=getattr(request, 'own_proxy', None),
+                forward_headers=getattr(request, 'forward_headers', False),
+                forward_headers_pure=getattr(request, 'forward_headers_pure', False),
+                download_file=getattr(request, 'download_file', False),
+                scraping_config=getattr(request, 'scraping_config', None)
             )
             print("CrawlTask object created successfully")
             
