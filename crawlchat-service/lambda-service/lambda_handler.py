@@ -25,10 +25,10 @@ logger.info(f"Lambda handler initialized - Python version: {sys.version}")
 logger.info(f"Current working directory: {os.getcwd()}")
 logger.info(f"AWS_LAMBDA_FUNCTION_NAME: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}")
 
-# Import from local src structure instead of common
+# Import from common structure
 try:
-    from src.services.crawler_service import crawler_service
-    from src.core.database import mongodb
+    from common.src.services.crawler_service import crawler_service
+    from common.src.core.database import mongodb
 except ImportError:
     # Fallback for local development
     crawler_service = None
