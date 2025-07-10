@@ -5,49 +5,141 @@ from typing import Dict, Any, Optional
 import sys
 import uuid
 from datetime import datetime
-
-# Add the src directory to the Python path
-sys.path.append('/var/task/src')
-
-try:
-    from services.sqs_helper import SQSHelper
-    from core.database import mongodb
-    from core.config import config
-except ImportError as e:
-    logging.error(f"Failed to import required modules: {e}")
-    SQSHelper = None
-    mongodb = None
-    config = None
+import boto3
+import motor.motor_asyncio
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# AWS Configuration
+AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
+SQS_QUEUE_NAME = os.getenv("CRAWLCHAT_SQS_QUEUE", "crawlchat-crawl-tasks")
+MONGODB_URI = os.getenv("MONGODB_URI", "")
+MONGODB_DB = os.getenv("DB_NAME", "stock_market_crawler")
+
+# Initialize AWS clients
+sqs_client = boto3.client("sqs", region_name=AWS_REGION)
+
+class SQSHelper:
+    def __init__(self, queue_name=SQS_QUEUE_NAME):
+        self.queue_name = queue_name
+        self.queue_url = self.get_queue_url()
+
+    def get_queue_url(self):
+        """Get the queue URL. Assumes the queue already exists."""
+        try:
+            response = sqs_client.get_queue_url(QueueName=self.queue_name)
+            queue_url = response["QueueUrl"]
+            logger.info(f"Successfully got queue URL for {self.queue_name}")
+            return queue_url
+        except sqs_client.exceptions.QueueDoesNotExist:
+            error_msg = f"SQS queue '{self.queue_name}' does not exist."
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        except Exception as e:
+            error_msg = f"Error getting queue URL for {self.queue_name}: {e}"
+            logger.error(error_msg)
+            raise
+
+    def send_crawl_task(self, task_id, user_id):
+        """Send a crawl task message to SQS."""
+        try:
+            message = {"task_id": task_id, "user_id": user_id}
+            message_body = json.dumps(message)
+            
+            response = sqs_client.send_message(
+                QueueUrl=self.queue_url,
+                MessageBody=message_body
+            )
+            
+            logger.info(f"Sent crawl task {task_id} to SQS queue")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error sending crawl task to SQS: {e}"
+            logger.error(error_msg)
+            raise
+
+class MongoDB:
+    def __init__(self):
+        self.client = None
+        self.db = None
+
+    async def connect(self):
+        """Connect to MongoDB."""
+        if self.is_connected():
+            logger.info("MongoDB already connected")
+            return
+            
+        try:
+            logger.info("Connecting to MongoDB...")
+            
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(
+                MONGODB_URI,
+                serverSelectionTimeoutMS=10000,
+                connectTimeoutMS=10000,
+                socketTimeoutMS=10000,
+                maxPoolSize=1,
+                minPoolSize=0,
+                maxIdleTimeMS=30000,
+                retryWrites=True,
+                retryReads=True
+            )
+            
+            # Test the connection
+            await self.client.admin.command('ping')
+            self.db = self.client[MONGODB_DB]
+            logger.info(f"MongoDB connected successfully to database: {MONGODB_DB}")
+            
+        except Exception as e:
+            logger.error(f"MongoDB connection failed: {e}")
+            self.client = None
+            self.db = None
+            raise
+
+    async def disconnect(self):
+        if self.client:
+            self.client.close()
+            self.client = None
+            self.db = None
+
+    def is_connected(self) -> bool:
+        """Check if MongoDB is connected."""
+        return self.client is not None and self.db is not None
+
+    def get_collection(self, name: str):
+        """Get a collection with lazy connection."""
+        if not self.is_connected():
+            raise RuntimeError("MongoDB not connected. Call connect() first.")
+        return self.db[name]
+
 # Initialize services
 sqs_helper = None
-if SQSHelper:
-    try:
-        sqs_helper = SQSHelper()
-        logger.info("SQS helper initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize SQS helper: {e}")
+mongodb = None
 
-def get_mongodb():
-    """Get MongoDB connection."""
-    if not mongodb:
-        logger.error("MongoDB not available")
-        return None
-    return mongodb
+try:
+    sqs_helper = SQSHelper()
+    logger.info("SQS helper initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize SQS helper: {e}")
+
+try:
+    mongodb = MongoDB()
+    logger.info("MongoDB helper initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize MongoDB helper: {e}")
 
 async def store_crawl_task(task_id: str, url: str, max_doc_count: int, user_id: str = "default") -> bool:
     """Store crawl task in MongoDB."""
     try:
-        db = get_mongodb()
-        if not db:
+        if not mongodb:
+            logger.error("MongoDB not available")
             return False
             
-        await db.connect()
-        collection = db.get_collection("crawl_tasks")
+        await mongodb.connect()
+        collection = mongodb.get_collection("crawl_tasks")
         
         task_data = {
             "task_id": task_id,
@@ -70,12 +162,12 @@ async def store_crawl_task(task_id: str, url: str, max_doc_count: int, user_id: 
 async def update_task_status(task_id: str, status: str, result: Dict = None):
     """Update task status in MongoDB."""
     try:
-        db = get_mongodb()
-        if not db:
+        if not mongodb:
+            logger.error("MongoDB not available")
             return False
             
-        await db.connect()
-        collection = db.get_collection("crawl_tasks")
+        await mongodb.connect()
+        collection = mongodb.get_collection("crawl_tasks")
         
         update_data = {
             "status": status,
@@ -148,7 +240,6 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Creating crawl task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
         
         # Store task in MongoDB
-        import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -272,7 +363,6 @@ def handle_http_task_creation(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Creating HTTP crawl task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
         
         # Store task in MongoDB
-        import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -342,7 +432,6 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
                 logger.info(f"Sent crawl task {task_id} to SQS queue")
                 
                 # Update task status to queued
-                import asyncio
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
@@ -392,20 +481,18 @@ def handle_http_task_status(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Getting status for task {task_id}")
         
         # Get task status from MongoDB
-        import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            db = get_mongodb()
-            if not db:
+            if not mongodb:
                 return {
                     'statusCode': 500,
                     'headers': {'Content-Type': 'application/json'},
                     'body': json.dumps({'error': 'Database not available'}, ensure_ascii=False)
                 }
             
-            loop.run_until_complete(db.connect())
-            collection = db.get_collection("crawl_tasks")
+            loop.run_until_complete(mongodb.connect())
+            collection = mongodb.get_collection("crawl_tasks")
             
             task = loop.run_until_complete(collection.find_one({"task_id": task_id}))
             if not task:

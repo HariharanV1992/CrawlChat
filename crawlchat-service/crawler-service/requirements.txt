@@ -12,6 +12,10 @@ scrapingbee==2.0.1
 boto3==1.34.0
 botocore==1.34.0
 
+# MongoDB
+motor==3.3.0
+pymongo==4.5.0
+
 # Document processing
 PyPDF2==3.0.0
 pdfminer.six==20221105
