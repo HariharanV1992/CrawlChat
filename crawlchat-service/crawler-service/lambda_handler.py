@@ -7,7 +7,11 @@ import sys
 # Add the src directory to the Python path
 sys.path.append('/var/task/src')
 
-from crawler.enhanced_crawler_service import EnhancedCrawlerService
+try:
+    from crawler.enhanced_crawler_service import EnhancedCrawlerService
+except ImportError as e:
+    logging.error(f"Failed to import EnhancedCrawlerService: {e}")
+    EnhancedCrawlerService = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,17 +20,22 @@ logger = logging.getLogger(__name__)
 # Initialize the enhanced crawler service
 crawler_service = None
 
-def get_crawler_service() -> EnhancedCrawlerService:
+def get_crawler_service() -> Optional[EnhancedCrawlerService]:
     """Get or create the enhanced crawler service instance."""
     global crawler_service
-    if crawler_service is None:
-        # Get API key from environment variable
-        api_key = os.environ.get('SCRAPINGBEE_API_KEY')
-        if not api_key:
-            logger.warning("SCRAPINGBEE_API_KEY not found in environment variables")
-            api_key = "demo_key"  # Fallback for testing
-        
-        crawler_service = EnhancedCrawlerService(api_key)
+    if crawler_service is None and EnhancedCrawlerService:
+        try:
+            # Get API key from environment variable
+            api_key = os.environ.get('SCRAPINGBEE_API_KEY')
+            if not api_key:
+                logger.warning("SCRAPINGBEE_API_KEY not found in environment variables")
+                api_key = "demo_key"  # Fallback for testing
+            
+            crawler_service = EnhancedCrawlerService(api_key)
+            logger.info("Enhanced crawler service initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize crawler service: {e}")
+            return None
     return crawler_service
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -47,7 +56,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     }
     """
     try:
-        logger.info(f"Received event: {json.dumps(event)}")
+        logger.info(f"Received event: {json.dumps(event, default=str)}")
         
         # Get HTTP method and path
         http_method = event.get('httpMethod', 'GET')
@@ -107,12 +116,19 @@ def handle_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get crawler service and perform crawl
         service = get_crawler_service()
+        if not service:
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'Crawler service not available'})
+            }
+        
         result = service.crawl_with_max_docs(url, max_doc_count)
         
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result)
+            'body': json.dumps(result, default=str)
         }
     
     except Exception as e:
@@ -148,6 +164,13 @@ def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get crawler service and perform crawl
         service = get_crawler_service()
+        if not service:
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'Crawler service not available'})
+            }
+        
         result = service.crawl_with_max_docs(url, max_doc_count)
         
         # Add task information to result
@@ -157,7 +180,7 @@ def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result)
+            'body': json.dumps(result, default=str)
         }
     
     except Exception as e:
