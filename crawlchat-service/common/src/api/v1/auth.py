@@ -35,7 +35,7 @@ async def register(user_create: UserCreate):
 async def login(user_login: UserLogin, response: Response):
     """Authenticate user and return access token."""
     try:
-        logger.info(f"Login attempt for email: {user_login.email}")
+        logger.info(f"Login attempt for email: {user_login.email} - Lambda deployment test")
         result = await auth_service.login_user(user_login.email, user_login.password)
         if not result:
             logger.warning(f"Login failed for email: {user_login.email} - invalid credentials")
