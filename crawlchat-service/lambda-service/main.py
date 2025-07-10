@@ -453,6 +453,15 @@ app.include_router(documents_router, prefix="/api/v1/documents")
 app.include_router(vector_store_router, prefix="/api/v1")
 app.include_router(preprocessing_router, prefix="/api/v1")
 
+# Debug: List all registered routes
+logger.info("=== ALL REGISTERED ROUTES ===")
+for route in app.routes:
+    if hasattr(route, 'path'):
+        logger.info(f"Route: {route.path} - Methods: {getattr(route, 'methods', 'N/A')}")
+        if hasattr(route, 'endpoint'):
+            logger.info(f"  Endpoint: {route.endpoint}")
+logger.info("=== END ROUTES ===")
+
 # Mount static files - handle Lambda environment gracefully
 # Determine the correct static directory path based on environment
 STATIC_DIR = "/var/task/static" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else "static"

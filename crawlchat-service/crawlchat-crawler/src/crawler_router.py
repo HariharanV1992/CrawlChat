@@ -181,4 +181,10 @@ async def list_tasks():
         }
     except Exception as e:
         logger.error(f"Failed to list tasks: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
+
+# Debug: Log when router is created
+logger.info("Crawler router created with endpoints:")
+for route in router.routes:
+    if hasattr(route, 'path'):
+        logger.info(f"  {route.path} - Methods: {getattr(route, 'methods', 'N/A')}") 
