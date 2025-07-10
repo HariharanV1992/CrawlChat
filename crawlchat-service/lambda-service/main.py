@@ -185,14 +185,16 @@ origins = os.getenv("CORS_ORIGINS", "[]")
 try:
     origins = json.loads(origins)
 except Exception:
-    origins = ["https://api.crawlchat.site", "https://crawlchat.site"]
+    origins = ["https://api.crawlchat.site", "https://crawlchat.site", "http://localhost:8000", "http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # Add trusted host middleware for production
@@ -218,6 +220,24 @@ async def global_exception_handler(request: Request, exc: Exception):
             "timestamp": datetime.utcnow().isoformat()
         }
     )
+
+# Custom middleware to ensure CORS headers are always present
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    """Add CORS headers to all responses."""
+    response = await call_next(request)
+    
+    # Add CORS headers if not already present
+    if "access-control-allow-origin" not in response.headers:
+        response.headers["access-control-allow-origin"] = "*"
+    if "access-control-allow-methods" not in response.headers:
+        response.headers["access-control-allow-methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    if "access-control-allow-headers" not in response.headers:
+        response.headers["access-control-allow-headers"] = "*"
+    if "access-control-allow-credentials" not in response.headers:
+        response.headers["access-control-allow-credentials"] = "true"
+    
+    return response
 
 # Health check endpoint
 @app.get("/health")
