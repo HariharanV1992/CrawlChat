@@ -480,12 +480,14 @@ class EnhancedCrawlerService:
     def _extract_title(self, html_content: str) -> str:
         """Extract title from HTML content."""
         try:
+            from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_content, 'html.parser')
             title_tag = soup.find('title')
             if title_tag:
                 return title_tag.get_text(strip=True)
             return "Untitled"
-        except:
+        except Exception as e:
+            logger.error(f"Error extracting title: {e}")
             return "Untitled"
     
     def _extract_filename(self, url: str) -> str:
@@ -528,7 +530,10 @@ except ImportError as e:
     
     @fallback_router.get("/health")
     async def crawler_health_fallback():
-        return {"status": "crawler_not_available", "error": "Crawler router not available"}
+        try:
+            return {"status": "crawler_not_available", "error": "Crawler router not available"}
+        except Exception as e:
+            return {"status": "crawler_not_available", "error": str(e)}
     
     @fallback_router.get("/config")
     async def crawler_config_fallback():
