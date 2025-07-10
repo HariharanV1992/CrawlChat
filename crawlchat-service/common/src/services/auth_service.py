@@ -245,7 +245,8 @@ class AuthService:
             
             # Send confirmation email (optional)
             try:
-                email_sent = EmailService.send_confirmation_email(
+                email_service = EmailService()
+                email_sent = email_service.send_confirmation_email(
                     user_create.email, 
                     user_create.username, 
                     confirmation_token
