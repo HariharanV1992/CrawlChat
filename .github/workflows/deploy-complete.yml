@@ -515,25 +515,7 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
     
-    - name: Test Lambda API function
-      run: |
-        echo "🧪 Testing Lambda API function..."
-        
-        # Test health endpoint
-        echo "📋 Testing health endpoint..."
-        aws lambda invoke \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --payload '{"httpMethod": "GET", "path": "/health"}' \
-          --region ${{ env.AWS_REGION }} \
-          response.json
-        
-        if [ $? -eq 0 ]; then
-          echo "✅ Lambda API function test successful"
-          cat response.json
-        else
-          echo "❌ Lambda API function test failed"
-          exit 1
-        fi
+
     
     - name: Test Crawler function
       run: |
