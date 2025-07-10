@@ -27,6 +27,7 @@ print(f"Current working directory: {os.getcwd()}")
 print(f"Environment variables: AWS_LAMBDA_FUNCTION_NAME={os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}")
 
 from common.src.services.crawler_service import crawler_service
+from common.src.core.database import mongodb
 import asyncio
 
 def lambda_handler(event, context):
@@ -266,7 +267,12 @@ def process_sqs_message(event, context):
         logger.info(f"Processing SQS event: {json.dumps(event, default=str)}")
         print(f"Processing SQS event with {len(event.get('Records', []))} records")
 
+        # Initialize MongoDB connection
+        print("Initializing MongoDB connection...")
         loop = asyncio.get_event_loop()
+        loop.run_until_complete(mongodb.connect())
+        print("MongoDB connected successfully")
+
         for record in event.get('Records', []):
             try:
                 logger.info(f"Processing record: {record}")

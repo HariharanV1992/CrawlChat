@@ -79,7 +79,10 @@ class EnhancedScrapingBeeManager:
         self.base_options = base_options or {
             "country_code": "in",  # Use India proxies for ap-south-1 region
             "block_ads": True,
-            "block_resources": False,
+            "block_resources": True,  # Block images and CSS for speed
+            "timeout": 30000,  # 30 second timeout
+            "wait_browser": "domcontentloaded",  # Wait for DOM to load
+            "device": "desktop",  # Use desktop device
         }
         
         # Performance tracking
@@ -100,7 +103,12 @@ class EnhancedScrapingBeeManager:
         self.session.mount('https://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
     
     def make_progressive_request(self, url: str, content_checker=None, 
-                               force_mode: Optional[ProxyMode] = None) -> requests.Response:
+                               force_mode: Optional[ProxyMode] = None, 
+                               render_js: bool = True,
+                               timeout: int = None,
+                               wait: int = None,
+                               wait_for: str = None,
+                               block_resources: bool = None) -> requests.Response:
         """
         Make a progressive request: Standard → Premium → Stealth
         Only uses higher-cost modes if lower-cost modes fail.
@@ -130,7 +138,7 @@ class EnhancedScrapingBeeManager:
         for mode in modes_to_try:
             try:
                 logger.info(f"Trying {mode.value} mode for {url}")
-                response = self._make_request_with_mode(url, mode, content_checker)
+                response = self._make_request_with_mode(url, mode, content_checker, render_js, timeout, wait, wait_for, block_resources)
                 
                 if response.status_code == 200:
                     # Cache successful mode for this domain
@@ -150,13 +158,15 @@ class EnhancedScrapingBeeManager:
         raise requests.exceptions.RequestException(f"All proxy modes failed for {url}")
     
     def _make_request_with_mode(self, url: str, mode: ProxyMode, 
-                               content_checker=None) -> requests.Response:
+                               content_checker=None, render_js: bool = True,
+                               timeout: int = None, wait: int = None, 
+                               wait_for: str = None, block_resources: bool = None) -> requests.Response:
         """Make request with specific proxy mode."""
         config = self.proxy_configs[mode]
         
         for attempt in range(config.retry_count):
             try:
-                params = self._get_params_for_mode(url, mode)
+                params = self._get_params_for_mode(url, mode, render_js, timeout, wait, wait_for, block_resources)
                 headers = self._get_headers()
                 
                 logger.debug(f"Making {mode.value} request (attempt {attempt + 1})")
@@ -194,16 +204,26 @@ class EnhancedScrapingBeeManager:
         
         raise requests.exceptions.RequestException(f"{mode.value} mode failed after {config.retry_count} attempts")
     
-    def _get_params_for_mode(self, url: str, mode: ProxyMode) -> Dict[str, Any]:
+    def _get_params_for_mode(self, url: str, mode: ProxyMode, render_js: bool = True,
+                           timeout: int = None, wait: int = None, 
+                           wait_for: str = None, block_resources: bool = None) -> Dict[str, Any]:
         """Get ScrapingBee parameters for specific proxy mode."""
         config = self.proxy_configs[mode]
         
         params = {
             "api_key": self.api_key,
             "url": url,
-            "render_js": "true",
-            "wait": str(config.wait_time),
+            "render_js": "true" if render_js else "false",
+            "wait": str(wait) if wait is not None else str(config.wait_time),
         }
+        
+        # Add optional parameters
+        if timeout is not None:
+            params["timeout"] = str(timeout)
+        if wait_for is not None:
+            params["wait_for"] = wait_for
+        if block_resources is not None:
+            params["block_resources"] = "true" if block_resources else "false"
         
         # Add mode-specific parameters
         if mode == ProxyMode.STANDARD:
@@ -222,8 +242,20 @@ class EnhancedScrapingBeeManager:
                 "stealth_proxy": "true",
             })
         
-        # Add base options
-        params.update(self.base_options)
+        # Add base options (but don't override method parameters)
+        base_params = self.base_options.copy()
+        
+        # Remove any keys that were already set by method parameters
+        if timeout is not None:
+            base_params.pop("timeout", None)
+        if wait is not None:
+            base_params.pop("wait", None)
+        if wait_for is not None:
+            base_params.pop("wait_for", None)
+        if block_resources is not None:
+            base_params.pop("block_resources", None)
+        
+        params.update(base_params)
         
         return params
     

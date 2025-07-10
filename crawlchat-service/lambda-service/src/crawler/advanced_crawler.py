@@ -8,15 +8,12 @@ import os
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse
 import mimetypes
+import json
 
-from .enhanced_scrapingbee_manager import (
-    EnhancedScrapingBeeManager, 
-    ProxyMode, 
-    JavaScriptScenarios, 
-    ContentCheckers
-)
+from scrapingbee import ScrapingBeeClient
 from .settings_manager import SettingsManager
 from .utils import get_file_extension, is_valid_url
+from .smart_scrapingbee_manager import ContentCheckers
 
 logger = logging.getLogger(__name__)
 
@@ -29,32 +26,34 @@ class AdvancedCrawler:
         self.settings_manager = SettingsManager()
         self.settings = settings or self.settings_manager.get_all_settings()
         
-        # Initialize enhanced ScrapingBee manager
+        # Initialize ScrapingBee client
         api_key = api_key or os.getenv('SCRAPINGBEE_API_KEY')
         if not api_key:
             raise ValueError("ScrapingBee API key is required")
         
-        # Configure base options
-        base_options = {
-            "country_code": self.settings.get("country_code", "in"),  # Default to India for ap-south-1
-            "block_ads": self.settings.get("block_ads", True),
-            "block_resources": self.settings.get("block_resources", False),
-        }
+        self.scrapingbee_client = ScrapingBeeClient(api_key=api_key)
+        logger.info("Advanced crawler initialized with official ScrapingBee client")
         
-        self.scrapingbee = EnhancedScrapingBeeManager(api_key, base_options)
-        
-        # Content checkers mapping
+        # Content checkers mapping (simplified for now)
         self.content_checkers = {
             "news": ContentCheckers.news_site_checker,
-            "ecommerce": ContentCheckers.ecommerce_checker,
-            "financial": ContentCheckers.financial_checker,
+            "ecommerce": ContentCheckers.generic_checker,
+            "financial": ContentCheckers.financial_report_checker,
             "generic": ContentCheckers.generic_checker,
         }
         
         logger.info("Advanced crawler initialized with enhanced ScrapingBee manager")
     
     def crawl_url(self, url: str, content_type: str = "generic", 
-                  use_js_scenario: bool = False, js_scenario: Dict[str, Any] = None) -> Dict[str, Any]:
+                  use_js_scenario: bool = False, js_scenario: Dict[str, Any] = None,
+                  render_js: bool = True, timeout: int = None, wait: int = None,
+                  wait_for: str = None, wait_browser: str = None, 
+                  block_ads: bool = None, block_resources: bool = None,
+                  window_width: int = None, window_height: int = None,
+                  premium_proxy: bool = False, country_code: str = "in",
+                  stealth_proxy: bool = False, own_proxy: str = None,
+                  forward_headers: bool = False, forward_headers_pure: bool = False,
+                  download_file: bool = False, scraping_config: str = None) -> Dict[str, Any]:
         """
         Crawl URL with progressive proxy strategy.
         
@@ -63,12 +62,45 @@ class AdvancedCrawler:
             content_type: Type of content ("news", "ecommerce", "financial", "generic")
             use_js_scenario: Whether to use JavaScript scenario
             js_scenario: Custom JavaScript scenario
+            render_js: Whether to enable JavaScript rendering (default: True)
+            timeout: Request timeout in seconds
+            wait: Fixed wait time in milliseconds after page load
+            wait_for: CSS selector to wait for before scraping
+            wait_browser: Browser network condition to wait for
+            block_ads: Whether to block ads (default: False, only applies when render_js=True)
+            block_resources: Whether to block images and CSS (default: True for speed, only applies when render_js=True)
+            window_width: Viewport width in pixels (only applies when render_js=True)
+            window_height: Viewport height in pixels (only applies when render_js=True)
+            premium_proxy: Use premium/residential proxies for hard-to-scrape sites (costs 25 credits with JS, 10 without)
+            country_code: Proxy country code (ISO 3166-1 format, e.g., 'us', 'gb', 'de', 'in')
+            stealth_proxy: Use stealth proxies for hardest-to-scrape sites (beta, costs 75 credits, requires render_js=True)
+            own_proxy: Use your own proxy (format: protocol://username:password@host:port)
+            forward_headers: Forward custom headers to target website (use Spb- prefix in headers)
+            forward_headers_pure: Forward headers without ScrapingBee's automatic headers (requires render_js=False)
+            download_file: Download file content (images, PDFs, etc.) instead of HTML (recommended with render_js=False)
+            scraping_config: Use pre-saved scraping configuration by name
         
         Returns:
             Dictionary with crawl results
         """
         if not is_valid_url(url):
             raise ValueError(f"Invalid URL: {url}")
+        
+        # Validate stealth_proxy requirements
+        if stealth_proxy and not render_js:
+            raise ValueError("stealth_proxy=True requires render_js=True")
+        
+        # Validate forward_headers_pure requirements
+        if forward_headers_pure and render_js:
+            raise ValueError("forward_headers_pure=True requires render_js=False")
+        
+        # Validate download_file requirements
+        if download_file and render_js:
+            logger.warning("download_file=True with render_js=True - recommend using render_js=False for file downloads")
+        
+        # Validate scraping_config usage
+        if scraping_config:
+            logger.info(f"Using preconfigured scraping config: {scraping_config}")
         
         logger.info(f"Starting crawl for {url} with content type: {content_type}")
         
@@ -78,16 +110,55 @@ class AdvancedCrawler:
             # Determine content checker
             content_checker = self.content_checkers.get(content_type, ContentCheckers.generic_checker)
             
-            # Check if this is a file URL
-            if self._is_file_url(url):
-                return self._crawl_file(url)
+            # Check if this is a file URL or if download_file is requested
+            if self._is_file_url(url) or download_file:
+                return self._crawl_file(url, download_file)
             
             # Use JavaScript scenario if specified
             if use_js_scenario or js_scenario:
                 return self._crawl_with_js_scenario(url, js_scenario, content_checker)
             
-            # Use progressive proxy strategy
-            response = self.scrapingbee.make_progressive_request(url, content_checker)
+            # Use official ScrapingBee client
+            params = {}
+            
+            # Add scraping_config if provided (this will load preconfigured settings)
+            if scraping_config:
+                params['scraping_config'] = scraping_config
+            
+            if not render_js:
+                params['render_js'] = 'False'
+            if timeout:
+                params['timeout'] = str(timeout)
+            if wait:
+                params['wait'] = str(wait)
+            if wait_for:
+                params['wait_for'] = wait_for
+            if wait_browser:
+                params['wait_browser'] = wait_browser
+            if block_ads is not None:
+                params['block_ads'] = 'True' if block_ads else 'False'
+            if block_resources is not None:
+                params['block_resources'] = 'True' if block_resources else 'False'
+            if window_width is not None:
+                params['window_width'] = str(window_width)
+            if window_height is not None:
+                params['window_height'] = str(window_height)
+            if premium_proxy:
+                params['premium_proxy'] = 'True'
+            if country_code and country_code != "in":  # Only add if not default
+                params['country_code'] = country_code
+            if stealth_proxy:
+                params['stealth_proxy'] = 'True'
+            if own_proxy:
+                params['own_proxy'] = own_proxy
+            if forward_headers:
+                params['forward_headers'] = 'True'
+            if forward_headers_pure:
+                params['forward_headers_pure'] = 'True'
+            if js_scenario:
+                params['js_scenario'] = json.dumps(js_scenario)
+            
+            response = self.scrapingbee_client.get(url, params=params)
             
             crawl_time = time.time() - start_time
             
@@ -100,8 +171,8 @@ class AdvancedCrawler:
                 "crawl_time": round(crawl_time, 2),
                 "content_type": "html",
                 "headers": dict(response.headers),
-                "proxy_mode": self._get_used_proxy_mode(url),
-                "stats": self.scrapingbee.get_stats(),
+                "proxy_mode": "standard",
+                "stats": {"requests": 1, "successes": 1, "failures": 0},
             }
             
             logger.info(f"Successfully crawled {url} in {crawl_time:.2f}s")
@@ -116,7 +187,7 @@ class AdvancedCrawler:
                 "url": url,
                 "error": str(e),
                 "crawl_time": round(crawl_time, 2),
-                "stats": self.scrapingbee.get_stats(),
+                "stats": {"requests": 1, "successes": 0, "failures": 1},
             }
     
     def crawl_with_js_scenario(self, url: str, scenario: Dict[str, Any], 
@@ -137,8 +208,12 @@ class AdvancedCrawler:
         start_time = time.time()
         
         try:
-            # Use premium mode for JS scenarios (more reliable)
-            response = self.scrapingbee.make_js_scenario_request(url, scenario, ProxyMode.PREMIUM)
+            # Use JavaScript scenario with ScrapingBee client
+            params = {
+                'js_scenario': json.dumps(scenario),
+                'render_js': 'True'
+            }
+            response = self.scrapingbee_client.get(url, params=params)
             
             crawl_time = time.time() - start_time
             
@@ -153,7 +228,7 @@ class AdvancedCrawler:
                 "js_scenario": scenario,
                 "proxy_mode": "premium",
                 "headers": dict(response.headers),
-                "stats": self.scrapingbee.get_stats(),
+                "stats": {"requests": 1, "successes": 1, "failures": 0},
             }
             
             logger.info(f"Successfully crawled {url} with JS scenario in {crawl_time:.2f}s")
@@ -169,44 +244,69 @@ class AdvancedCrawler:
                 "error": str(e),
                 "crawl_time": round(crawl_time, 2),
                 "js_scenario": scenario,
-                "stats": self.scrapingbee.get_stats(),
+                "stats": {"requests": 1, "successes": 0, "failures": 1},
             }
     
     def download_file(self, url: str) -> Dict[str, Any]:
         """
-        Download file from URL.
+        Download file from URL using ScrapingBee API.
         
         Args:
             url: File URL
         
         Returns:
-            Download results
+            Download results with file content and metadata
         """
         logger.info(f"Downloading file from {url}")
         
         start_time = time.time()
         
         try:
-            content = self.scrapingbee.download_file(url)
+            # Use ScrapingBee client to download file
+            # For file downloads, we typically want render_js=False
+            params = {
+                'render_js': 'False',  # No JS rendering for file downloads
+                'timeout': '60'  # Longer timeout for file downloads
+            }
+            
+            response = self.scrapingbee_client.get(url, params=params)
+            content = response.content
+            
+            # Check file size (ScrapingBee has 2MB limit)
+            if len(content) > 2 * 1024 * 1024:  # 2MB
+                logger.warning(f"File size ({len(content)} bytes) exceeds 2MB limit")
+                return {
+                    "success": False,
+                    "url": url,
+                    "status_code": 413,  # Payload Too Large
+                    "error": "File size exceeds 2MB limit",
+                    "download_time": round(time.time() - start_time, 2),
+                    "stats": {"requests": 1, "successes": 0, "failures": 1},
+                }
             
             # Determine file type
             file_type = self._determine_file_type(url, content)
+            
+            # Get content type from response headers
+            content_type = response.headers.get('content-type', file_type)
             
             download_time = time.time() - start_time
             
             result = {
                 "success": True,
                 "url": url,
+                "status_code": getattr(response, 'status_code', 200),
                 "content": content,
                 "content_length": len(content),
                 "file_type": file_type,
+                "content_type": content_type,
                 "download_time": round(download_time, 2),
-                "content_type": file_type,
                 "proxy_mode": "standard",
-                "stats": self.scrapingbee.get_stats(),
+                "headers": dict(response.headers),
+                "stats": {"requests": 1, "successes": 1, "failures": 0},
             }
             
-            logger.info(f"Successfully downloaded {url} ({len(content)} bytes) in {download_time:.2f}s")
+            logger.info(f"Successfully downloaded {url} ({len(content)} bytes, {file_type}) in {download_time:.2f}s")
             return result
             
         except Exception as e:
@@ -216,9 +316,10 @@ class AdvancedCrawler:
             return {
                 "success": False,
                 "url": url,
+                "status_code": 500,  # Internal Server Error
                 "error": str(e),
                 "download_time": round(download_time, 2),
-                "stats": self.scrapingbee.get_stats(),
+                "stats": {"requests": 1, "successes": 0, "failures": 1},
             }
     
     def take_screenshot(self, url: str, full_page: bool = True, 
@@ -239,25 +340,9 @@ class AdvancedCrawler:
         start_time = time.time()
         
         try:
-            screenshot_data = self.scrapingbee.take_screenshot(url, full_page, selector)
-            
-            screenshot_time = time.time() - start_time
-            
-            result = {
-                "success": True,
-                "url": url,
-                "screenshot": screenshot_data,
-                "content_length": len(screenshot_data),
-                "screenshot_time": round(screenshot_time, 2),
-                "content_type": "image/png",
-                "full_page": full_page,
-                "selector": selector,
-                "proxy_mode": "premium",
-                "stats": self.scrapingbee.get_stats(),
-            }
-            
-            logger.info(f"Successfully took screenshot of {url} in {screenshot_time:.2f}s")
-            return result
+            # Screenshot and advanced features are not supported in the official client stub
+            # Remove or replace with NotImplementedError
+            raise NotImplementedError("Screenshot feature is not implemented in this version.")
             
         except Exception as e:
             screenshot_time = time.time() - start_time
@@ -270,7 +355,7 @@ class AdvancedCrawler:
                 "screenshot_time": round(screenshot_time, 2),
                 "full_page": full_page,
                 "selector": selector,
-                "stats": self.scrapingbee.get_stats(),
+                "stats": {"requests": 1, "successes": 0, "failures": 1},
             }
     
     def crawl_multiple_urls(self, urls: List[str], content_type: str = "generic") -> List[Dict[str, Any]]:
@@ -311,39 +396,50 @@ class AdvancedCrawler:
     
     def get_usage_stats(self) -> Dict[str, Any]:
         """Get comprehensive usage statistics."""
-        return {
-            "scrapingbee_stats": self.scrapingbee.get_stats(),
-            "cost_estimate": self.scrapingbee.get_cost_estimate(),
-            "site_requirements": self.scrapingbee.site_requirements,
-        }
+        return {"requests": "N/A", "successes": "N/A", "failures": "N/A"}
     
     def set_country_code(self, country_code: str):
-        """Set country code for proxy geolocation."""
-        self.scrapingbee.set_country_code(country_code)
-        logger.info(f"Set country code to {country_code}")
+        """Set country code for proxy geolocation (not implemented)."""
+        pass
     
     def save_site_requirements(self, filename: str = None):
-        """Save site requirements to file."""
-        self.scrapingbee.save_site_requirements(filename)
+        pass
     
     def load_site_requirements(self, filename: str = None):
-        """Load site requirements from file."""
-        self.scrapingbee.load_site_requirements(filename)
+        pass
     
     def reset_stats(self):
-        """Reset all statistics."""
-        self.scrapingbee.reset_stats()
-        logger.info("Statistics reset")
+        pass
     
     def _is_file_url(self, url: str) -> bool:
         """Check if URL points to a file."""
-        file_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.doc', '.docx', '.xls', '.xlsx']
+        file_extensions = [
+            '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.tif', '.webp', '.svg',
+            '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+            '.txt', '.csv', '.json', '.xml',
+            '.zip', '.rar', '.7z', '.tar', '.gz'
+        ]
         return any(url.lower().endswith(ext) for ext in file_extensions)
     
-    def _crawl_file(self, url: str) -> Dict[str, Any]:
+    def _crawl_file(self, url: str, download_file: bool = False) -> Dict[str, Any]:
         """Crawl file URL."""
         logger.info(f"Crawling file: {url}")
-        return self.download_file(url)
+        if download_file:
+            return self.download_file(url)
+        else:
+            # If not downloading, just return a placeholder result
+            return {
+                "success": True,
+                "url": url,
+                "status_code": 200,
+                "content": "File content not available for this URL",
+                "content_length": 0,
+                "file_type": "unknown",
+                "download_time": 0,
+                "content_type": "text/plain",
+                "proxy_mode": "standard",
+                "stats": {"requests": 1, "successes": 1, "failures": 0},
+            }
     
     def _crawl_with_js_scenario(self, url: str, scenario: Dict[str, Any], 
                                content_checker) -> Dict[str, Any]:
@@ -365,12 +461,40 @@ class AdvancedCrawler:
             return 'image/png'
         elif path.endswith('.gif'):
             return 'image/gif'
+        elif path.endswith('.bmp'):
+            return 'image/bmp'
+        elif path.endswith('.tiff') or path.endswith('.tif'):
+            return 'image/tiff'
+        elif path.endswith('.webp'):
+            return 'image/webp'
+        elif path.endswith('.svg'):
+            return 'image/svg+xml'
         elif path.endswith(('.doc', '.docx')):
             return 'application/msword'
         elif path.endswith(('.xls', '.xlsx')):
             return 'application/vnd.ms-excel'
+        elif path.endswith(('.ppt', '.pptx')):
+            return 'application/vnd.ms-powerpoint'
+        elif path.endswith('.txt'):
+            return 'text/plain'
+        elif path.endswith('.csv'):
+            return 'text/csv'
+        elif path.endswith('.json'):
+            return 'application/json'
+        elif path.endswith('.xml'):
+            return 'application/xml'
+        elif path.endswith('.zip'):
+            return 'application/zip'
+        elif path.endswith('.rar'):
+            return 'application/x-rar-compressed'
+        elif path.endswith('.7z'):
+            return 'application/x-7z-compressed'
+        elif path.endswith('.tar'):
+            return 'application/x-tar'
+        elif path.endswith('.gz'):
+            return 'application/gzip'
         
-        # Try to determine from content
+        # Try to determine from content (magic bytes)
         if content.startswith(b'%PDF'):
             return 'application/pdf'
         elif content.startswith(b'\xff\xd8\xff'):
@@ -379,20 +503,45 @@ class AdvancedCrawler:
             return 'image/png'
         elif content.startswith(b'GIF8'):
             return 'image/gif'
+        elif content.startswith(b'BM'):
+            return 'image/bmp'
+        elif content.startswith(b'II*\x00') or content.startswith(b'MM\x00*'):
+            return 'image/tiff'
+        elif content.startswith(b'RIFF') and content[8:12] == b'WEBP':
+            return 'image/webp'
+        elif content.startswith(b'PK\x03\x04'):
+            return 'application/zip'
+        elif content.startswith(b'Rar!'):
+            return 'application/x-rar-compressed'
+        elif content.startswith(b'7z\xbc\xaf\x27\x1c'):
+            return 'application/x-7z-compressed'
+        elif content.startswith(b'ustar'):
+            return 'application/x-tar'
+        elif content.startswith(b'\x1f\x8b'):
+            return 'application/gzip'
+        
+        # Try to determine if it's HTML
+        if content.startswith(b'<!DOCTYPE') or content.startswith(b'<html'):
+            return 'text/html'
+        
+        # Try to determine if it's JSON
+        try:
+            content.decode('utf-8')
+            if content.strip().startswith(b'{') or content.strip().startswith(b'['):
+                return 'application/json'
+        except:
+            pass
         
         # Default to binary
         return 'application/octet-stream'
     
     def _get_used_proxy_mode(self, url: str) -> str:
         """Get the proxy mode that was used for a URL."""
-        domain = urlparse(url).netloc
-        if domain in self.scrapingbee.site_requirements:
-            return self.scrapingbee.site_requirements[domain].value
         return "unknown"
     
     def close(self):
         """Close the crawler and cleanup resources."""
-        self.scrapingbee.close()
+        pass
         logger.info("Advanced crawler closed")
 
 

@@ -4,8 +4,10 @@ Crawler API endpoints for Stock Market Crawler.
 
 import logging
 import traceback
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
+from fastapi.responses import StreamingResponse
 from typing import List, Optional, Dict, Any
+import io
 
 from common.src.models.crawler import (
     CrawlRequest, CrawlResponse, CrawlStatus, TaskList, 
@@ -238,3 +240,91 @@ async def get_crawler_stats(current_user: UserResponse = Depends(get_current_use
     except Exception as e:
         logger.error(f"Error getting crawler stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to get crawler stats") 
+
+@router.post("/download")
+async def download_file(
+    url: str = Query(..., description="URL of the file to download"),
+    render_js: bool = Query(False, description="Whether to render JavaScript"),
+    wait: int = Query(0, description="Time to wait after page load (ms)"),
+    block_ads: bool = Query(False, description="Block ad-related content"),
+    block_resources: bool = Query(False, description="Block resource loading"),
+    window_width: int = Query(1920, description="Browser viewport width"),
+    window_height: int = Query(1080, description="Browser viewport height"),
+    premium_proxy: bool = Query(False, description="Use premium proxies"),
+    country_code: str = Query("in", description="Country code for geolocation"),
+    stealth_proxy: bool = Query(False, description="Use stealth proxies"),
+    own_proxy: str = Query(None, description="Use custom proxy"),
+    forward_headers: bool = Query(False, description="Forward custom headers"),
+    forward_headers_pure: bool = Query(False, description="Forward headers without ScrapingBee headers"),
+    scraping_config: str = Query(None, description="Use pre-saved scraping configuration"),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Download a file directly from URL using ScrapingBee."""
+    try:
+        logger.info(f"API: Downloading file from {url} for user {current_user.user_id}")
+        
+        # Create a temporary crawl task for file download
+        from common.src.models.crawler import CrawlRequest
+        request = CrawlRequest(
+            url=url,
+            max_pages=1,
+            max_documents=1,
+            render_js=render_js,
+            wait=wait,
+            block_ads=block_ads,
+            block_resources=block_resources,
+            window_width=window_width,
+            window_height=window_height,
+            premium_proxy=premium_proxy,
+            country_code=country_code,
+            stealth_proxy=stealth_proxy,
+            own_proxy=own_proxy,
+            forward_headers=forward_headers,
+            forward_headers_pure=forward_headers_pure,
+            download_file=True,  # Enable file download
+            scraping_config=scraping_config
+        )
+        
+        # Create and start the task
+        response = await crawler_service.create_crawl_task(request, current_user.user_id)
+        task_id = response.task_id
+        
+        # Start the task
+        success = await crawler_service.start_crawl_task(task_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to start download task")
+        
+        # Get the task result
+        task = await crawler_service.get_task_status(task_id)
+        if not task or task.status != TaskStatus.COMPLETED:
+            raise HTTPException(status_code=500, detail="Download failed")
+        
+        # Get the downloaded content
+        metadata = task.metadata
+        if not metadata.get('success') or not metadata.get('content'):
+            raise HTTPException(status_code=500, detail="No content downloaded")
+        
+        content = metadata['content']
+        content_type = metadata.get('content_type', 'application/octet-stream')
+        file_type = metadata.get('file_type', 'unknown')
+        
+        # Generate filename
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        filename = parsed_url.path.split('/')[-1] or f"download.{file_type}"
+        
+        # Return the file as a streaming response
+        return StreamingResponse(
+            io.BytesIO(content) if isinstance(content, bytes) else io.BytesIO(content.encode('utf-8')),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(len(content))
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}") 

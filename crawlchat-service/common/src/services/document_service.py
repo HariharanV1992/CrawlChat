@@ -685,6 +685,29 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Error deleting document by filename {filename}: {e}")
             return False
+
+    async def get_document_by_filename(self, filename: str, user_id: str) -> Optional[Document]:
+        """Get a document by filename."""
+        try:
+            await mongodb.connect()
+            
+            # Find document by filename and user_id
+            doc_data = await mongodb.get_collection("documents").find_one({
+                "filename": filename,
+                "user_id": user_id
+            })
+            
+            if not doc_data:
+                logger.warning(f"Document not found: {filename} for user {user_id}")
+                return None
+            
+            document = Document(**doc_data)
+            logger.info(f"Found document: {document.document_id} for filename {filename}")
+            return document
+                
+        except Exception as e:
+            logger.error(f"Error getting document by filename: {e}")
+            return None
     
     async def get_task_documents(self, task_id: str) -> List[Document]:
         """Get documents for a specific task with optimized querying."""

@@ -4,7 +4,11 @@ Documents API endpoints for Stock Market Crawler.
 
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from typing import List, Optional
+import io
+import os
+from pathlib import Path
 
 from common.src.models.documents import (
     Document, DocumentCreate, DocumentUpdate, DocumentResponse, DocumentListResponse, DocumentType, DocumentStatus, DocumentUpload
@@ -316,3 +320,63 @@ async def get_user_page_usage(current_user: UserResponse = Depends(get_current_u
     except Exception as e:
         logger.error(f"Error getting user page usage: {e}")
         raise HTTPException(status_code=500, detail="Failed to get user page usage") 
+
+@router.get("/download/{filename}")
+async def download_document(
+    filename: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Download a document by filename."""
+    try:
+        # Get document info
+        document = await document_service.get_document_by_filename(filename, current_user.user_id)
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Check if file exists
+        file_path = Path(document.file_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Document file not found")
+        
+        # Read file content
+        try:
+            with open(file_path, 'rb') as f:
+                content = f.read()
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}")
+            raise HTTPException(status_code=500, detail="Error reading document file")
+        
+        # Determine content type
+        content_type = "application/octet-stream"
+        if filename.lower().endswith('.pdf'):
+            content_type = "application/pdf"
+        elif filename.lower().endswith(('.jpg', '.jpeg')):
+            content_type = "image/jpeg"
+        elif filename.lower().endswith('.png'):
+            content_type = "image/png"
+        elif filename.lower().endswith('.txt'):
+            content_type = "text/plain"
+        elif filename.lower().endswith('.html'):
+            content_type = "text/html"
+        elif filename.lower().endswith('.csv'):
+            content_type = "text/csv"
+        elif filename.lower().endswith('.json'):
+            content_type = "application/json"
+        elif filename.lower().endswith('.xml'):
+            content_type = "application/xml"
+        
+        # Return file as streaming response
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(len(content))
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading document {filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to download document") 

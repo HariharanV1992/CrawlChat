@@ -580,6 +580,28 @@
                             </div>
                             <div class="text-sm text-gray-600 mt-1">Financial market coverage</div>
                         </button>
+                        
+                        <!-- File Download Section -->
+                        <div class="border-t border-gray-200 pt-4 mt-4">
+                            <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
+                                <i class="fas fa-download mr-2 text-blue-600"></i>File Downloads
+                            </h4>
+                            <div class="space-y-3">
+                                <button onclick="showFileDownloadModal()" class="w-full text-left p-3 bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg hover:from-blue-100 hover:to-blue-200 transition-all duration-200 border border-blue-200 hover:border-blue-300 shadow-sm hover:shadow-md">
+                                    <div class="font-semibold text-blue-900 flex items-center">
+                                        <i class="fas fa-file-pdf mr-2 text-blue-600"></i>Download PDF
+                                    </div>
+                                    <div class="text-sm text-blue-700 mt-1">Download PDFs, images, documents</div>
+                                </button>
+                                
+                                <button onclick="setQuickUrl('https://www.sebi.gov.in/reports-and-statistics/reports')" class="w-full text-left p-3 bg-gradient-to-r from-green-50 to-green-100 rounded-lg hover:from-green-100 hover:to-green-200 transition-all duration-200 border border-green-200 hover:border-green-300 shadow-sm hover:shadow-md">
+                                    <div class="font-semibold text-green-900 flex items-center">
+                                        <i class="fas fa-file-alt mr-2 text-green-600"></i>SEBI Reports
+                                    </div>
+                                    <div class="text-sm text-green-700 mt-1">Regulatory reports and documents</div>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -708,6 +730,100 @@
         </div>
     </div>
 
+    <!-- File Download Modal -->
+    <div id="fileDownloadModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="px-6 py-5 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-blue-100">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-lg font-bold text-gray-900 flex items-center">
+                        <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3">
+                            <i class="fas fa-download text-white text-sm"></i>
+                        </div>
+                        Download File
+                    </h3>
+                    <button onclick="hideFileDownloadModal()" class="text-gray-500 hover:text-gray-700">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="p-6">
+                <form id="fileDownloadForm" class="space-y-6">
+                    <!-- File URL -->
+                    <div class="space-y-2">
+                        <label for="fileUrl" class="block text-sm font-semibold text-gray-800">
+                            <i class="fas fa-link mr-2 text-blue-600"></i>
+                            File URL
+                        </label>
+                        <input 
+                            type="url" 
+                            id="fileUrl" 
+                            required
+                            placeholder="https://example.com/document.pdf"
+                            class="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-gray-700 placeholder-gray-400"
+                        >
+                        <p class="text-xs text-gray-500">Enter the direct URL of the file you want to download</p>
+                    </div>
+
+                    <!-- File Type Detection -->
+                    <div id="fileTypeInfo" class="hidden p-4 bg-gray-50 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                            <i class="fas fa-info-circle text-blue-600"></i>
+                            <div>
+                                <div class="font-semibold text-gray-800" id="detectedFileType">PDF Document</div>
+                                <div class="text-sm text-gray-600" id="fileTypeDescription">Portable Document Format</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Advanced Options -->
+                    <div class="border-t border-gray-200 pt-4">
+                        <h4 class="font-semibold text-gray-800 mb-3">Advanced Options</h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="space-y-2">
+                                <label class="flex items-center space-x-2">
+                                    <input type="checkbox" id="premiumProxy" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                    <span class="text-sm text-gray-700">Premium Proxy</span>
+                                </label>
+                                <p class="text-xs text-gray-500">Use premium proxies for better success</p>
+                            </div>
+                            <div class="space-y-2">
+                                <label class="flex items-center space-x-2">
+                                    <input type="checkbox" id="stealthProxy" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                    <span class="text-sm text-gray-700">Stealth Proxy</span>
+                                </label>
+                                <p class="text-xs text-gray-500">Use stealth proxies for hardest sites</p>
+                            </div>
+                            <div class="space-y-2">
+                                <label for="countryCode" class="block text-sm font-semibold text-gray-800">Country</label>
+                                <select id="countryCode" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="in">India</option>
+                                    <option value="us">United States</option>
+                                    <option value="uk">United Kingdom</option>
+                                    <option value="de">Germany</option>
+                                    <option value="fr">France</option>
+                                </select>
+                            </div>
+                            <div class="space-y-2">
+                                <label for="waitTime" class="block text-sm font-semibold text-gray-800">Wait Time (ms)</label>
+                                <input type="number" id="waitTime" value="0" min="0" max="10000" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="flex space-x-3 pt-4">
+                        <button type="submit" class="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 px-6 rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl">
+                            <i class="fas fa-download mr-2"></i>Download File
+                        </button>
+                        <button type="button" onclick="hideFileDownloadModal()" class="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all duration-200">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script>
         let activeTasks = {};
         let isSubmitting = false; // Add flag to prevent double submissions
@@ -735,11 +851,200 @@
                     advancedToggle.querySelector('.fa-chevron-down').style.transform = 'rotate(0deg)';
                 }
             });
+
+            // Setup file download form
+            setupFileDownloadForm();
+        }
+
+        // Notification system
+        function showNotification(message, type = 'info') {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = `fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg max-w-sm transform transition-all duration-300 translate-x-full`;
+            
+            // Set colors based on type
+            const colors = {
+                success: 'bg-green-500 text-white',
+                error: 'bg-red-500 text-white',
+                warning: 'bg-yellow-500 text-white',
+                info: 'bg-blue-500 text-white'
+            };
+            
+            notification.className += ` ${colors[type] || colors.info}`;
+            notification.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : type === 'warning' ? 'exclamation-triangle' : 'info-circle'} mr-3"></i>
+                    <span>${message}</span>
+                    <button onclick="this.parentElement.parentElement.remove()" class="ml-auto text-white hover:text-gray-200">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Animate in
+            setTimeout(() => {
+                notification.classList.remove('translate-x-full');
+            }, 100);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                notification.classList.add('translate-x-full');
+                setTimeout(() => {
+                    if (notification.parentElement) {
+                        notification.remove();
+                    }
+                }, 300);
+            }, 5000);
         }
 
         function setQuickUrl(url) {
             document.getElementById('url').value = url;
             document.querySelector('#crawlForm button[type="submit"]').disabled = false;
+        }
+
+        // File Download Modal Functions
+        function showFileDownloadModal() {
+            document.getElementById('fileDownloadModal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function hideFileDownloadModal() {
+            document.getElementById('fileDownloadModal').classList.add('hidden');
+            document.body.style.overflow = 'auto';
+        }
+
+        // File type detection
+        function detectFileType(url) {
+            const fileExtensions = {
+                '.pdf': { name: 'PDF Document', description: 'Portable Document Format' },
+                '.doc': { name: 'Word Document', description: 'Microsoft Word Document' },
+                '.docx': { name: 'Word Document', description: 'Microsoft Word Document (Modern)' },
+                '.xls': { name: 'Excel Spreadsheet', description: 'Microsoft Excel Spreadsheet' },
+                '.xlsx': { name: 'Excel Spreadsheet', description: 'Microsoft Excel Spreadsheet (Modern)' },
+                '.ppt': { name: 'PowerPoint Presentation', description: 'Microsoft PowerPoint Presentation' },
+                '.pptx': { name: 'PowerPoint Presentation', description: 'Microsoft PowerPoint Presentation (Modern)' },
+                '.jpg': { name: 'JPEG Image', description: 'Joint Photographic Experts Group' },
+                '.jpeg': { name: 'JPEG Image', description: 'Joint Photographic Experts Group' },
+                '.png': { name: 'PNG Image', description: 'Portable Network Graphics' },
+                '.gif': { name: 'GIF Image', description: 'Graphics Interchange Format' },
+                '.txt': { name: 'Text File', description: 'Plain Text Document' },
+                '.csv': { name: 'CSV File', description: 'Comma-Separated Values' },
+                '.json': { name: 'JSON File', description: 'JavaScript Object Notation' },
+                '.xml': { name: 'XML File', description: 'Extensible Markup Language' }
+            };
+
+            const lowerUrl = url.toLowerCase();
+            for (const [ext, info] of Object.entries(fileExtensions)) {
+                if (lowerUrl.includes(ext)) {
+                    return info;
+                }
+            }
+            return { name: 'Unknown File', description: 'File type not detected' };
+        }
+
+        // Setup file download form
+        function setupFileDownloadForm() {
+            const fileUrlInput = document.getElementById('fileUrl');
+            const fileTypeInfo = document.getElementById('fileTypeInfo');
+            const detectedFileType = document.getElementById('detectedFileType');
+            const fileTypeDescription = document.getElementById('fileTypeDescription');
+            const fileDownloadForm = document.getElementById('fileDownloadForm');
+
+            // File type detection on URL input
+            fileUrlInput.addEventListener('input', () => {
+                const url = fileUrlInput.value.trim();
+                if (url) {
+                    const fileInfo = detectFileType(url);
+                    detectedFileType.textContent = fileInfo.name;
+                    fileTypeDescription.textContent = fileInfo.description;
+                    fileTypeInfo.classList.remove('hidden');
+                } else {
+                    fileTypeInfo.classList.add('hidden');
+                }
+            });
+
+            // Handle file download form submission
+            fileDownloadForm.addEventListener('submit', handleFileDownload);
+        }
+
+        // Handle file download
+        async function handleFileDownload(e) {
+            e.preventDefault();
+            
+            const fileUrl = document.getElementById('fileUrl').value.trim();
+            if (!fileUrl) {
+                alert('Please enter a file URL');
+                return;
+            }
+
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Downloading...';
+
+            try {
+                // Build query parameters
+                const params = new URLSearchParams({
+                    url: fileUrl,
+                    render_js: 'false',
+                    download_file: 'true',
+                    premium_proxy: document.getElementById('premiumProxy').checked.toString(),
+                    stealth_proxy: document.getElementById('stealthProxy').checked.toString(),
+                    country_code: document.getElementById('countryCode').value,
+                    wait: document.getElementById('waitTime').value
+                });
+
+                const headers = {};
+                if (window.authToken) {
+                    headers['Authorization'] = `Bearer ${window.authToken}`;
+                }
+
+                console.log('Downloading file from:', fileUrl);
+                console.log('Parameters:', params.toString());
+
+                const response = await fetch(`/api/v1/crawler/download?${params.toString()}`, {
+                    method: 'POST',
+                    headers: headers
+                });
+
+                if (response.ok) {
+                    // Get filename from response headers or generate one
+                    const contentDisposition = response.headers.get('content-disposition');
+                    let filename = 'download';
+                    if (contentDisposition) {
+                        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                        if (filenameMatch && filenameMatch[1]) {
+                            filename = filenameMatch[1].replace(/['"]/g, '');
+                        }
+                    }
+
+                    // Create blob and download
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+
+                    // Show success message
+                    showNotification('File downloaded successfully!', 'success');
+                    hideFileDownloadModal();
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                console.error('File download error:', error);
+                showNotification(`Download failed: ${error.message}`, 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalText;
+            }
         }
 
         async function handleCrawlSubmit(e) {
