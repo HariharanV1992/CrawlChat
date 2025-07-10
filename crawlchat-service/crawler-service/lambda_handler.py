@@ -8,7 +8,7 @@ import sys
 sys.path.append('/var/task/src')
 
 try:
-    from src.crawler.enhanced_crawler_service import EnhancedCrawlerService
+    from crawler.enhanced_crawler_service import EnhancedCrawlerService
 except ImportError as e:
     logging.error(f"Failed to import EnhancedCrawlerService: {e}")
     EnhancedCrawlerService = None

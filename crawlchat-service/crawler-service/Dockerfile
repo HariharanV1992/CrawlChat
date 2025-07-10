@@ -9,7 +9,7 @@ COPY requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 # Copy crawler modules
-COPY src/crawler/ ${LAMBDA_TASK_ROOT}/src/crawler/
+COPY src/crawler/ ${LAMBDA_TASK_ROOT}/crawler/
 
 # Copy crawler handler
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
