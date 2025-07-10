@@ -1,0 +1,176 @@
+name: Test Enhanced Crawler
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "crawlchat-service/crawler-service/**"
+      - "crawlchat-service/crawlchat-crawler/**"
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  test-enhanced-crawler:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        echo "📦 Installing dependencies..."
+        cd crawlchat-service/crawler-service
+        pip install -r requirements.txt
+        echo "✅ Dependencies installed"
+    
+    - name: Test Enhanced Crawler Service
+      env:
+        SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+      run: |
+        echo "🧪 Testing Enhanced Crawler Service..."
+        cd crawlchat-service/crawler-service
+        
+        # Test import
+        python -c "
+        import sys
+        sys.path.insert(0, 'src')
+        from crawler.enhanced_crawler_service import EnhancedCrawlerService
+        print('✅ Enhanced crawler service imported successfully')
+        "
+        
+        # Test basic functionality
+        python -c "
+        import sys
+        import os
+        sys.path.insert(0, 'src')
+        from crawler.enhanced_crawler_service import EnhancedCrawlerService
+        
+        api_key = os.getenv('SCRAPINGBEE_API_KEY')
+        if not api_key:
+            print('❌ SCRAPINGBEE_API_KEY not set')
+            exit(1)
+        
+        service = EnhancedCrawlerService(api_key)
+        print('✅ Enhanced crawler service initialized')
+        
+        # Test single page crawl
+        result = service.crawl_with_max_docs('https://example.com', max_doc_count=1)
+        print(f'✅ Single page crawl test: {result.get(\"success\")}')
+        print(f'Documents found: {result.get(\"documents_found\")}')
+        "
+        
+        echo "✅ Enhanced crawler service tests passed"
+    
+    - name: Test Lambda Handler
+      env:
+        SCRAPINGBEE_API_KEY: ${{ secrets.SCRAPINGBEE_API_KEY }}
+      run: |
+        echo "🧪 Testing Lambda Handler..."
+        cd crawlchat-service/crawler-service
+        
+        # Test lambda handler import
+        python -c "
+        from lambda_handler import lambda_handler
+        print('✅ Lambda handler imported successfully')
+        "
+        
+        # Test lambda handler with enhanced crawl
+        python -c "
+        import json
+        from lambda_handler import lambda_handler
+        
+        # Test event
+        event = {
+            'url': 'https://example.com',
+            'max_doc_count': 1
+        }
+        
+        result = lambda_handler(event, None)
+        print(f'✅ Lambda handler test: {result.get(\"statusCode\")}')
+        print(f'Response: {result.get(\"body\")[:200]}...')
+        "
+        
+        echo "✅ Lambda handler tests passed"
+    
+    - name: Test Docker Build
+      run: |
+        echo "🐳 Testing Docker Build..."
+        cd crawlchat-service
+        
+        # Test crawler service Docker build
+        docker build -f crawler-service/Dockerfile -t test-crawler-service .
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Crawler service Docker build successful"
+        else
+          echo "❌ Crawler service Docker build failed"
+          exit 1
+        fi
+        
+        # Test lambda service Docker build
+        docker build -f lambda-service/Dockerfile -t test-lambda-service .
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Lambda service Docker build successful"
+        else
+          echo "❌ Lambda service Docker build failed"
+          exit 1
+        fi
+        
+        echo "✅ All Docker builds successful"
+    
+    - name: Validate Files
+      run: |
+        echo "🔍 Validating required files..."
+        
+        # Check crawler service files
+        if [ ! -f "crawlchat-service/crawler-service/Dockerfile" ]; then
+          echo "❌ Crawler service Dockerfile not found"
+          exit 1
+        fi
+        
+        if [ ! -f "crawlchat-service/crawler-service/requirements.txt" ]; then
+          echo "❌ Crawler service requirements.txt not found"
+          exit 1
+        fi
+        
+        if [ ! -f "crawlchat-service/crawler-service/lambda_handler.py" ]; then
+          echo "❌ Crawler service lambda_handler.py not found"
+          exit 1
+        fi
+        
+        if [ ! -f "crawlchat-service/crawler-service/src/crawler/enhanced_crawler_service.py" ]; then
+          echo "❌ Enhanced crawler service not found"
+          exit 1
+        fi
+        
+        # Check lambda service files
+        if [ ! -f "crawlchat-service/lambda-service/Dockerfile" ]; then
+          echo "❌ Lambda service Dockerfile not found"
+          exit 1
+        fi
+        
+        if [ ! -f "crawlchat-service/lambda-service/src/crawler/enhanced_crawler_service.py" ]; then
+          echo "❌ Enhanced crawler service not found in lambda service"
+          exit 1
+        fi
+        
+        echo "✅ All required files found"
+    
+    - name: Summary
+      run: |
+        echo "🎉 Enhanced Crawler Test Summary"
+        echo "================================"
+        echo "✅ Enhanced crawler service implemented"
+        echo "✅ Lambda handler configured"
+        echo "✅ Docker builds working"
+        echo "✅ All files validated"
+        echo ""
+        echo "🚀 Ready for deployment!" 

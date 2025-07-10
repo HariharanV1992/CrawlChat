@@ -111,7 +111,6 @@ def handle_crawler_request(event, context):
         
         from crawler.advanced_crawler import AdvancedCrawler, CrawlScenarios
         from crawler.enhanced_scrapingbee_manager import ProxyMode, JavaScriptScenarios
-        from crawler.enhanced_crawler_service import EnhancedCrawlerService
         
         logger.info("Crawler modules imported successfully")
         
@@ -125,13 +124,6 @@ def handle_crawler_request(event, context):
             }
         
         logger.info(f"Processing URL: {url}")
-        
-        # Check if this is an enhanced crawl request
-        max_doc_count = event.get('max_doc_count')
-        if max_doc_count is not None:
-            # Use enhanced crawler service
-            logger.info(f"Using enhanced crawler with max_doc_count: {max_doc_count}")
-            return handle_enhanced_crawl_request(event, context)
         
         content_type = event.get('content_type', 'generic')
         use_js_scenario = event.get('use_js_scenario', False)
@@ -236,74 +228,6 @@ def handle_crawler_request(event, context):
                 'error': str(e),
                 'traceback': traceback.format_exc(),
                 'partial_stats': partial_stats
-            })
-        }
-
-def handle_enhanced_crawl_request(event, context):
-    """Handle enhanced crawler requests with max document count."""
-    try:
-        logger.info("Processing enhanced crawler request...")
-        
-        # Extract parameters
-        url = event.get('url')
-        max_doc_count = event.get('max_doc_count', 1)
-        
-        if not url:
-            logger.error("URL is required but not provided")
-            return {
-                'statusCode': 400,
-                'body': json.dumps({'error': 'URL is required'})
-            }
-        
-        logger.info(f"Processing enhanced crawl for URL: {url} with max_doc_count: {max_doc_count}")
-        
-        # Initialize enhanced crawler service
-        api_key = os.getenv('SCRAPINGBEE_API_KEY')
-        if not api_key:
-            logger.error("SCRAPINGBEE_API_KEY not configured")
-            return {
-                'statusCode': 500,
-                'body': json.dumps({'error': 'SCRAPINGBEE_API_KEY not configured'})
-            }
-        
-        logger.info("Initializing EnhancedCrawlerService...")
-        
-        enhanced_service = EnhancedCrawlerService(api_key)
-        
-        # Perform enhanced crawl
-        result = enhanced_service.crawl_with_max_docs(url, max_doc_count)
-        
-        # Prepare response
-        response_body = {
-            'success': result.get('success', False),
-            'url': url,
-            'max_doc_count': max_doc_count,
-            'documents_found': result.get('documents_found', 0),
-            'total_pages': result.get('total_pages', 0),
-            'total_documents': result.get('total_documents', 0),
-            'documents': result.get('documents', []),
-            'crawl_time': result.get('crawl_time'),
-            'enhanced_crawl': True
-        }
-        
-        if not result.get('success'):
-            response_body['error'] = result.get('error')
-        
-        logger.info(f"Enhanced crawl completed for {url}: {result.get('documents_found', 0)} documents found")
-        return {
-            'statusCode': 200,
-            'body': json.dumps(response_body, default=str)
-        }
-        
-    except Exception as e:
-        error_msg = f"Error in enhanced crawler handler: {e}"
-        logger.error(error_msg, exc_info=True)
-        
-        return {
-            'statusCode': 500,
-            'body': json.dumps({
-                'error': str(e),
-                'traceback': traceback.format_exc()
             })
         }
 

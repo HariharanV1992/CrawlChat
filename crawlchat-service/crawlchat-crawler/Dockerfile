@@ -16,7 +16,6 @@ COPY lambda-service/main.py ${LAMBDA_TASK_ROOT}/
 
 # Copy crawler modules
 COPY lambda-service/src/crawler/ ${LAMBDA_TASK_ROOT}/src/crawler/
-COPY lambda-service/src/crawler/enhanced_crawler_service.py ${LAMBDA_TASK_ROOT}/src/crawler/
 
 # Copy centralized UI
 COPY ui/templates/ ${LAMBDA_TASK_ROOT}/templates/

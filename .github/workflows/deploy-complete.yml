@@ -142,7 +142,7 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        echo "🐳 Building Crawler image..."
+        echo "🐳 Building Enhanced Crawler image..."
         echo "📋 Build context: $(pwd)"
         echo "📋 Dockerfile path: crawler-service/Dockerfile"
         echo "📋 ECR Registry: $ECR_REGISTRY"
@@ -152,6 +152,14 @@ jobs:
         echo "📋 Changed to directory: $(pwd)"
         echo "📋 Crawler service contents:"
         ls -la crawler-service/
+        
+        # Verify enhanced crawler service exists
+        if [ ! -f "crawler-service/src/crawler/enhanced_crawler_service.py" ]; then
+          echo "❌ Enhanced crawler service not found!"
+          exit 1
+        fi
+        
+        echo "✅ Enhanced crawler service found"
         
         docker build --no-cache -f crawler-service/Dockerfile -t $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG .
         
@@ -164,12 +172,12 @@ jobs:
         
         docker tag $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:latest
         
-        echo "📤 Pushing Crawler image..."
+        echo "📤 Pushing Enhanced Crawler image..."
         docker push $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG
         docker push $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:latest
         
         echo "crawler-image=$ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        echo "✅ Crawler image built and pushed"
+        echo "✅ Enhanced Crawler image built and pushed"
 
   # Add debug job to print outputs
   debug-print-lambda-image:
@@ -472,4 +480,41 @@ jobs:
       run: |
         echo "⏳ Waiting for functions to be ready..."
         sleep 30
-        echo "✅ Function tests completed" 
+    
+    - name: Test Enhanced Crawler Function
+      run: |
+        echo "🧪 Testing Enhanced Crawler Function..."
+        
+        # Test enhanced crawler with max_doc_count=1
+        echo "Testing single page crawl..."
+        aws lambda invoke \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --payload '{"url": "https://example.com", "max_doc_count": 1}' \
+          --region ${{ env.AWS_REGION }} \
+          response.json
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Enhanced crawler test passed"
+          cat response.json
+        else
+          echo "❌ Enhanced crawler test failed"
+          exit 1
+        fi
+        
+        # Test enhanced crawler with max_doc_count=3
+        echo "Testing multi-page crawl..."
+        aws lambda invoke \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --payload '{"url": "https://www.irs.gov/forms-pubs", "max_doc_count": 3}' \
+          --region ${{ env.AWS_REGION }} \
+          response2.json
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Multi-page crawler test passed"
+          cat response2.json
+        else
+          echo "❌ Multi-page crawler test failed"
+          exit 1
+        fi
+        
+        echo "✅ All crawler tests completed successfully" 

@@ -44,10 +44,27 @@ def get_auth_service_lazy():
 # Import API routers
 from common.src.api.v1.auth import router as auth_router
 from common.src.api.v1.chat import router as chat_router
-from common.src.api.v1.crawler import router as crawler_router
 from common.src.api.v1.documents import router as documents_router
 from common.src.api.v1.vector_store import router as vector_store_router
 from common.src.api.v1.preprocessing import router as preprocessing_router
+
+# Import crawler router from new location
+try:
+    import sys
+    import os
+    # Add the crawler path to sys.path
+    crawler_path = os.path.join(os.path.dirname(__file__), '..', 'crawlchat-crawler', 'src')
+    sys.path.insert(0, crawler_path)
+    from crawler_router import router as crawler_router
+    logger.info("Successfully imported crawler router")
+except ImportError as e:
+    logger.warning(f"Failed to import crawler router: {e}")
+    # Fallback for when crawler is not available
+    from fastapi import APIRouter
+    crawler_router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
+    @crawler_router.get("/health")
+    async def crawler_health():
+        return {"status": "crawler_not_available", "error": str(e)}
 
 # Setup logger
 logger = logging.getLogger(__name__)
