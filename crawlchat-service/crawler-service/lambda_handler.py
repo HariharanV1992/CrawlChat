@@ -3,63 +3,104 @@ import logging
 import os
 from typing import Dict, Any, Optional
 import sys
+import uuid
+from datetime import datetime
 
 # Add the src directory to the Python path
 sys.path.append('/var/task/src')
 
 try:
-    from crawler.enhanced_crawler_service import EnhancedCrawlerService
+    from services.sqs_helper import SQSHelper
+    from core.database import mongodb
+    from core.config import config
 except ImportError as e:
-    logging.error(f"Failed to import EnhancedCrawlerService: {e}")
-    EnhancedCrawlerService = None
+    logging.error(f"Failed to import required modules: {e}")
+    SQSHelper = None
+    mongodb = None
+    config = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize the enhanced crawler service
-crawler_service = None
+# Initialize services
+sqs_helper = None
+if SQSHelper:
+    try:
+        sqs_helper = SQSHelper()
+        logger.info("SQS helper initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize SQS helper: {e}")
 
-def get_crawler_service() -> Optional[EnhancedCrawlerService]:
-    """Get or create the enhanced crawler service instance."""
-    global crawler_service
-    if crawler_service is None and EnhancedCrawlerService:
-        try:
-            # Get API key from environment variable
-            api_key = os.environ.get('SCRAPINGBEE_API_KEY')
-            if not api_key:
-                logger.warning("SCRAPINGBEE_API_KEY not found in environment variables")
-                api_key = "demo_key"  # Fallback for testing
+def get_mongodb():
+    """Get MongoDB connection."""
+    if not mongodb:
+        logger.error("MongoDB not available")
+        return None
+    return mongodb
+
+async def store_crawl_task(task_id: str, url: str, max_doc_count: int, user_id: str = "default") -> bool:
+    """Store crawl task in MongoDB."""
+    try:
+        db = get_mongodb()
+        if not db:
+            return False
             
-            crawler_service = EnhancedCrawlerService(api_key)
-            logger.info("Enhanced crawler service initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize crawler service: {e}")
-            return None
-    return crawler_service
+        await db.connect()
+        collection = db.get_collection("crawl_tasks")
+        
+        task_data = {
+            "task_id": task_id,
+            "url": url,
+            "max_doc_count": max_doc_count,
+            "user_id": user_id,
+            "status": "pending",
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        await collection.insert_one(task_data)
+        logger.info(f"Stored crawl task {task_id} in MongoDB")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to store crawl task: {e}")
+        return False
+
+async def update_task_status(task_id: str, status: str, result: Dict = None):
+    """Update task status in MongoDB."""
+    try:
+        db = get_mongodb()
+        if not db:
+            return False
+            
+        await db.connect()
+        collection = db.get_collection("crawl_tasks")
+        
+        update_data = {
+            "status": status,
+            "updated_at": datetime.utcnow()
+        }
+        
+        if result:
+            update_data["result"] = result
+            
+        await collection.update_one(
+            {"task_id": task_id},
+            {"$set": update_data}
+        )
+        logger.info(f"Updated task {task_id} status to {status}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to update task status: {e}")
+        return False
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    AWS Lambda handler for enhanced crawler service.
+    AWS Lambda handler for crawler service.
     
-    Supports both direct invocation and HTTP API Gateway events.
-    
-    Direct invocation format:
-    {
-        "url": "https://example.com",
-        "max_doc_count": 3
-    }
-    
-    HTTP API Gateway format:
-    {
-        "httpMethod": "POST",
-        "path": "/crawl",
-        "queryStringParameters": {
-            "url": "https://example.com",
-            "max_doc_count": "3"
-        },
-        "body": "{}"
-    }
+    This handler creates crawl tasks and sends them to SQS queue for processing.
     """
     try:
         logger.info(f"Received event: {json.dumps(event, default=str, ensure_ascii=False)}")
@@ -86,6 +127,7 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
         # Extract parameters from direct event
         url = event.get('url')
         max_doc_count = event.get('max_doc_count', 1)
+        user_id = event.get('user_id', 'default')
         
         if not url:
             return {
@@ -100,23 +142,56 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
         except (ValueError, TypeError):
             max_doc_count = 1
         
-        logger.info(f"Starting direct crawl for URL: {url}, max_doc_count: {max_doc_count}")
+        # Generate task ID
+        task_id = str(uuid.uuid4())
         
-        # Get crawler service and perform crawl
-        service = get_crawler_service()
-        if not service:
-            return {
-                'statusCode': 500,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'Crawler service not available'}, ensure_ascii=False)
-            }
+        logger.info(f"Creating crawl task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
         
-        result = service.crawl_with_max_docs(url, max_doc_count)
+        # Store task in MongoDB
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(store_crawl_task(task_id, url, max_doc_count, user_id))
+            if not success:
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Failed to store task in database'}, ensure_ascii=False)
+                }
+        finally:
+            loop.close()
+        
+        # Send task to SQS queue
+        if sqs_helper:
+            try:
+                sqs_helper.send_crawl_task(task_id, user_id)
+                logger.info(f"Sent crawl task {task_id} to SQS queue")
+            except Exception as e:
+                logger.error(f"Failed to send task to SQS: {e}")
+                # Update task status to failed
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
+                finally:
+                    loop.close()
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
+                }
+        else:
+            logger.warning("SQS helper not available, task not queued")
         
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result, default=str, ensure_ascii=False)
+            'body': json.dumps({
+                'task_id': task_id,
+                'status': 'queued',
+                'message': 'Crawl task created and queued for processing'
+            }, ensure_ascii=False)
         }
     
     except Exception as e:
@@ -124,7 +199,7 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': f'Crawl failed: {str(e)}'}, ensure_ascii=False)
+            'body': json.dumps({'error': f'Task creation failed: {str(e)}'}, ensure_ascii=False)
         }
 
 def handle_http_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -139,14 +214,17 @@ def handle_http_event(event: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'status': 'healthy', 'service': 'enhanced_crawler'}, ensure_ascii=False)
+                'body': json.dumps({'status': 'healthy', 'service': 'crawler_service'}, ensure_ascii=False)
             }
         
-        elif path == '/crawl' and http_method == 'POST':
-            return handle_http_crawl_request(event)
+        elif path == '/tasks' and http_method == 'POST':
+            return handle_http_task_creation(event)
         
         elif path.startswith('/tasks/') and path.endswith('/start') and http_method == 'POST':
             return handle_http_task_start(event)
+        
+        elif path.startswith('/tasks/') and http_method == 'GET':
+            return handle_http_task_status(event)
         
         else:
             return {
@@ -163,13 +241,17 @@ def handle_http_event(event: Dict[str, Any]) -> Dict[str, Any]:
             'body': json.dumps({'error': f'HTTP handler error: {str(e)}'}, ensure_ascii=False)
         }
 
-def handle_http_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle HTTP crawl requests."""
+def handle_http_task_creation(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle HTTP task creation requests."""
     try:
-        # Parse query parameters
-        query_params = event.get('queryStringParameters', {}) or {}
-        url = query_params.get('url')
-        max_doc_count = query_params.get('max_doc_count', '1')
+        # Parse request body
+        body = event.get('body', '{}')
+        if isinstance(body, str):
+            body = json.loads(body)
+        
+        url = body.get('url')
+        max_doc_count = body.get('max_doc_count', 1)
+        user_id = body.get('user_id', 'default')
         
         if not url:
             return {
@@ -178,37 +260,70 @@ def handle_http_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
                 'body': json.dumps({'error': 'URL parameter is required'}, ensure_ascii=False)
             }
         
-        # Parse max_doc_count
+        # Ensure max_doc_count is an integer
         try:
             max_doc_count = int(max_doc_count)
-        except ValueError:
+        except (ValueError, TypeError):
             max_doc_count = 1
         
-        logger.info(f"Starting HTTP crawl for URL: {url}, max_doc_count: {max_doc_count}")
+        # Generate task ID
+        task_id = str(uuid.uuid4())
         
-        # Get crawler service and perform crawl
-        service = get_crawler_service()
-        if not service:
-            return {
-                'statusCode': 500,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'Crawler service not available'}, ensure_ascii=False)
-            }
+        logger.info(f"Creating HTTP crawl task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
         
-        result = service.crawl_with_max_docs(url, max_doc_count)
+        # Store task in MongoDB
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(store_crawl_task(task_id, url, max_doc_count, user_id))
+            if not success:
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Failed to store task in database'}, ensure_ascii=False)
+                }
+        finally:
+            loop.close()
+        
+        # Send task to SQS queue
+        if sqs_helper:
+            try:
+                sqs_helper.send_crawl_task(task_id, user_id)
+                logger.info(f"Sent crawl task {task_id} to SQS queue")
+            except Exception as e:
+                logger.error(f"Failed to send task to SQS: {e}")
+                # Update task status to failed
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
+                finally:
+                    loop.close()
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
+                }
+        else:
+            logger.warning("SQS helper not available, task not queued")
         
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result, default=str, ensure_ascii=False)
+            'body': json.dumps({
+                'task_id': task_id,
+                'status': 'queued',
+                'message': 'Crawl task created and queued for processing'
+            }, ensure_ascii=False)
         }
     
     except Exception as e:
-        logger.error(f"Error in handle_http_crawl_request: {str(e)}", exc_info=True)
+        logger.error(f"Error in handle_http_task_creation: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': f'HTTP crawl failed: {str(e)}'}, ensure_ascii=False)
+            'body': json.dumps({'error': f'Task creation failed: {str(e)}'}, ensure_ascii=False)
         }
 
 def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -218,47 +333,111 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         path = event.get('path', '')
         task_id = path.split('/tasks/')[1].split('/start')[0]
         
-        # Parse query parameters
-        query_params = event.get('queryStringParameters', {}) or {}
-        max_doc_count = query_params.get('max_doc_count', '1')
+        logger.info(f"Starting HTTP task {task_id}")
         
-        # Parse max_doc_count
-        try:
-            max_doc_count = int(max_doc_count)
-        except ValueError:
-            max_doc_count = 1
-        
-        # For now, we'll use a mock URL - in a real implementation, 
-        # you'd get the task details from a database
-        url = "https://example.com"  # This should come from task storage
-        
-        logger.info(f"Starting HTTP task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
-        
-        # Get crawler service and perform crawl
-        service = get_crawler_service()
-        if not service:
+        # Send task to SQS queue for processing
+        if sqs_helper:
+            try:
+                sqs_helper.send_crawl_task(task_id, "default")
+                logger.info(f"Sent crawl task {task_id} to SQS queue")
+                
+                # Update task status to queued
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(update_task_status(task_id, "queued"))
+                finally:
+                    loop.close()
+                
+                return {
+                    'statusCode': 200,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({
+                        'task_id': task_id,
+                        'status': 'queued',
+                        'message': 'Task queued for processing'
+                    }, ensure_ascii=False)
+                }
+            except Exception as e:
+                logger.error(f"Failed to send task to SQS: {e}")
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
+                }
+        else:
+            logger.warning("SQS helper not available")
             return {
                 'statusCode': 500,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'Crawler service not available'}, ensure_ascii=False)
+                'body': json.dumps({'error': 'SQS service not available'}, ensure_ascii=False)
             }
-        
-        result = service.crawl_with_max_docs(url, max_doc_count)
-        
-        # Add task information to result
-        result['task_id'] = task_id
-        result['status'] = 'completed'
-        
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result, default=str, ensure_ascii=False)
-        }
     
     except Exception as e:
         logger.error(f"Error in handle_http_task_start: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': f'HTTP task start failed: {str(e)}'}, ensure_ascii=False)
+            'body': json.dumps({'error': f'Task start failed: {str(e)}'}, ensure_ascii=False)
+        }
+
+def handle_http_task_status(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle HTTP task status requests."""
+    try:
+        # Extract task ID from path
+        path = event.get('path', '')
+        task_id = path.split('/tasks/')[1]
+        
+        logger.info(f"Getting status for task {task_id}")
+        
+        # Get task status from MongoDB
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            db = get_mongodb()
+            if not db:
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Database not available'}, ensure_ascii=False)
+                }
+            
+            loop.run_until_complete(db.connect())
+            collection = db.get_collection("crawl_tasks")
+            
+            task = loop.run_until_complete(collection.find_one({"task_id": task_id}))
+            if not task:
+                return {
+                    'statusCode': 404,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Task not found'}, ensure_ascii=False)
+                }
+            
+            # Convert ObjectId to string for JSON serialization
+            task['_id'] = str(task['_id'])
+            
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps(task, default=str, ensure_ascii=False)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get task status: {e}")
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': f'Failed to get task status: {str(e)}'}, ensure_ascii=False)
+            }
+        finally:
+            loop.close()
+    
+    except Exception as e:
+        logger.error(f"Error in handle_http_task_status: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'error': f'Task status check failed: {str(e)}'}, ensure_ascii=False)
         } 
