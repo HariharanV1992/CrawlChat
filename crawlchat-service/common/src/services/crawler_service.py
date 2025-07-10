@@ -459,7 +459,6 @@ class CrawlerService:
                 # Save content to temporary file for S3 upload
                 if results.get('content'):
                     import tempfile
-                    import os
                     from pathlib import Path
                     
                     # Create temporary file
