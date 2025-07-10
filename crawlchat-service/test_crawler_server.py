@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 crawler_path = os.path.join(os.path.dirname(__file__), 'crawlchat-crawler', 'src')
 sys.path.insert(0, crawler_path)
 from crawler.advanced_crawler import AdvancedCrawler
+from crawler.link_extractor import LinkExtractor
 
 # Mock storage for tasks
 mock_tasks = {}
@@ -517,7 +518,7 @@ async def health():
 try:
     from crawler_router import router as crawler_router
     logger.info("Successfully imported crawler router")
-    app.include_router(crawler_router)
+    app.include_router(crawler_router, prefix="/api/v1/crawler")
 except ImportError as e:
     logger.error(f"Failed to import crawler router: {e}")
     
@@ -527,11 +528,11 @@ except ImportError as e:
     
     @fallback_router.get("/health")
     async def crawler_health_fallback():
-        return {"status": "crawler_not_available", "error": str(e)}
+        return {"status": "crawler_not_available", "error": "Crawler router not available"}
     
     @fallback_router.get("/config")
     async def crawler_config_fallback():
-        return {"status": "crawler_not_available", "error": str(e)}
+        return {"status": "crawler_not_available", "error": "Crawler router not available"}
     
     app.include_router(fallback_router)
 

@@ -1,1 +1,1 @@
-{"statusCode": 500, "headers": {"Content-Type": "application/json"}, "body": "{\"error\": \"Failed to store task in database\"}"}
+{"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"status\": \"healthy\", \"service\": \"crawler_service\"}"}

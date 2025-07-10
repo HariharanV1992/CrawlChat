@@ -15,29 +15,35 @@ sys.path.insert(0, os.path.join(current_dir, '..'))
 
 logger = logging.getLogger(__name__)
 
+# Import crawler modules with fallback
 try:
-    # Try absolute imports first
     from crawler.advanced_crawler import AdvancedCrawler
-    from config.crawler_config import CrawlerConfig
-    logger.info("Successfully imported crawler modules with absolute imports")
+    logger.info("Successfully imported AdvancedCrawler")
 except ImportError as e:
-    logger.warning(f"Failed to import crawler modules with absolute imports: {e}")
+    logger.warning(f"Failed to import AdvancedCrawler: {e}")
+    # Create dummy class for fallback
+    class AdvancedCrawler:
+        def __init__(self, api_key):
+            self.api_key = api_key
+        def crawl_url(self, url, **kwargs):
+            return {"success": False, "error": "Crawler not available"}
+        def close(self):
+            pass
+
+try:
+    from config.crawler_config import CrawlerConfig
+    logger.info("Successfully imported CrawlerConfig")
+except ImportError as e:
+    logger.warning(f"Failed to import CrawlerConfig from config.crawler_config: {e}")
     try:
-        # Try relative imports as fallback
-        from .crawler.advanced_crawler import AdvancedCrawler
-        from ..config.crawler_config import CrawlerConfig
-        logger.info("Successfully imported crawler modules with relative imports")
+        # Try alternative path
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'config')
+        sys.path.insert(0, config_path)
+        from crawler_config import CrawlerConfig
+        logger.info("Successfully imported CrawlerConfig from alternative path")
     except ImportError as e2:
-        logger.error(f"Failed to import crawler modules with relative imports: {e2}")
-        # Create dummy classes for fallback
-        class AdvancedCrawler:
-            def __init__(self, api_key):
-                self.api_key = api_key
-            def crawl_url(self, url, **kwargs):
-                return {"success": False, "error": "Crawler not available"}
-            def close(self):
-                pass
-        
+        logger.error(f"Failed to import CrawlerConfig from alternative path: {e2}")
+        # Create dummy class for fallback
         class CrawlerConfig:
             SCRAPINGBEE_API_KEY = None
             @staticmethod
