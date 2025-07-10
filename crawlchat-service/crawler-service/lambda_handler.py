@@ -9,6 +9,12 @@ import boto3
 import motor.motor_asyncio
 import asyncio
 
+# Add the crawler path to sys.path
+current_dir = os.path.dirname(__file__)
+crawler_path = os.path.join(current_dir, 'src', 'crawler')
+sys.path.insert(0, crawler_path)
+sys.path.insert(0, current_dir)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,9 +24,18 @@ AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
 SQS_QUEUE_NAME = os.getenv("CRAWLCHAT_SQS_QUEUE", "crawlchat-crawl-tasks")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 MONGODB_DB = os.getenv("DB_NAME", "stock_market_crawler")
+SCRAPINGBEE_API_KEY = os.getenv("SCRAPINGBEE_API_KEY", "")
 
 # Initialize AWS clients
 sqs_client = boto3.client("sqs", region_name=AWS_REGION)
+
+# Import enhanced crawler service
+try:
+    from src.crawler.enhanced_crawler_service import EnhancedCrawlerService
+    logger.info("Successfully imported EnhancedCrawlerService")
+except ImportError as e:
+    logger.error(f"Failed to import EnhancedCrawlerService: {e}")
+    EnhancedCrawlerService = None
 
 class SQSHelper:
     def __init__(self, queue_name=SQS_QUEUE_NAME):
@@ -425,43 +440,73 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         
         logger.info(f"Starting HTTP task {task_id}")
         
-        # Send task to SQS queue for processing
-        if sqs_helper:
-            try:
-                sqs_helper.send_crawl_task(task_id, "default")
-                logger.info(f"Sent crawl task {task_id} to SQS queue")
-                
-                # Update task status to queued
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(update_task_status(task_id, "queued"))
-                finally:
-                    loop.close()
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({
-                        'task_id': task_id,
-                        'status': 'queued',
-                        'message': 'Task queued for processing'
-                    }, ensure_ascii=False)
-                }
-            except Exception as e:
-                logger.error(f"Failed to send task to SQS: {e}")
+        # Get task details from MongoDB
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            if not mongodb:
                 return {
                     'statusCode': 500,
                     'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
+                    'body': json.dumps({'error': 'Database not available'}, ensure_ascii=False)
                 }
-        else:
-            logger.warning("SQS helper not available")
-            return {
-                'statusCode': 500,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'SQS service not available'}, ensure_ascii=False)
-            }
+            
+            loop.run_until_complete(mongodb.connect())
+            collection = mongodb.get_collection("crawl_tasks")
+            
+            task = loop.run_until_complete(collection.find_one({"task_id": task_id}))
+            if not task:
+                return {
+                    'statusCode': 404,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Task not found'}, ensure_ascii=False)
+                }
+            
+            url = task['url']
+            max_doc_count = task['max_doc_count']
+            user_id = task['user_id']
+            
+            # Initialize EnhancedCrawlerService
+            if EnhancedCrawlerService and SCRAPINGBEE_API_KEY:
+                crawler = EnhancedCrawlerService(api_key=SCRAPINGBEE_API_KEY)
+                
+                # Start crawling
+                logger.info(f"Starting enhanced crawling for task {task_id} with URL: {url}, max_doc_count: {max_doc_count}")
+                try:
+                    result = crawler.crawl_with_max_docs(url, max_doc_count=max_doc_count)
+                    logger.info(f"Enhanced crawling for task {task_id} completed: {len(result.get('documents', []))} documents found")
+                    
+                    # Update task status to completed
+                    loop.run_until_complete(update_task_status(task_id, "completed", result))
+                    
+                    return {
+                        'statusCode': 200,
+                        'headers': {'Content-Type': 'application/json'},
+                        'body': json.dumps({
+                            'task_id': task_id,
+                            'status': 'completed',
+                            'message': f'Crawl completed successfully! {len(result.get("documents", []))} document(s) downloaded and ready for analysis.',
+                            'result': result
+                        }, ensure_ascii=False)
+                    }
+                except Exception as e:
+                    logger.error(f"Enhanced crawling for task {task_id} failed: {e}")
+                    # Update task status to failed
+                    loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
+                    return {
+                        'statusCode': 500,
+                        'headers': {'Content-Type': 'application/json'},
+                        'body': json.dumps({'error': f'Enhanced crawling failed: {str(e)}'}, ensure_ascii=False)
+                    }
+            else:
+                logger.error("EnhancedCrawlerService or SCRAPINGBEE_API_KEY not available, cannot start crawling.")
+                return {
+                    'statusCode': 500,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Enhanced crawling service not available'}, ensure_ascii=False)
+                }
+        finally:
+            loop.close()
     
     except Exception as e:
         logger.error(f"Error in handle_http_task_start: {str(e)}", exc_info=True)
