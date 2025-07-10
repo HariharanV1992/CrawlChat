@@ -444,21 +444,208 @@ jobs:
           --region ${{ env.AWS_REGION }}
         echo "✅ Environment variables updated"
     
-    - name: Update Crawler function (if exists)
+    - name: Update Crawler function
       run: |
         echo "🔄 Updating Crawler function..."
-        if aws lambda get-function --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
-          aws lambda update-function-code \
-            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-            --image-uri ${{ needs.build-and-push.outputs.crawler-image }} \
-            --region ${{ env.AWS_REGION }}
-          
-          aws lambda wait function-updated \
-            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-            --region ${{ env.AWS_REGION }}
-          
-          echo "✅ Crawler function updated"
-        else
-          echo "⚠️ Crawler function not found - skipping"
+        echo "📋 Crawler Image URI: ${{ needs.build-and-push.outputs.crawler-image }}"
+        
+        # Validate that we have a valid crawler image URI
+        CRAWLER_IMAGE_URI="${{ needs.build-and-push.outputs.crawler-image }}"
+        if [ -z "$CRAWLER_IMAGE_URI" ]; then
+          echo "❌ Crawler Image URI is empty - cannot update crawler function"
+          exit 1
         fi
+        
+        # Validate that the crawler image exists in ECR
+        echo "🔍 Validating crawler image exists in ECR..."
+        IMAGE_TAG=$(echo "$CRAWLER_IMAGE_URI" | sed 's/.*://')
+        REPO_NAME=$(echo "$CRAWLER_IMAGE_URI" | sed 's/.*\///' | sed 's/:.*//')
+        
+        if ! aws ecr describe-images --repository-name $REPO_NAME --image-ids imageTag=$IMAGE_TAG --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+          echo "❌ Crawler image not found in ECR - cannot update function"
+          exit 1
+        fi
+        
+        echo "✅ Crawler image validation successful"
+        
+        # Update the crawler function
+        aws lambda update-function-code \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --image-uri $CRAWLER_IMAGE_URI \
+          --region ${{ env.AWS_REGION }}
+        
+        echo "⏳ Waiting for Crawler function update..."
+        aws lambda wait function-updated \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --region ${{ env.AWS_REGION }}
+        
+        echo "✅ Crawler function updated successfully"
+        
+        # Verify the update
+        echo "🔍 Verifying crawler function update..."
+        UPDATED_IMAGE=$(aws lambda get-function \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'Code.ImageUri' \
+          --output text)
+        
+        echo "📋 Updated crawler function image: $UPDATED_IMAGE"
+        
+        if [ "$UPDATED_IMAGE" = "$CRAWLER_IMAGE_URI" ]; then
+          echo "✅ Crawler function update verified"
+        else
+          echo "❌ Crawler function update verification failed"
+          echo "Expected: $CRAWLER_IMAGE_URI"
+          echo "Actual: $UPDATED_IMAGE"
+          exit 1
+        fi
+
+  test-deployment:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-infrastructure, deploy-lambda-functions]
+    if: ${{ github.event.inputs.deploy_lambda != 'false' || github.event_name == 'push' }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Test Lambda API function
+      run: |
+        echo "🧪 Testing Lambda API function..."
+        
+        # Test health endpoint
+        echo "📋 Testing health endpoint..."
+        aws lambda invoke \
+          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --payload '{"httpMethod": "GET", "path": "/health"}' \
+          --region ${{ env.AWS_REGION }} \
+          response.json
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Lambda API function test successful"
+          cat response.json
+        else
+          echo "❌ Lambda API function test failed"
+          exit 1
+        fi
+    
+    - name: Test Crawler function
+      run: |
+        echo "🧪 Testing Crawler function..."
+        
+        # Test crawler health endpoint
+        echo "📋 Testing crawler health endpoint..."
+        aws lambda invoke \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --payload '{"httpMethod": "GET", "path": "/health"}' \
+          --region ${{ env.AWS_REGION }} \
+          crawler_response.json
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Crawler function test successful"
+          cat crawler_response.json
+        else
+          echo "❌ Crawler function test failed"
+          exit 1
+        fi
+        
+        # Test crawler task creation
+        echo "📋 Testing crawler task creation..."
+        aws lambda invoke \
+          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+          --payload '{"url": "https://example.com", "max_doc_count": 1}' \
+          --region ${{ env.AWS_REGION }} \
+          task_response.json
+        
+                 if [ $? -eq 0 ]; then
+           echo "✅ Crawler task creation test successful"
+           cat task_response.json
+         else
+           echo "❌ Crawler task creation test failed"
+           exit 1
+         fi
+
+  deployment-summary:
+    runs-on: ubuntu-latest
+    needs: [deploy-infrastructure, deploy-lambda-functions, test-deployment]
+    if: always()
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Deployment Summary
+      run: |
+        echo "🎉 CrawlChat Deployment Summary"
+        echo "================================"
+        echo ""
+        echo "📋 Infrastructure Status:"
+        if [ "${{ needs.deploy-infrastructure.result }}" = "success" ]; then
+          echo "✅ Infrastructure deployed successfully"
+          
+          # Get API Gateway URL
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' \
+            --output text 2>/dev/null || echo "Not available")
+          
+          echo "🌐 API Gateway URL: $API_URL"
+        else
+          echo "❌ Infrastructure deployment failed"
+        fi
+        
+        echo ""
+        echo "📋 Lambda Functions Status:"
+        if [ "${{ needs.deploy-lambda-functions.result }}" = "success" ]; then
+          echo "✅ Lambda functions updated successfully"
+          
+          # Get function details
+          echo "🔧 Lambda API Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+          echo "🔧 Crawler Function: ${{ env.CRAWLER_FUNCTION_NAME }}"
+          
+          # Get current image URIs
+          LAMBDA_IMAGE=$(aws lambda get-function \
+            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Code.ImageUri' \
+            --output text 2>/dev/null || echo "Not available")
+          
+          CRAWLER_IMAGE=$(aws lambda get-function \
+            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Code.ImageUri' \
+            --output text 2>/dev/null || echo "Not available")
+          
+          echo "🐳 Lambda API Image: $LAMBDA_IMAGE"
+          echo "🐳 Crawler Image: $CRAWLER_IMAGE"
+        else
+          echo "❌ Lambda functions update failed"
+        fi
+        
+        echo ""
+        echo "📋 Test Results:"
+        if [ "${{ needs.test-deployment.result }}" = "success" ]; then
+          echo "✅ All tests passed"
+        else
+          echo "❌ Some tests failed"
+        fi
+        
+        echo ""
+        echo "🚀 Deployment completed!"
+        echo "📝 Commit: ${{ github.sha }}"
+        echo "📝 Branch: ${{ github.ref_name }}"
+        echo "📝 Triggered by: ${{ github.actor }}"
 
