@@ -3,7 +3,7 @@ Crawler API router for integration with main FastAPI application
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, Body
 from typing import Dict, Any
 import os
 import sys
@@ -126,7 +126,7 @@ async def get_crawler_config():
 
 # Add the missing endpoints that the UI expects
 @router.post("/tasks")
-async def create_task(request: Dict[str, Any]):
+async def create_task(request_data: Dict[str, Any] = Body(...)):
     """Create a new crawler task."""
     try:
         import uuid
