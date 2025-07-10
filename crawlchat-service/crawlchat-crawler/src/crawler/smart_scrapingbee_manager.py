@@ -9,7 +9,7 @@ import json
 from typing import Optional, Dict, Any, Tuple
 from urllib.parse import urlparse
 import urllib3
-from .s3_cache_manager import S3CacheManager
+from crawler.s3_cache_manager import S3CacheManager
 
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)

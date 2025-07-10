@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
-from .utils import load_settings_from_file, get_optimal_thread_count, get_optimal_delay
+from crawler.utils import load_settings_from_file, get_optimal_thread_count, get_optimal_delay
 
 logger = logging.getLogger(__name__)
 

@@ -3,13 +3,13 @@ Advanced Stock Market Web Crawler Package
 A high-performance async web crawler with proxy support and intelligent document detection.
 """
 
-from .advanced_crawler import AdvancedCrawler
-from .file_downloader import FileDownloader
-from .link_extractor import LinkExtractor
-from .proxy_manager import ProxyManager
-from .settings_manager import SettingsManager
-from .smart_scrapingbee_manager import SmartScrapingBeeManager
-from .utils import (
+from crawler.advanced_crawler import AdvancedCrawler
+from crawler.file_downloader import FileDownloader
+from crawler.link_extractor import LinkExtractor
+from crawler.proxy_manager import ProxyManager
+from crawler.settings_manager import SettingsManager
+from crawler.smart_scrapingbee_manager import SmartScrapingBeeManager
+from crawler.utils import (
     get_optimal_thread_count,
     get_optimal_delay,
     load_settings_from_file,

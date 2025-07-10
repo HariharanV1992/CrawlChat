@@ -6,7 +6,7 @@ import logging
 import asyncio
 import aiohttp
 from typing import Optional, Dict, Any
-from .smart_scrapingbee_manager import SmartScrapingBeeManager, ContentCheckers
+from crawler.smart_scrapingbee_manager import SmartScrapingBeeManager, ContentCheckers
 
 logger = logging.getLogger(__name__)
 

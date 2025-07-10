@@ -11,9 +11,9 @@ import mimetypes
 import json
 
 from scrapingbee import ScrapingBeeClient
-from .settings_manager import SettingsManager
-from .utils import get_file_extension, is_valid_url
-from .smart_scrapingbee_manager import ContentCheckers
+from crawler.settings_manager import SettingsManager
+from crawler.utils import get_file_extension, is_valid_url
+from crawler.smart_scrapingbee_manager import ContentCheckers
 
 logger = logging.getLogger(__name__)
 

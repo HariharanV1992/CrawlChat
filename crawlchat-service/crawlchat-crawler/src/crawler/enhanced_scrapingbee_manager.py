@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import urllib3
 from dataclasses import dataclass
 from enum import Enum
-from .s3_cache_manager import S3CacheManager
+from crawler.s3_cache_manager import S3CacheManager
 
 # Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
