@@ -461,8 +461,6 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Starting HTTP task {task_id}")
         
         # Get task details from MongoDB
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
             if not mongodb:
                 return {
@@ -471,20 +469,30 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
                     'body': json.dumps({'error': 'Database not available'}, ensure_ascii=False)
                 }
             
-            loop.run_until_complete(mongodb.connect())
-            collection = mongodb.get_collection("crawl_tasks")
+            # Use asyncio.run() instead of manual event loop management
+            async def get_task_and_crawl():
+                await mongodb.connect()
+                collection = mongodb.get_collection("crawl_tasks")
+                
+                task = await collection.find_one({"task_id": task_id})
+                if not task:
+                    return None, None, None, None
+                
+                url = task['url']
+                max_doc_count = task['max_doc_count']
+                user_id = task['user_id']
+                
+                return task, url, max_doc_count, user_id
             
-            task = loop.run_until_complete(collection.find_one({"task_id": task_id}))
+            # Run the async function
+            task, url, max_doc_count, user_id = asyncio.run(get_task_and_crawl())
+            
             if not task:
                 return {
                     'statusCode': 404,
                     'headers': {'Content-Type': 'application/json'},
                     'body': json.dumps({'error': 'Task not found'}, ensure_ascii=False)
                 }
-            
-            url = task['url']
-            max_doc_count = task['max_doc_count']
-            user_id = task['user_id']
             
             # Initialize EnhancedCrawlerService
             if EnhancedCrawlerService and SCRAPINGBEE_API_KEY:
@@ -497,7 +505,7 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
                     logger.info(f"Enhanced crawling for task {task_id} completed: {len(result.get('documents', []))} documents found")
                     
                     # Update task status to completed
-                    loop.run_until_complete(update_task_status(task_id, "completed", result))
+                    asyncio.run(update_task_status(task_id, "completed", result))
                     
                     return {
                         'statusCode': 200,
@@ -512,7 +520,7 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception as e:
                     logger.error(f"Enhanced crawling for task {task_id} failed: {e}")
                     # Update task status to failed
-                    loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
+                    asyncio.run(update_task_status(task_id, "failed", {"error": str(e)}))
                     return {
                         'statusCode': 500,
                         'headers': {'Content-Type': 'application/json'},
@@ -525,8 +533,13 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
                     'headers': {'Content-Type': 'application/json'},
                     'body': json.dumps({'error': 'Enhanced crawling service not available'}, ensure_ascii=False)
                 }
-        finally:
-            loop.close()
+        except Exception as e:
+            logger.error(f"Error in handle_http_task_start: {str(e)}", exc_info=True)
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': f'Task start failed: {str(e)}'}, ensure_ascii=False)
+            }
     
     except Exception as e:
         logger.error(f"Error in handle_http_task_start: {str(e)}", exc_info=True)
