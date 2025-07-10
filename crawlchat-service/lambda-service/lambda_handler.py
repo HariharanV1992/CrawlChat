@@ -20,11 +20,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add print statements for immediate visibility
-print("=== LAMBDA HANDLER INITIALIZATION ===")
-print(f"Python version: {sys.version}")
-print(f"Current working directory: {os.getcwd()}")
-print(f"Environment variables: AWS_LAMBDA_FUNCTION_NAME={os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}")
+# Log initialization info
+logger.info(f"Lambda handler initialized - Python version: {sys.version}")
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"AWS_LAMBDA_FUNCTION_NAME: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}")
 
 from common.src.services.crawler_service import crawler_service
 from common.src.core.database import mongodb
@@ -34,10 +33,8 @@ def lambda_handler(event, context):
     """
     Routes API Gateway events to FastAPI (via Mangum), direct events to crawler logic, and SQS events to batch handler.
     """
-    print(f"=== LAMBDA HANDLER STARTED ===")
-    print(f"Event type: {type(event)}")
-    print(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'not a dict'}")
-    print(f"Context: {context}")
+    logger.info(f"Lambda handler started - Event type: {type(event)}")
+    logger.info(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'not a dict'}")
     
     try:
         logger.info(f"Received event: {json.dumps(event, default=str)}")
@@ -45,23 +42,18 @@ def lambda_handler(event, context):
         # API Gateway proxy event
         if 'httpMethod' in event or 'requestContext' in event:
             logger.info("Routing to FastAPI application")
-            print("Routing to FastAPI application")
             return handle_api_gateway_request(event, context)
         # SQS batch event
         elif 'Records' in event:
             logger.info("Routing to SQS batch handler")
-            print("Routing to SQS batch handler")
             return process_sqs_message(event, context)
         # Direct Lambda invoke (crawler)
         else:
             logger.info("Routing to crawler handler")
-            print("Routing to crawler handler")
             return handle_crawler_request(event, context)
     except Exception as e:
         error_msg = f"Error in lambda handler: {e}"
         logger.error(error_msg, exc_info=True)
-        print(f"ERROR: {error_msg}")
-        print(f"Traceback: {traceback.format_exc()}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e), 'traceback': traceback.format_exc()})
@@ -69,15 +61,12 @@ def lambda_handler(event, context):
 
 def handle_api_gateway_request(event, context):
     """Handle API Gateway requests by routing to FastAPI application."""
-    print("=== HANDLING API GATEWAY REQUEST ===")
     try:
         logger.info("Importing FastAPI app...")
-        print("Importing FastAPI app...")
         
         # Import FastAPI app
         from main import app
         logger.info("FastAPI app imported successfully")
-        print("FastAPI app imported successfully")
         
         # Convert API Gateway event to ASGI scope
         scope = {
@@ -95,26 +84,21 @@ def handle_api_gateway_request(event, context):
         }
         
         logger.info("Creating Mangum handler...")
-        print("Creating Mangum handler...")
         
         # Create ASGI application
         from mangum import Mangum
         handler = Mangum(app, lifespan="off")
         
         logger.info("Handling the request...")
-        print("Handling the request...")
         
         # Handle the request
         response = handler(event, context)
         logger.info("Request handled successfully")
-        print("Request handled successfully")
         return response
         
     except Exception as e:
         error_msg = f"Error handling API Gateway request: {e}"
         logger.error(error_msg, exc_info=True)
-        print(f"ERROR: {error_msg}")
-        print(f"Traceback: {traceback.format_exc()}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': 'Internal server error', 'message': str(e), 'traceback': traceback.format_exc()})
@@ -122,29 +106,24 @@ def handle_api_gateway_request(event, context):
 
 def handle_crawler_request(event, context):
     """Handle direct crawler requests."""
-    print("=== HANDLING CRAWLER REQUEST ===")
     try:
         logger.info("Importing crawler modules...")
-        print("Importing crawler modules...")
         
         from crawler.advanced_crawler import AdvancedCrawler, CrawlScenarios
         from crawler.enhanced_scrapingbee_manager import ProxyMode, JavaScriptScenarios
         
         logger.info("Crawler modules imported successfully")
-        print("Crawler modules imported successfully")
         
         # Extract parameters
         url = event.get('url')
         if not url:
             logger.error("URL is required but not provided")
-            print("ERROR: URL is required but not provided")
             return {
                 'statusCode': 400,
                 'body': json.dumps({'error': 'URL is required'})
             }
         
         logger.info(f"Processing URL: {url}")
-        print(f"Processing URL: {url}")
         
         content_type = event.get('content_type', 'generic')
         use_js_scenario = event.get('use_js_scenario', False)
@@ -158,14 +137,12 @@ def handle_crawler_request(event, context):
         api_key = os.getenv('SCRAPINGBEE_API_KEY')
         if not api_key:
             logger.error("SCRAPINGBEE_API_KEY not configured")
-            print("ERROR: SCRAPINGBEE_API_KEY not configured")
             return {
                 'statusCode': 500,
                 'body': json.dumps({'error': 'SCRAPINGBEE_API_KEY not configured'})
             }
         
         logger.info("Initializing AdvancedCrawler...")
-        print("Initializing AdvancedCrawler...")
         
         crawler = AdvancedCrawler(api_key)
         
@@ -176,19 +153,16 @@ def handle_crawler_request(event, context):
         # Determine operation based on parameters
         if download_file:
             logger.info(f"Downloading file from {url}")
-            print(f"Downloading file from {url}")
             result = crawler.download_file(url)
             
         elif take_screenshot:
             logger.info(f"Taking screenshot of {url}")
-            print(f"Taking screenshot of {url}")
             full_page = event.get('full_page', True)
             selector = event.get('selector')
             result = crawler.take_screenshot(url, full_page, selector)
             
         elif use_js_scenario or js_scenario:
             logger.info(f"Crawling {url} with JavaScript scenario")
-            print(f"Crawling {url} with JavaScript scenario")
             if not js_scenario:
                 # Use pre-built scenario based on content type
                 if content_type == 'news':
@@ -204,7 +178,6 @@ def handle_crawler_request(event, context):
             
         else:
             logger.info(f"Crawling {url} with progressive proxy strategy")
-            print(f"Crawling {url} with progressive proxy strategy")
             result = crawler.crawl_url(url, content_type)
         
         # Get usage statistics
@@ -224,14 +197,13 @@ def handle_crawler_request(event, context):
             response_body['cost_analysis'] = {
                 'total_cost': stats['cost_estimate']['total_cost'],
                 'credits_used': stats['cost_estimate']['credits_used'],
-                'mode_breakdown': stats['cost_estimate']['mode_costs'],
+                'mode_costs': stats['cost_estimate']['mode_costs'],
             }
         
         # Clean up
         crawler.close()
         
         logger.info(f"Crawl completed successfully for {url}")
-        print(f"Crawl completed successfully for {url}")
         return {
             'statusCode': 200,
             'body': json.dumps(response_body, default=str)
@@ -240,8 +212,6 @@ def handle_crawler_request(event, context):
     except Exception as e:
         error_msg = f"Error in crawler handler: {e}"
         logger.error(error_msg, exc_info=True)
-        print(f"ERROR: {error_msg}")
-        print(f"Traceback: {traceback.format_exc()}")
         
         # Try to get partial stats if crawler was initialized
         partial_stats = {}
@@ -262,21 +232,17 @@ def handle_crawler_request(event, context):
         }
 
 def process_sqs_message(event, context):
-    print("=== PROCESSING SQS MESSAGE ===")
     try:
-        logger.info(f"Processing SQS event: {json.dumps(event, default=str)}")
-        print(f"Processing SQS event with {len(event.get('Records', []))} records")
+        logger.info(f"Processing SQS event with {len(event.get('Records', []))} records")
 
         # Initialize MongoDB connection
-        print("Initializing MongoDB connection...")
         loop = asyncio.get_event_loop()
         loop.run_until_complete(mongodb.connect())
-        print("MongoDB connected successfully")
+        logger.info("MongoDB connected successfully")
 
         for record in event.get('Records', []):
             try:
-                logger.info(f"Processing record: {record}")
-                print(f"Processing record: {record}")
+                logger.info(f"Processing SQS record")
 
                 # Parse SQS message
                 message_body = json.loads(record['body'])
@@ -285,9 +251,8 @@ def process_sqs_message(event, context):
 
                 # Fetch the full task from DB
                 task = loop.run_until_complete(crawler_service.get_task_status(task_id))
-                print(f"Fetched task from DB: {task}")
                 if not task or not getattr(task, 'url', None):
-                    print(f"ERROR: Task {task_id} not found or URL missing!")
+                    logger.error(f"Task {task_id} not found or URL missing!")
                     continue
 
                 # Actually run the crawl
@@ -296,11 +261,8 @@ def process_sqs_message(event, context):
             except Exception as e:
                 error_msg = f"Error processing SQS record: {e}"
                 logger.error(error_msg, exc_info=True)
-                print(f"ERROR: {error_msg}")
-                print(f"Traceback: {traceback.format_exc()}")
 
         logger.info("Processed all records")
-        print("Processed all records")
         return {
             'statusCode': 200,
             'body': json.dumps({'message': 'Processed all records'})
@@ -309,8 +271,6 @@ def process_sqs_message(event, context):
     except Exception as e:
         error_msg = f"Error in SQS handler: {e}"
         logger.error(error_msg, exc_info=True)
-        print(f"ERROR: {error_msg}")
-        print(f"Traceback: {traceback.format_exc()}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e), 'traceback': traceback.format_exc()})

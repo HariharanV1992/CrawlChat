@@ -146,32 +146,20 @@ class CrawlerService:
 
     async def create_crawl_task(self, request: CrawlRequest, user_id: str) -> CrawlResponse:
         """Create a new crawl task."""
-        print(f"=== CREATING CRAWL TASK ===")
-        print(f"User ID: {user_id}")
-        print(f"URL: {request.url}")
-        print(f"Max documents: {request.max_documents}")
-        print(f"Max pages: {request.max_pages}")
-        
         logger.info(f"Creating crawl task for user {user_id} with URL: {request.url}")
         
         try:
             # Check if crawler is available only when needed
-            print("Checking if AdvancedCrawler is available...")
             AdvancedCrawler = get_advanced_crawler()
             if not AdvancedCrawler:
                 error_msg = "AdvancedCrawler not available - cannot create crawl task"
                 logger.error(error_msg)
-                print(f"ERROR: {error_msg}")
                 raise Exception("Crawler functionality not available")
-            
-            print("AdvancedCrawler is available")
             
             task_id = str(uuid.uuid4())
             logger.info(f"Generated task ID: {task_id}")
-            print(f"Generated task ID: {task_id}")
             
             # Create crawl task
-            print("Creating CrawlTask object...")
             task = CrawlTask(
                 task_id=task_id,
                 user_id=user_id,
@@ -491,15 +479,13 @@ class CrawlerService:
             
             logger.info(f"Task {task.task_id} completed: {task.documents_downloaded} documents, {task.pages_crawled} pages")
             
-            # Only upload and process if crawl was successful
+            # Only upload to S3 if crawl was successful (document processing happens during chat)
             if task.status == TaskStatus.COMPLETED and task.documents_downloaded > 0:
-                # Upload crawled files to S3
+                # Upload crawled files to S3 for later processing
                 await self._upload_crawled_files_to_s3(task)
-                
-                # Process documents for chat (Textract, chunking, vector embedding)
-                await self._process_crawled_documents(task)
+                logger.info(f"Uploaded {task.documents_downloaded} documents to S3 for task {task.task_id}")
             else:
-                logger.info(f"Skipping S3 upload and document processing for failed task {task.task_id}")
+                logger.info(f"Skipping S3 upload for failed task {task.task_id}")
             
             # Save to database
             update_data = {
