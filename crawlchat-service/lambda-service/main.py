@@ -48,6 +48,9 @@ from common.src.api.v1.documents import router as documents_router
 from common.src.api.v1.vector_store import router as vector_store_router
 from common.src.api.v1.preprocessing import router as preprocessing_router
 
+# Setup logger first
+logger = logging.getLogger(__name__)
+
 # Import crawler router from new location
 try:
     import sys
@@ -62,12 +65,18 @@ except ImportError as e:
     # Fallback for when crawler is not available
     from fastapi import APIRouter
     crawler_router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
+    
     @crawler_router.get("/health")
     async def crawler_health():
         return {"status": "crawler_not_available", "error": str(e)}
-
-# Setup logger
-logger = logging.getLogger(__name__)
+    
+    @crawler_router.get("/config")
+    async def crawler_config():
+        return {"status": "crawler_not_available", "error": str(e)}
+    
+    @crawler_router.post("/crawl")
+    async def crawler_crawl():
+        return {"status": "crawler_not_available", "error": str(e)}
 
 # Application lifespan
 @asynccontextmanager
