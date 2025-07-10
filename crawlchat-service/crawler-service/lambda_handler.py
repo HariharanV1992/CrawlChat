@@ -42,9 +42,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     AWS Lambda handler for enhanced crawler service.
     
-    Supports both direct crawling and task-based crawling with max_doc_count.
+    Supports both direct invocation and HTTP API Gateway events.
     
-    Expected event format:
+    Direct invocation format:
+    {
+        "url": "https://example.com",
+        "max_doc_count": 3
+    }
+    
+    HTTP API Gateway format:
     {
         "httpMethod": "POST",
         "path": "/crawl",
@@ -56,60 +62,42 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     }
     """
     try:
-        logger.info(f"Received event: {json.dumps(event, default=str)}")
+        logger.info(f"Received event: {json.dumps(event, default=str, ensure_ascii=False)}")
         
-        # Get HTTP method and path
-        http_method = event.get('httpMethod', 'GET')
-        path = event.get('path', '/')
-        
-        # Handle different endpoints
-        if path == '/health':
-            return {
-                'statusCode': 200,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'status': 'healthy', 'service': 'enhanced_crawler'})
-            }
-        
-        elif path == '/crawl' and http_method == 'POST':
-            return handle_crawl_request(event)
-        
-        elif path.startswith('/tasks/') and path.endswith('/start') and http_method == 'POST':
-            return handle_task_start(event)
-        
+        # Check if this is a direct invocation or HTTP API Gateway event
+        if 'httpMethod' in event:
+            # HTTP API Gateway event
+            return handle_http_event(event)
         else:
-            return {
-                'statusCode': 404,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'Endpoint not found'})
-            }
+            # Direct invocation event
+            return handle_direct_invocation(event)
     
     except Exception as e:
         logger.error(f"Lambda handler error: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': f'Internal server error: {str(e)}'})
+            'body': json.dumps({'error': f'Internal server error: {str(e)}'}, ensure_ascii=False)
         }
 
-def handle_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle direct crawl requests."""
+def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle direct Lambda invocation (from AWS CLI)."""
     try:
-        # Parse query parameters
-        query_params = event.get('queryStringParameters', {}) or {}
-        url = query_params.get('url')
-        max_doc_count = query_params.get('max_doc_count', '1')
+        # Extract parameters from direct event
+        url = event.get('url')
+        max_doc_count = event.get('max_doc_count', 1)
         
         if not url:
             return {
                 'statusCode': 400,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'URL parameter is required'})
+                'body': json.dumps({'error': 'URL parameter is required'}, ensure_ascii=False)
             }
         
-        # Parse max_doc_count
+        # Ensure max_doc_count is an integer
         try:
             max_doc_count = int(max_doc_count)
-        except ValueError:
+        except (ValueError, TypeError):
             max_doc_count = 1
         
         logger.info(f"Starting direct crawl for URL: {url}, max_doc_count: {max_doc_count}")
@@ -120,7 +108,7 @@ def handle_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 'statusCode': 500,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'Crawler service not available'})
+                'body': json.dumps({'error': 'Crawler service not available'}, ensure_ascii=False)
             }
         
         result = service.crawl_with_max_docs(url, max_doc_count)
@@ -128,19 +116,103 @@ def handle_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result, default=str)
+            'body': json.dumps(result, default=str, ensure_ascii=False)
         }
     
     except Exception as e:
-        logger.error(f"Error in handle_crawl_request: {str(e)}", exc_info=True)
+        logger.error(f"Error in handle_direct_invocation: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': f'Crawl failed: {str(e)}'})
+            'body': json.dumps({'error': f'Crawl failed: {str(e)}'}, ensure_ascii=False)
         }
 
-def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle task start requests."""
+def handle_http_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle HTTP API Gateway events."""
+    try:
+        # Get HTTP method and path
+        http_method = event.get('httpMethod', 'GET')
+        path = event.get('path', '/')
+        
+        # Handle different endpoints
+        if path == '/health':
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'status': 'healthy', 'service': 'enhanced_crawler'}, ensure_ascii=False)
+            }
+        
+        elif path == '/crawl' and http_method == 'POST':
+            return handle_http_crawl_request(event)
+        
+        elif path.startswith('/tasks/') and path.endswith('/start') and http_method == 'POST':
+            return handle_http_task_start(event)
+        
+        else:
+            return {
+                'statusCode': 404,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'Endpoint not found'}, ensure_ascii=False)
+            }
+    
+    except Exception as e:
+        logger.error(f"Error in handle_http_event: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'error': f'HTTP handler error: {str(e)}'}, ensure_ascii=False)
+        }
+
+def handle_http_crawl_request(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle HTTP crawl requests."""
+    try:
+        # Parse query parameters
+        query_params = event.get('queryStringParameters', {}) or {}
+        url = query_params.get('url')
+        max_doc_count = query_params.get('max_doc_count', '1')
+        
+        if not url:
+            return {
+                'statusCode': 400,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'URL parameter is required'}, ensure_ascii=False)
+            }
+        
+        # Parse max_doc_count
+        try:
+            max_doc_count = int(max_doc_count)
+        except ValueError:
+            max_doc_count = 1
+        
+        logger.info(f"Starting HTTP crawl for URL: {url}, max_doc_count: {max_doc_count}")
+        
+        # Get crawler service and perform crawl
+        service = get_crawler_service()
+        if not service:
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'Crawler service not available'}, ensure_ascii=False)
+            }
+        
+        result = service.crawl_with_max_docs(url, max_doc_count)
+        
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps(result, default=str, ensure_ascii=False)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in handle_http_crawl_request: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'error': f'HTTP crawl failed: {str(e)}'}, ensure_ascii=False)
+        }
+
+def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle HTTP task start requests."""
     try:
         # Extract task ID from path
         path = event.get('path', '')
@@ -160,7 +232,7 @@ def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         # you'd get the task details from a database
         url = "https://example.com"  # This should come from task storage
         
-        logger.info(f"Starting task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
+        logger.info(f"Starting HTTP task {task_id} for URL: {url}, max_doc_count: {max_doc_count}")
         
         # Get crawler service and perform crawl
         service = get_crawler_service()
@@ -168,7 +240,7 @@ def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
             return {
                 'statusCode': 500,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({'error': 'Crawler service not available'})
+                'body': json.dumps({'error': 'Crawler service not available'}, ensure_ascii=False)
             }
         
         result = service.crawl_with_max_docs(url, max_doc_count)
@@ -180,13 +252,13 @@ def handle_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
         return {
             'statusCode': 200,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(result, default=str)
+            'body': json.dumps(result, default=str, ensure_ascii=False)
         }
     
     except Exception as e:
-        logger.error(f"Error in handle_task_start: {str(e)}", exc_info=True)
+        logger.error(f"Error in handle_http_task_start: {str(e)}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({'error': f'Task start failed: {str(e)}'})
+            'body': json.dumps({'error': f'HTTP task start failed: {str(e)}'}, ensure_ascii=False)
         } 
