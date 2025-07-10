@@ -148,20 +148,20 @@ jobs:
         echo "📋 ECR Registry: $ECR_REGISTRY"
         echo "📋 Image Tag: $IMAGE_TAG"
         
-        cd crawlchat-service
+        cd crawlchat-service/crawler-service
         echo "📋 Changed to directory: $(pwd)"
         echo "📋 Crawler service contents:"
-        ls -la crawler-service/
+        ls -la
         
         # Verify enhanced crawler service exists
-        if [ ! -f "crawler-service/src/crawler/enhanced_crawler_service.py" ]; then
+        if [ ! -f "src/crawler/enhanced_crawler_service.py" ]; then
           echo "❌ Enhanced crawler service not found!"
           exit 1
         fi
         
         echo "✅ Enhanced crawler service found"
         
-        docker build --no-cache -f crawler-service/Dockerfile -t $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG .
+        docker build --no-cache -t $ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG .
         
         if [ $? -eq 0 ]; then
           echo "✅ Docker build successful"
