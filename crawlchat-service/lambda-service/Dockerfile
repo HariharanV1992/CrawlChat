@@ -7,7 +7,10 @@ RUN yum update -y && yum install -y poppler-utils poppler-cpp-devel && yum clean
 # Copy your app code
 COPY lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY common/ ${LAMBDA_TASK_ROOT}/common/
-ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/common"
+
+# Copy crawlchat-crawler modules
+COPY ../crawlchat-crawler/ ${LAMBDA_TASK_ROOT}/crawlchat-crawler/
+ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/common:${LAMBDA_TASK_ROOT}/crawlchat-crawler/src"
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 # Copy lambda service files

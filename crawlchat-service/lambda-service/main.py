@@ -56,8 +56,24 @@ try:
     import sys
     import os
     # Add the crawler path to sys.path
-    crawler_path = os.path.join(os.path.dirname(__file__), '..', 'crawlchat-crawler', 'src')
-    sys.path.insert(0, crawler_path)
+    # Try multiple possible paths for Lambda container
+    possible_paths = [
+        os.path.join(os.path.dirname(__file__), '..', 'crawlchat-crawler', 'src'),  # Local development
+        os.path.join('/var/task', 'crawlchat-crawler', 'src'),  # Lambda container
+        os.path.join(os.getcwd(), 'crawlchat-crawler', 'src'),  # Current working directory
+    ]
+    
+    crawler_path = None
+    for path in possible_paths:
+        if os.path.exists(path):
+            crawler_path = path
+            break
+    
+    if crawler_path:
+        sys.path.insert(0, crawler_path)
+        logger.info(f"Added crawler path to sys.path: {crawler_path}")
+    else:
+        logger.warning("Could not find crawler path in any of the expected locations")
     from crawler_router import router as crawler_router
     logger.info("Successfully imported crawler router")
 except ImportError as e:
