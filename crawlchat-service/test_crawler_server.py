@@ -102,12 +102,34 @@ async def verify_auth():
 @app.post("/api/v1/auth/login")
 async def login():
     """Mock login endpoint."""
-    return {"access_token": "mock_token_123", "token_type": "bearer"}
+    return {
+        "access_token": "mock_token_123", 
+        "token_type": "bearer",
+        "user": {
+            "user_id": "mock_user_123",
+            "username": "testuser",
+            "email": "test@example.com",
+            "created_at": "2024-01-01T00:00:00Z",
+            "is_active": True
+        },
+        "expires_in": 3600
+    }
 
 @app.post("/api/v1/auth/register")
 async def register():
     """Mock register endpoint."""
-    return {"access_token": "mock_token_123", "token_type": "bearer"}
+    return {
+        "access_token": "mock_token_123", 
+        "token_type": "bearer",
+        "user": {
+            "user_id": "mock_user_123",
+            "username": "testuser",
+            "email": "test@example.com",
+            "created_at": "2024-01-01T00:00:00Z",
+            "is_active": True
+        },
+        "expires_in": 3600
+    }
 
 @app.get("/api/v1/auth/logout")
 async def logout():

@@ -96,6 +96,7 @@
             };
             
             try {
+                console.log('Sending login request with data:', data);
                 const response = await fetch('/api/v1/auth/login', {
                     method: 'POST',
                     headers: {
@@ -104,10 +105,30 @@
                     body: JSON.stringify(data)
                 });
                 
+                console.log('Login response status:', response.status);
+                console.log('Login response headers:', Object.fromEntries(response.headers.entries()));
+                
                 if (response.ok) {
                     const result = await response.json();
+                    console.log('Login response data:', result);
+                    
+                    if (!result.access_token) {
+                        console.error('No access_token in response');
+                        showNotification('Login failed: No access token received', 'error');
+                        return;
+                    }
+                    
+                    if (!result.user) {
+                        console.error('No user data in response');
+                        showNotification('Login failed: No user data received', 'error');
+                        return;
+                    }
+                    
                     localStorage.setItem('access_token', result.access_token);
                     localStorage.setItem('user', JSON.stringify(result.user));
+                    
+                    console.log('Stored access_token:', result.access_token);
+                    console.log('Stored user:', result.user);
                     
                     // Show success message
                     showNotification('Login successful! Redirecting...', 'success');
@@ -121,6 +142,7 @@
                     }, 1000);
                 } else {
                     const error = await response.json();
+                    console.error('Login error response:', error);
                     showNotification(error.detail || 'Login failed', 'error');
                 }
             } catch (error) {
