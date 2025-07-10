@@ -15,4 +15,4 @@ COPY src/crawler/ ${LAMBDA_TASK_ROOT}/src/crawler/
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
 
 # Lambda handler entry point
-CMD ["lambda_handler.handler"] 
+CMD ["lambda_handler.lambda_handler"] 
