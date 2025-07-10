@@ -85,13 +85,17 @@ def handle_api_gateway_request(event, context):
                 }
             }
         else:
-            # Ensure required fields are present
+            # Add missing http fields
             if 'http' not in event['requestContext']:
                 event['requestContext']['http'] = {}
             if 'sourceIp' not in event['requestContext']['http']:
                 event['requestContext']['http']['sourceIp'] = '127.0.0.1'
             if 'userAgent' not in event['requestContext']['http']:
                 event['requestContext']['http']['userAgent'] = 'test-agent'
+            if 'path' not in event['requestContext']['http']:
+                event['requestContext']['http']['path'] = event.get('path', '/')
+            if 'method' not in event['requestContext']['http']:
+                event['requestContext']['http']['method'] = event.get('httpMethod', 'GET')
         
         # Add version if missing
         if 'version' not in event:
