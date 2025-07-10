@@ -43,7 +43,6 @@ def lambda_handler(event, context):
     logger.info(f"Event keys: {list(event.keys()) if isinstance(event, dict) else 'not a dict'}")
     
     try:
-        logger.info(f"Received event: {json.dumps(event, default=str)}")
         
         # API Gateway proxy event
         if 'httpMethod' in event or 'requestContext' in event:

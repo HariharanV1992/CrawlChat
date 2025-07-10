@@ -230,7 +230,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     This handler creates crawl tasks and sends them to SQS queue for processing.
     """
     try:
-        logger.info(f"Received event: {json.dumps(event, default=str, ensure_ascii=False)}")
         
         # Check if this is a direct invocation or HTTP API Gateway event
         if 'httpMethod' in event:

@@ -380,39 +380,44 @@ async def root(request: Request):
 @app.get("/chat", response_class=HTMLResponse)
 async def chat_interface(request: Request):
     """Serve the chat interface."""
-    # Check if user has a valid token in cookies or headers
-    auth_header = request.headers.get("authorization")
-    cookies = request.cookies
+    # Temporarily disable server-side authentication to let frontend handle it
+    # The frontend will check authentication and redirect if needed
+    return templates.TemplateResponse("chat.html", {"request": request})
     
-    # Check for token in Authorization header or cookies
-    token = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.replace("Bearer ", "")
-    elif "access_token" in cookies:
-        token = cookies["access_token"]
-    
-    # If no token, redirect to login
-    if not token:
-        return RedirectResponse(url="/login")
-    
-    # In Lambda, skip token verification for faster page loads
-    # The frontend will handle authentication
-    if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
-        # User has token, serve chat interface (let frontend validate)
-        return templates.TemplateResponse("chat.html", {"request": request})
-    else:
-        # Non-Lambda environment - verify token
-        try:
-            auth_service = get_auth_service_lazy()
-            user = await auth_service.get_current_user(token)
-            if not user:
-                return RedirectResponse(url="/login")
-            
-            # User is authenticated, serve chat interface
-            return templates.TemplateResponse("chat.html", {"request": request})
-        except Exception as e:
-            logger.error(f"Error verifying token in chat route: {e}")
-            return RedirectResponse(url="/login")
+    # Original authentication code (commented out for now)
+    # # Check if user has a valid token in cookies or headers
+    # auth_header = request.headers.get("authorization")
+    # cookies = request.cookies
+    # 
+    # # Check for token in Authorization header or cookies
+    # token = None
+    # if auth_header and auth_header.startswith("Bearer "):
+    #     token = auth_header.replace("Bearer ", "")
+    # elif "access_token" in cookies:
+    #     token = cookies["access_token"]
+    # 
+    # # If no token, redirect to login
+    # if not token:
+    #     return RedirectResponse(url="/login")
+    # 
+    # # In Lambda, skip token verification for faster page loads
+    # # The frontend will handle authentication
+    # if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+    #     # User has token, serve chat interface (let frontend validate)
+    #     return templates.TemplateResponse("chat.html", {"request": request})
+    # else:
+    #     # Non-Lambda environment - verify token
+    #     try:
+    #         auth_service = get_auth_service_lazy()
+    #         user = await auth_service.get_current_user(token)
+    #         if not user:
+    #             return RedirectResponse(url="/login")
+    #         
+    #         # User is authenticated, serve chat interface
+    #         return templates.TemplateResponse("chat.html", {"request": request})
+    #     except Exception as e:
+    #         logger.error(f"Error verifying token in chat route: {e}")
+    #         return RedirectResponse(url="/login")
 
 @app.get("/crawler", response_class=HTMLResponse)
 async def crawler_interface(request: Request):
