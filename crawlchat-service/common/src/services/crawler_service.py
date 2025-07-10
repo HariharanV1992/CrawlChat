@@ -402,15 +402,7 @@ class CrawlerService:
                 use_proxy=task.use_proxy,
                 proxy_api_key=task.proxy_api_key,
                 render=task.render,
-                retry=task.retry,
-                window_width=task.window_width,
-                window_height=task.window_height,
-                premium_proxy=task.premium_proxy,
-                country_code=task.country_code,
-                stealth_proxy=task.stealth_proxy,
-                own_proxy=task.own_proxy,
-                forward_headers=task.forward_headers,
-                forward_headers_pure=task.forward_headers_pure
+                retry=task.retry
             )
             logger.info(f"Crawler config created: {crawler_config}")
             
@@ -433,22 +425,22 @@ class CrawlerService:
             logger.info(f"Starting crawl for URL: {task.url}")
             results = crawler.crawl_url(
                 url=task.url,
-                render_js=task.render_js,
-                block_ads=task.block_ads,
-                block_resources=task.block_resources,
-                wait=task.wait,
-                wait_for=task.wait_for,
-                wait_browser=task.wait_browser,
-                window_width=task.window_width,
-                window_height=task.window_height,
-                premium_proxy=task.premium_proxy,
-                country_code=task.country_code,
-                stealth_proxy=task.stealth_proxy,
-                own_proxy=task.own_proxy,
-                forward_headers=task.forward_headers,
-                forward_headers_pure=task.forward_headers_pure,
-                download_file=task.download_file,
-                scraping_config=task.scraping_config
+                render_js=getattr(task, 'render_js', True),
+                block_ads=getattr(task, 'block_ads', False),
+                block_resources=getattr(task, 'block_resources', True),
+                wait=getattr(task, 'wait', None),
+                wait_for=getattr(task, 'wait_for', None),
+                wait_browser=getattr(task, 'wait_browser', None),
+                window_width=getattr(task, 'window_width', 1920),
+                window_height=getattr(task, 'window_height', 1080),
+                premium_proxy=getattr(task, 'premium_proxy', False),
+                country_code=getattr(task, 'country_code', 'in'),
+                stealth_proxy=getattr(task, 'stealth_proxy', False),
+                own_proxy=getattr(task, 'own_proxy', None),
+                forward_headers=getattr(task, 'forward_headers', False),
+                forward_headers_pure=getattr(task, 'forward_headers_pure', False),
+                download_file=getattr(task, 'download_file', False),
+                scraping_config=getattr(task, 'scraping_config', None)
             )
             logger.info(f"Crawl completed with results: {results}")
             
