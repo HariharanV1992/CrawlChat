@@ -74,20 +74,18 @@ def handle_api_gateway_request(event, context):
         from main import app
         logger.info("FastAPI app imported successfully")
         
-        # Convert API Gateway event to ASGI scope
-        scope = {
-            'type': 'http',
-            'http_version': '1.1',
-            'method': event.get('httpMethod', 'GET'),
-            'scheme': 'https',
-            'server': ('api.crawlchat.site', 443),
-            'path': event.get('path', '/'),
-            'query_string': event.get('queryStringParameters', {}),
-            'headers': [(k.lower().encode(), v.encode()) for k, v in event.get('headers', {}).items()],
-            'body': event.get('body', '').encode() if event.get('body') else b'',
-            'client': ('127.0.0.1', 0),
-            'asgi': {'version': '3.0'}
-        }
+        # Add requestContext if missing (required for Mangum)
+        if 'requestContext' not in event:
+            event['requestContext'] = {
+                'http': {
+                    'method': event.get('httpMethod', 'GET'),
+                    'path': event.get('path', '/')
+                }
+            }
+        
+        # Add version if missing
+        if 'version' not in event:
+            event['version'] = '2.0'
         
         logger.info("Creating Mangum handler...")
         
