@@ -192,11 +192,31 @@ async def update_task_status(task_id: str, status: str, result: Dict = None):
         if result:
             update_data["result"] = result
             
+            # Extract progress information from result
+            if isinstance(result, dict):
+                documents_found = result.get('documents_found', 0)
+                total_documents = result.get('total_documents', 0)
+                total_pages = result.get('total_pages', 0)
+                
+                # Update progress fields for UI compatibility
+                update_data["progress"] = {
+                    "documents_downloaded": documents_found,
+                    "pages_crawled": total_pages,
+                    "total_documents": total_documents,
+                    "total_pages": total_pages,
+                    "current_document": documents_found,
+                    "current_page": total_pages
+                }
+                
+                # Also update the legacy fields for compatibility
+                update_data["documents_downloaded"] = documents_found
+                update_data["pages_crawled"] = total_pages
+            
         await collection.update_one(
             {"task_id": task_id},
             {"$set": update_data}
         )
-        logger.info(f"Updated task {task_id} status to {status}")
+        logger.info(f"Updated task {task_id} status to {status} with {result.get('documents_found', 0) if result else 0} documents")
         return True
         
     except Exception as e:
@@ -549,6 +569,33 @@ def handle_http_task_status(event: Dict[str, Any]) -> Dict[str, Any]:
             
             # Convert ObjectId to string for JSON serialization
             task['_id'] = str(task['_id'])
+            
+            # Ensure progress field exists with proper structure
+            if 'progress' not in task:
+                task['progress'] = {
+                    "documents_downloaded": 0,
+                    "pages_crawled": 0,
+                    "total_documents": 0,
+                    "total_pages": 0,
+                    "current_document": 0,
+                    "current_page": 0
+                }
+            
+            # Update progress from result if available
+            if 'result' in task and isinstance(task['result'], dict):
+                result = task['result']
+                documents_found = result.get('documents_found', 0)
+                total_documents = result.get('total_documents', 0)
+                total_pages = result.get('total_pages', 0)
+                
+                task['progress'].update({
+                    "documents_downloaded": documents_found,
+                    "pages_crawled": total_pages,
+                    "total_documents": total_documents,
+                    "total_pages": total_pages,
+                    "current_document": documents_found,
+                    "current_page": total_pages
+                })
             
             return {
                 'statusCode': 200,
