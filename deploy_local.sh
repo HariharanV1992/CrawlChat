@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 LAMBDA_API_PORT=9000
 CRAWLER_PORT=9001
 LAMBDA_API_CONTAINER="crawlchat-lambda-api-local"
-CRAWLER_CONTAINER="crawlchat-crawler-local"
+CRAWLER_CONTAINER="crawler-service-local"
 
 # Directories
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,7 +103,7 @@ build_images() {
     
     # Build Crawler image
     echo "Building Crawler image..."
-    if docker build -t crawlchat-crawler:local -f "$CRAWLER_SERVICE_DIR/Dockerfile" "$CRAWLER_SERVICE_DIR"; then
+    if docker build -t crawler-service:local -f "$CRAWLER_SERVICE_DIR/Dockerfile" "$CRAWLER_SERVICE_DIR"; then
         print_status "Crawler image built successfully"
     else
         print_error "Failed to build Crawler image"
@@ -146,7 +146,7 @@ run_containers() {
         --name "$CRAWLER_CONTAINER" \
         -p "$CRAWLER_PORT:8080" \
         "${ENV_VARS[@]}" \
-        crawlchat-crawler:local; then
+        crawler-service:local; then
         print_status "Crawler container started"
     else
         print_error "Failed to start Crawler container"
@@ -230,7 +230,7 @@ cleanup() {
     
     # Remove images
     docker rmi crawlchat-lambda-api:local >/dev/null 2>&1 || true
-    docker rmi crawlchat-crawler:local >/dev/null 2>&1 || true
+    docker rmi crawler-service:local >/dev/null 2>&1 || true
     
     print_status "Cleanup completed"
 }
