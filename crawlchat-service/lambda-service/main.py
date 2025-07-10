@@ -104,6 +104,15 @@ except ImportError as e:
             "message": "Task created successfully (fallback mode)"
         }
     
+    @crawler_router.get("/tasks")
+    async def list_tasks():
+        """List all tasks (fallback mode)."""
+        return {
+            "tasks": [],
+            "total": 0,
+            "message": "No tasks available (fallback mode)"
+        }
+    
     @crawler_router.post("/tasks/{task_id}/start")
     async def start_task(task_id: str):
         return {
