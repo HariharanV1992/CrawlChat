@@ -77,6 +77,18 @@ except ImportError as e:
     @crawler_router.post("/crawl")
     async def crawler_crawl():
         return {"status": "crawler_not_available", "error": str(e)}
+    
+    @crawler_router.post("/tasks")
+    async def create_task():
+        return {"status": "crawler_not_available", "error": str(e)}
+    
+    @crawler_router.post("/tasks/{task_id}/start")
+    async def start_task(task_id: str):
+        return {"status": "crawler_not_available", "error": str(e)}
+    
+    @crawler_router.get("/tasks/{task_id}")
+    async def get_task(task_id: str):
+        return {"status": "crawler_not_available", "error": str(e)}
 
 # Application lifespan
 @asynccontextmanager
