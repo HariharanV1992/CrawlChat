@@ -336,6 +336,17 @@ class AdvancedCrawler:
                                 'status_code': response.status_code,
                                 'content_length': content_length
                             }
+                    # Additional check: If PDF, verify signature
+                    if file_type == 'application/pdf':
+                        if not content.startswith(b'%PDF-'):
+                            logger.error(f"Downloaded file from {url} is not a valid PDF (wrong signature)")
+                            return {
+                                'success': False,
+                                'error': 'Downloaded file is not a valid PDF',
+                                'url': url,
+                                'status_code': response.status_code,
+                                'content_length': content_length
+                            }
                     
                     # Success!
                     download_time = time.time() - start_time
