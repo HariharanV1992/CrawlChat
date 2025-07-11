@@ -3,6 +3,7 @@ Crawler API router for integration with main FastAPI application
 """
 
 import logging
+import json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, Body
 from typing import Dict, Any, List
 import os
@@ -184,14 +185,44 @@ async def start_task(task_id: str):
         
         logger.info(f"Starting crawler task: {task_id}")
         
-        # Start crawling in background
-        asyncio.create_task(run_crawl_task(task_id))
-        
-        return {
-            "task_id": task_id,
-            "status": "running",
-            "message": "Task started successfully"
-        }
+        # Call the separate crawler Lambda function
+        try:
+            import boto3
+            lambda_client = boto3.client('lambda', region_name=os.getenv('AWS_REGION', 'ap-south-1'))
+            
+            # Prepare the payload for the crawler function
+            payload = {
+                "task_id": task_id,
+                "url": task["url"],
+                "max_doc_count": task["config"]["max_documents"],
+                "user_id": "default"
+            }
+            
+            # Invoke the crawler function
+            response = lambda_client.invoke(
+                FunctionName=os.getenv('CRAWLER_FUNCTION_NAME', 'crawlchat-crawler-function'),
+                InvocationType='Event',  # Async invocation
+                Payload=json.dumps(payload)
+            )
+            
+            logger.info(f"Invoked crawler function for task {task_id}: {response}")
+            
+            return {
+                "task_id": task_id,
+                "status": "running",
+                "message": "Task started successfully - Crawler function invoked"
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to invoke crawler function for task {task_id}: {e}")
+            # Fallback to local execution
+            asyncio.create_task(run_crawl_task(task_id))
+            
+            return {
+                "task_id": task_id,
+                "status": "running",
+                "message": "Task started successfully (local execution)"
+            }
     except Exception as e:
         logger.error(f"Failed to start task {task_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start task: {str(e)}")
