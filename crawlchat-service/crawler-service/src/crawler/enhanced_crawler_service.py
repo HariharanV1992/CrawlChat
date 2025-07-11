@@ -67,7 +67,45 @@ class EnhancedCrawlerService:
             # Always do recursive crawling if we need more documents
             if len(self.documents) < max_doc_count:
                 logger.info(f"Starting recursive crawl for additional documents (current: {len(self.documents)}, target: {max_doc_count})")
-                self._crawl_recursive(crawler, base_url, domain, max_doc_count)
+                # Extract links from the main page and crawl sub-pages
+                if main_page_doc and main_page_doc.get('content'):
+                    try:
+                        soup = BeautifulSoup(main_page_doc['content'], 'html.parser')
+                        link_extractor = LinkExtractor(domain)
+                        
+                        # Extract page links and document links
+                        page_links, document_links = link_extractor.extract_links(soup, base_url, self.visited_urls)
+                        
+                        logger.info(f"Found {len(page_links)} page links and {len(document_links)} document links on main page")
+                        
+                        # First, try to download documents
+                        for doc_url in document_links:
+                            if len(self.documents) >= max_doc_count:
+                                logger.info(f"Reached max document count, stopping document downloads")
+                                break
+                            
+                            doc = self._crawl_and_save_file(crawler, doc_url)
+                            if doc:
+                                self.documents.append(doc)
+                                logger.info(f"Added document: {doc_url} (total: {len(self.documents)}/{max_doc_count})")
+                        
+                        # Then, crawl sub-pages if we still have room (limit to first 10 to avoid infinite recursion)
+                        sub_pages_to_crawl = page_links[:10]  # Limit to first 10 sub-pages
+                        logger.info(f"Crawling {len(sub_pages_to_crawl)} sub-pages out of {len(page_links)} found")
+                        
+                        for page_url in sub_pages_to_crawl:
+                            if len(self.documents) >= max_doc_count:
+                                logger.info(f"Reached max document count, stopping page crawling")
+                                break
+                            
+                            logger.info(f"Recursively crawling sub-page: {page_url} (depth: {depth + 1})")
+                            # Recursively crawl sub-pages
+                            self._crawl_recursive(crawler, page_url, domain, max_doc_count, depth + 1)
+                            
+                    except Exception as e:
+                        logger.error(f"Error in recursive crawl for main page: {e}")
+                else:
+                    logger.warning(f"No content found in main page, skipping link extraction")
             else:
                 logger.info(f"Already have {len(self.documents)} documents, no need for recursive crawl")
             
@@ -115,8 +153,27 @@ class EnhancedCrawlerService:
         self.visited_urls.add(url)
         
         try:
-            # Crawl the page
-            result = crawler.crawl_url(url, content_type="generic")
+            # Crawl the page with optimized settings for speed
+            # Try without JavaScript first for speed, fallback to JS if needed
+            result = crawler.crawl_url(
+                url, 
+                content_type="generic",
+                render_js=False,  # Disable JS for speed
+                timeout=30,  # 30 second timeout
+                block_resources=True,  # Block images/CSS for speed
+                wait=1000  # Wait 1 second after page load
+            )
+            
+            # If no content or very little content, try with JavaScript
+            if not result.get('success') or len(result.get('content', '')) < 1000:
+                logger.info(f"Retrying {url} with JavaScript rendering")
+                result = crawler.crawl_url(
+                    url, 
+                    content_type="generic",
+                    render_js=True,
+                    timeout=30,
+                    wait=2000  # Wait 2 seconds for JS to load
+                )
             
             if not result.get('success'):
                 logger.warning(f"Failed to crawl {url}: {result.get('error')}")
@@ -190,13 +247,18 @@ class EnhancedCrawlerService:
             logger.error(f"Error downloading file {url}: {e}")
             return None
     
-    def _crawl_recursive(self, crawler: AdvancedCrawler, url: str, domain: str, max_doc_count: int):
+    def _crawl_recursive(self, crawler: AdvancedCrawler, url: str, domain: str, max_doc_count: int, depth: int = 0):
         """Recursively crawl pages and extract documents."""
         if len(self.documents) >= max_doc_count:
             logger.info(f"Reached max document count ({max_doc_count}), stopping crawl")
             return
         
         if url in self.visited_urls:
+            return
+        
+        # Limit recursion depth to prevent infinite loops
+        if depth > 2:  # Only go 2 levels deep
+            logger.info(f"Reached max depth ({depth}), stopping recursion for {url}")
             return
         
         logger.info(f"Crawling: {url} (documents found: {len(self.documents)}/{max_doc_count})")
