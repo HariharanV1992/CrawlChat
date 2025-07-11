@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse
 import mimetypes
 import json
+import base64 # Added for base64 encoding
 
 from scrapingbee import ScrapingBeeClient
 from .settings_manager import SettingsManager
@@ -255,7 +256,7 @@ class AdvancedCrawler:
     
     def download_file(self, url: str) -> Dict[str, Any]:
         """
-        Download file from URL using ScrapingBee API.
+        Download file from URL using ScrapingBee API with retry logic.
         
         Args:
             url: File URL
@@ -266,82 +267,128 @@ class AdvancedCrawler:
         logger.info(f"Downloading file from {url}")
         
         start_time = time.time()
+        max_retries = 3
+        base_delay = 2  # Start with 2 second delay
         
-        try:
-            # Use optimized parameters for binary file downloads
-            params = {
-                'render_js': 'False',  # No JS rendering for file downloads
-                'timeout': '1410',  # Maximum timeout in milliseconds (1.41 seconds)
-                'block_resources': 'False',  # Don't block resources for binary files
-                'premium_proxy': 'True',  # Use premium proxy for better reliability
-                'forward_headers': 'True'  # Forward original headers
-            }
-            
-            logger.info(f"Making request with params: {params}")
-            
-            # Set headers for binary content
-            headers = {
-                'Accept': '*/*',  # Accept all content types
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-            }
-            
-            logger.info(f"Request headers: {headers}")
-            
-            # Make the request
-            response = self.scrapingbee_client.get(url, params=params, headers=headers)
-            
-            logger.info(f"Response status: {response.status_code}")
-            logger.info(f"Response headers: {dict(response.headers)}")
-            
-            # Get content
-            content = response.content
-            content_length = len(content)
-            logger.info(f"Content length: {content_length} bytes")
-            
-            # Log first 100 bytes for debugging
-            content_preview = content[:100] if content else b''
-            logger.info(f"Content preview: {content_preview}")
-            
-            # Check if request was successful
-            if response.status_code != 200:
-                logger.error(f"Failed to download {url}: HTTP {response.status_code}")
-                return {
-                    "success": False,
-                    "error": f"HTTP {response.status_code}",
-                    "url": url,
-                    "content_length": content_length
+        for attempt in range(max_retries):
+            try:
+                # Use optimized parameters for binary file downloads
+                params = {
+                    'render_js': 'False',  # No JS rendering for file downloads
+                    'timeout': '1410',  # Maximum timeout in milliseconds (1.41 seconds)
+                    'block_resources': 'False',  # Don't block resources for binary files
+                    'premium_proxy': 'True',  # Use premium proxy for better reliability
+                    'forward_headers': 'True',  # Forward browser headers
+                    'country_code': 'in',  # Use Indian proxy for Indian sites
+                    'stealth_proxy': 'True',  # Use stealth proxy to avoid detection
                 }
-            
-            # Determine file type
-            file_type = self._determine_file_type(url, response.headers.get('content-type', ''))
-            
-            # Calculate download time
-            download_time = time.time() - start_time
-            
-            logger.info(f"Successfully downloaded {url} ({content_length} bytes, {file_type}) in {download_time:.2f}s")
-            
-            return {
-                "success": True,
-                "url": url,
-                "content": content,
-                "content_type": file_type,
-                "content_length": content_length,
-                "download_time": download_time,
-                "headers": dict(response.headers)
-            }
-            
-        except Exception as e:
-            download_time = time.time() - start_time
-            logger.error(f"Error downloading {url}: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "url": url,
-                "download_time": download_time
-            }
+                
+                # Add delay between retries to avoid rate limiting
+                if attempt > 0:
+                    delay = base_delay * (2 ** (attempt - 1))  # Exponential backoff: 2s, 4s, 8s
+                    logger.info(f"Retry attempt {attempt + 1}/{max_retries}, waiting {delay}s...")
+                    time.sleep(delay)
+                
+                logger.info(f"Making request with params: {params}")
+                
+                # Add special headers for binary content
+                headers = {
+                    'Accept': '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                }
+                
+                logger.info(f"Request headers: {headers}")
+                
+                # Make the request
+                response = self.scrapingbee_client.get(url, params=params, headers=headers)
+                
+                logger.info(f"Response status: {response.status_code}")
+                logger.info(f"Response headers: {dict(response.headers)}")
+                
+                # Check if we got a successful response
+                if response.status_code == 200:
+                    content = response.content
+                    content_length = len(content)
+                    logger.info(f"Content length: {content_length} bytes")
+                    
+                    # Log first 100 bytes for debugging
+                    preview = content[:100] if content else b''
+                    logger.info(f"Content preview: {preview}")
+                    
+                    # Determine content type
+                    content_type = response.headers.get('Content-Type', 'unknown')
+                    file_type = self._determine_file_type(url, content_type)
+                    
+                    # Check if content looks like HTML (error page)
+                    if content_length < 1000 and b'<!DOCTYPE html>' in content[:500]:
+                        logger.warning(f"Received HTML error page instead of file for {url}")
+                        if attempt < max_retries - 1:
+                            continue  # Retry
+                        else:
+                            return {
+                                'success': False,
+                                'error': f'Server returned HTML error page instead of file',
+                                'url': url,
+                                'status_code': response.status_code,
+                                'content_length': content_length
+                            }
+                    
+                    # Success!
+                    download_time = time.time() - start_time
+                    logger.info(f"Successfully downloaded {url} ({content_length} bytes, {file_type}) in {download_time:.2f}s")
+                    
+                    return {
+                        'success': True,
+                        'url': url,
+                        'content': content,
+                        'content_type': file_type,
+                        'content_length': content_length,
+                        'download_time': download_time,
+                        'is_binary': True,
+                        'content_base64': base64.b64encode(content).decode('utf-8')
+                    }
+                
+                elif response.status_code == 500:
+                    logger.warning(f"HTTP 500 error on attempt {attempt + 1} for {url}")
+                    if attempt < max_retries - 1:
+                        continue  # Retry
+                    else:
+                        return {
+                            'success': False,
+                            'error': f'HTTP {response.status_code} after {max_retries} attempts',
+                            'url': url,
+                            'status_code': response.status_code
+                        }
+                
+                else:
+                    logger.error(f"HTTP {response.status_code} for {url}")
+                    return {
+                        'success': False,
+                        'error': f'HTTP {response.status_code}',
+                        'url': url,
+                        'status_code': response.status_code
+                    }
+                    
+            except Exception as e:
+                logger.error(f"Exception on attempt {attempt + 1} for {url}: {str(e)}")
+                if attempt < max_retries - 1:
+                    continue  # Retry
+                else:
+                    return {
+                        'success': False,
+                        'error': str(e),
+                        'url': url
+                    }
+        
+        return {
+            'success': False,
+            'error': f'Failed after {max_retries} attempts',
+            'url': url
+        }
     
     def take_screenshot(self, url: str, full_page: bool = True, 
                        selector: str = None) -> Dict[str, Any]:

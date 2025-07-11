@@ -12,6 +12,8 @@ from bs4 import BeautifulSoup
 import json
 from datetime import datetime
 import concurrent.futures
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Add the crawler path to sys.path
 crawler_path = os.path.join(os.path.dirname(__file__))
@@ -637,3 +639,43 @@ class EnhancedCrawlerService:
             
         except Exception as e:
             logger.error(f"Failed to update progress: {e}") 
+
+    async def download_files(self, file_urls: List[str], max_threads: int = 3) -> List[Dict[str, Any]]:
+        """
+        Download multiple files concurrently with rate limiting.
+        
+        Args:
+            file_urls: List of file URLs to download
+            max_threads: Maximum number of concurrent downloads
+            
+        Returns:
+            List of download results
+        """
+        logger.info(f"Starting download of {len(file_urls)} files with {max_threads} threads")
+        
+        results = []
+        
+        # Process files in batches to avoid overwhelming the server
+        batch_size = max(1, max_threads // 2)  # Use fewer concurrent downloads
+        delay_between_batches = 3  # 3 second delay between batches
+        
+        for i in range(0, len(file_urls), batch_size):
+            batch = file_urls[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}: {len(batch)} files")
+            
+            # Download batch concurrently
+            with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                batch_results = list(executor.map(self.crawler.download_file, batch))
+                results.extend(batch_results)
+            
+            # Add delay between batches to avoid rate limiting
+            if i + batch_size < len(file_urls):
+                logger.info(f"Waiting {delay_between_batches}s before next batch...")
+                await asyncio.sleep(delay_between_batches)
+        
+        # Log summary
+        successful = sum(1 for r in results if r.get('success', False))
+        failed = len(results) - successful
+        logger.info(f"Download complete: {successful} successful, {failed} failed")
+        
+        return results 
