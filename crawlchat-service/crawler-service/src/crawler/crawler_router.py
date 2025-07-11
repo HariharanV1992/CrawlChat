@@ -51,13 +51,13 @@ except ImportError as e:
     except ImportError as e2:
         logger.warning(f"Failed to import crawler modules with absolute import: {e2}")
         # Create dummy classes for fallback
-        class AdvancedCrawler:
-            def __init__(self, api_key):
-                self.api_key = api_key
-            def crawl_url(self, url, **kwargs):
-                return {"success": False, "error": "Crawler not available"}
-            def close(self):
-                pass
+    class AdvancedCrawler:
+        def __init__(self, api_key):
+            self.api_key = api_key
+        def crawl_url(self, url, **kwargs):
+            return {"success": False, "error": "Crawler not available"}
+        def close(self):
+            pass
         
         class EnhancedCrawlerService:
             def __init__(self, api_key):
@@ -175,10 +175,10 @@ async def crawl_url(
             raise HTTPException(status_code=500, detail="SCRAPINGBEE_API_KEY not configured")
         
         # Initialize enhanced crawler service
-        enhanced_crawler = EnhancedCrawlerService(api_key=api_key)
+        enhanced_crawler = EnhancedCrawlerService(api_key=api_key, user_id="default")
         
         # Use enhanced crawler with max document count
-        result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
+        result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents, task_id="direct_crawl")
         
         logger.info(f"Crawl completed for URL: {url}")
         return {
@@ -224,18 +224,21 @@ async def create_task(request_data: Dict[str, Any] = Body(...)):
         max_documents = request_data.get("max_documents", 5)
         max_pages = request_data.get("max_pages", 10)
         render_js = request_data.get("render_js", True)
+        user_id = request_data.get("user_id", "default")
         
         # Create task record
         task = {
             "task_id": task_id,
             "url": url,
+            "user_id": user_id,
             "status": "created",
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
             "config": {
                 "max_documents": max_documents,
                 "max_pages": max_pages,
-                "render_js": render_js
+                "render_js": render_js,
+                "user_id": user_id
             },
             "progress": {
                 "documents_found": 0,
@@ -289,7 +292,8 @@ async def start_task(task_id: str):
         payload = {
             "task_id": task_id,
             "url": task["url"],
-            "config": task["config"]
+            "config": task["config"],
+            "user_id": task.get("user_id", "default")
         }
         print(f"[API LAMBDA] Invoking crawlchat-crawler-function with payload: {payload}")
         logger.error(f"[API LAMBDA] Invoking crawlchat-crawler-function with payload: {payload}")
@@ -449,13 +453,18 @@ async def get_task(task_id: str):
         
         logger.info(f"Getting status for task: {task_id} - Status: {task['status']}")
         
+        # Ensure documents_downloaded is always present for UI compatibility
+        progress = task["progress"].copy()
+        if "documents_downloaded" not in progress:
+            progress["documents_downloaded"] = progress.get("documents_found", 0)
+        
         return {
             "task_id": task_id,
             "status": task["status"],
             "url": task["url"],
             "created_at": task["created_at"],
             "updated_at": task["updated_at"],
-            "progress": task["progress"],
+            "progress": progress,
             "config": task["config"],
             "result": task["result"],
             "error": task["error"]
@@ -480,13 +489,18 @@ async def list_tasks():
         # Create response list
         tasks = []
         for task in db_tasks:
+            # Ensure documents_downloaded is always present for UI compatibility
+            progress = task["progress"].copy()
+            if "documents_downloaded" not in progress:
+                progress["documents_downloaded"] = progress.get("documents_found", 0)
+            
             tasks.append({
                 "task_id": task["task_id"],
                 "status": task["status"],
                 "url": task["url"],
                 "created_at": task["created_at"],
                 "updated_at": task["updated_at"],
-                "progress": task["progress"]
+                "progress": progress
             })
         
         # Sort by creation date (newest first)
@@ -528,6 +542,74 @@ async def delete_task(task_id: str):
     except Exception as e:
         logger.error(f"Failed to delete task {task_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete task: {str(e)}")
+
+@router.delete("/tasks/{task_id}/delete")
+async def delete_task_with_delete_suffix(task_id: str):
+    """Alias for deleting a crawler task (UI compatibility)."""
+    return await delete_task(task_id)
+
+@router.get("/tasks/{task_id}/documents")
+async def get_task_documents(task_id: str, user_id: str = Query("default")):
+    """Get documents for a specific task from S3."""
+    try:
+        # Get task from database first
+        task = await get_task_from_db(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Use user_id from task if available, otherwise use query parameter
+        task_user_id = task.get("user_id", user_id)
+        
+        # Initialize S3 storage
+        from .s3_document_storage import S3DocumentStorage
+        s3_storage = S3DocumentStorage()
+        
+        # List documents in S3
+        documents = s3_storage.list_documents(task_user_id, task_id)
+        
+        return {
+            "task_id": task_id,
+            "user_id": task_user_id,
+            "documents": documents,
+            "total": len(documents)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get task documents: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get documents: {str(e)}")
+
+@router.get("/tasks/{task_id}/documents/{document_id}")
+async def get_task_document(task_id: str, document_id: str, user_id: str = Query("default")):
+    """Get a specific document from S3."""
+    try:
+        # Get task from database first
+        task = await get_task_from_db(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Use user_id from task if available, otherwise use query parameter
+        task_user_id = task.get("user_id", user_id)
+        
+        # Initialize S3 storage
+        from .s3_document_storage import S3DocumentStorage
+        s3_storage = S3DocumentStorage()
+        
+        # Get document from S3
+        document = s3_storage.get_document(task_user_id, task_id, document_id)
+        
+        if not document:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {
+            "task_id": task_id,
+            "document_id": document_id,
+            "user_id": task_user_id,
+            "document": document
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get task document: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get document: {str(e)}")
 
 logger.info("Crawler router created with real functionality:")
 for route in router.routes:

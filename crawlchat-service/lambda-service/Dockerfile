@@ -8,9 +8,9 @@ RUN yum update -y && yum install -y poppler-utils poppler-cpp-devel && yum clean
 COPY lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY common/ ${LAMBDA_TASK_ROOT}/common/
 
-# Copy crawler-service modules (replaces old crawlchat-crawler)
-COPY crawler-service/src/ ${LAMBDA_TASK_ROOT}/src/
-ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/common:${LAMBDA_TASK_ROOT}/src"
+# Copy only the crawler router (not the entire crawler service)
+COPY crawler-service/src/crawler/ ${LAMBDA_TASK_ROOT}/crawler/
+ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/common:${LAMBDA_TASK_ROOT}"
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 # Copy lambda service files

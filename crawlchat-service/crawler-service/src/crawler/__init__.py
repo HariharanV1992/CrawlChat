@@ -9,6 +9,7 @@ from .link_extractor import LinkExtractor
 from .proxy_manager import ProxyManager
 from .settings_manager import SettingsManager
 from .smart_scrapingbee_manager import SmartScrapingBeeManager
+from .s3_document_storage import S3DocumentStorage
 from .utils import (
     get_optimal_thread_count,
     get_optimal_delay,
@@ -30,6 +31,7 @@ __all__ = [
     'ProxyManager',
     'SettingsManager',
     'SmartScrapingBeeManager',
+    'S3DocumentStorage',
     'get_optimal_thread_count',
     'get_optimal_delay',
     'load_settings_from_file',

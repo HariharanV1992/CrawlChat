@@ -38,13 +38,9 @@ sys.stderr.flush()
 
 # AWS Configuration
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
-SQS_QUEUE_NAME = os.getenv("CRAWLCHAT_SQS_QUEUE", "crawlchat-crawl-tasks")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
 MONGODB_DB = os.getenv("DB_NAME", "stock_market_crawler")
 SCRAPINGBEE_API_KEY = os.getenv("SCRAPINGBEE_API_KEY", "")
-
-# Initialize AWS clients
-sqs_client = boto3.client("sqs", region_name=AWS_REGION)
 
 # Import enhanced crawler service
 logger.info("Starting import of EnhancedCrawlerService...")
@@ -91,46 +87,6 @@ except ImportError as e:
         EnhancedCrawlerService = None
 
 logger.info(f"EnhancedCrawlerService import result: {EnhancedCrawlerService is not None}")
-
-class SQSHelper:
-    def __init__(self, queue_name=SQS_QUEUE_NAME):
-        self.queue_name = queue_name
-        self.queue_url = self.get_queue_url()
-
-    def get_queue_url(self):
-        """Get the queue URL. Assumes the queue already exists."""
-        try:
-            response = sqs_client.get_queue_url(QueueName=self.queue_name)
-            queue_url = response["QueueUrl"]
-            logger.info(f"Successfully got queue URL for {self.queue_name}")
-            return queue_url
-        except sqs_client.exceptions.QueueDoesNotExist:
-            error_msg = f"SQS queue '{self.queue_name}' does not exist."
-            logger.error(error_msg)
-            raise Exception(error_msg)
-        except Exception as e:
-            error_msg = f"Error getting queue URL for {self.queue_name}: {e}"
-            logger.error(error_msg)
-            raise
-
-    def send_crawl_task(self, task_id, user_id):
-        """Send a crawl task message to SQS."""
-        try:
-            message = {"task_id": task_id, "user_id": user_id}
-            message_body = json.dumps(message)
-            
-            response = sqs_client.send_message(
-                QueueUrl=self.queue_url,
-                MessageBody=message_body
-            )
-            
-            logger.info(f"Sent crawl task {task_id} to SQS queue")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error sending crawl task to SQS: {e}"
-            logger.error(error_msg)
-            raise
 
 class MongoDB:
     def __init__(self):
@@ -186,14 +142,7 @@ class MongoDB:
         return self.db[name]
 
 # Initialize services
-sqs_helper = None
 mongodb = None
-
-try:
-    sqs_helper = SQSHelper()
-    logger.info("SQS helper initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize SQS helper: {e}")
 
 try:
     mongodb = MongoDB()
@@ -209,7 +158,7 @@ async def store_crawl_task(task_id: str, url: str, max_doc_count: int, user_id: 
             return False
             
         await mongodb.connect()
-        collection = mongodb.get_collection("crawl_tasks")
+        collection = mongodb.get_collection("crawler_tasks")
         
         task_data = {
             "task_id": task_id,
@@ -237,7 +186,7 @@ async def update_task_status(task_id: str, status: str, result: Dict = None):
             return False
             
         await mongodb.connect()
-        collection = mongodb.get_collection("crawl_tasks")
+        collection = mongodb.get_collection("crawler_tasks")
         
         update_data = {
             "status": status,
@@ -249,8 +198,10 @@ async def update_task_status(task_id: str, status: str, result: Dict = None):
             
             # Extract progress information from result
             if isinstance(result, dict):
-                documents_found = result.get('documents_found', 0)
-                total_documents = result.get('total_documents', 0)
+                # Use S3 stored count if available
+                s3_storage = result.get('s3_storage', {})
+                documents_found = s3_storage.get('stored_count') if s3_storage and 'stored_count' in s3_storage else result.get('documents_found', 0)
+                total_documents = s3_storage.get('stored_count') if s3_storage and 'stored_count' in s3_storage else result.get('total_documents', 0)
                 total_pages = result.get('total_pages', 0)
                 
                 # Update progress fields for UI compatibility
@@ -266,12 +217,16 @@ async def update_task_status(task_id: str, status: str, result: Dict = None):
                 # Also update the legacy fields for compatibility
                 update_data["documents_downloaded"] = documents_found
                 update_data["pages_crawled"] = total_pages
-            
+                
+                # Add S3 storage information
+                if s3_storage:
+                    update_data["s3_storage"] = s3_storage
+        
         await collection.update_one(
             {"task_id": task_id},
             {"$set": update_data}
         )
-        logger.info(f"Updated task {task_id} status to {status} with {result.get('documents_found', 0) if result else 0} documents")
+        logger.info(f"Updated task {task_id} status to {status} with {update_data['progress']['documents_downloaded'] if 'progress' in update_data else 0} documents")
         return True
         
     except Exception as e:
@@ -328,13 +283,22 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
             task_id = event["task_id"]
             url = event["url"]
             config = event["config"]
+            user_id = event.get("user_id", config.get("user_id", "default"))
             max_doc_count = config.get("max_documents", 1)
-            logger.info(f"Direct invocation for existing task {task_id} with URL: {url}, max_doc_count: {max_doc_count}")
+            logger.info(f"Direct invocation for existing task {task_id} with URL: {url}, max_doc_count: {max_doc_count}, user_id: {user_id}")
 
             # Run the crawl
             if EnhancedCrawlerService and SCRAPINGBEE_API_KEY:
-                crawler = EnhancedCrawlerService(api_key=SCRAPINGBEE_API_KEY)
-                result = crawler.crawl_with_max_docs(url, max_doc_count=max_doc_count)
+                crawler = EnhancedCrawlerService(api_key=SCRAPINGBEE_API_KEY, user_id=user_id)
+                result = crawler.crawl_with_max_docs(url, max_doc_count=max_doc_count, task_id=task_id)
+
+                # Truncate document content for MongoDB storage
+                if result and isinstance(result, dict) and 'documents' in result:
+                    for doc in result['documents']:
+                        if 'content' in doc and isinstance(doc['content'], str):
+                            doc['content_snippet'] = doc['content'][:200]
+                            del doc['content']
+
                 logger.info(f"Crawl for task {task_id} completed: {len(result.get('documents', []))} documents found")
                 # Update task status in MongoDB
                 loop = asyncio.new_event_loop()
@@ -391,26 +355,24 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
             loop.close()
         
         # Send task to SQS queue
-        if sqs_helper:
-            try:
-                sqs_helper.send_crawl_task(task_id, user_id)
-                logger.info(f"Sent crawl task {task_id} to SQS queue")
-            except Exception as e:
-                logger.error(f"Failed to send task to SQS: {e}")
-                # Update task status to failed
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
-                finally:
-                    loop.close()
-                return {
-                    'statusCode': 500,
-                    'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
-                }
-        else:
-            logger.warning("SQS helper not available, task not queued")
+        # REMOVE: sqs_helper = SQSHelper()
+        # REMOVE: sqs_helper.send_crawl_task(task_id, user_id)
+        # REMOVE: logger.info(f"Sent crawl task {task_id} to SQS queue")
+        # REMOVE: except Exception as e:
+        # REMOVE: logger.error(f"Failed to send task to SQS: {e}")
+        # REMOVE: loop = asyncio.new_event_loop()
+        # REMOVE: asyncio.set_event_loop(loop)
+        # REMOVE: try:
+        # REMOVE: loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
+        # REMOVE: finally:
+        # REMOVE: loop.close()
+        # REMOVE: return {
+        # REMOVE: 'statusCode': 500,
+        # REMOVE: 'headers': {'Content-Type': 'application/json'},
+        # REMOVE: 'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
+        # REMOVE: }
+        # REMOVE: else:
+        # REMOVE: logger.warning("SQS helper not available, task not queued")
         
         return {
             'statusCode': 200,
@@ -514,26 +476,24 @@ def handle_http_task_creation(event: Dict[str, Any]) -> Dict[str, Any]:
             loop.close()
         
         # Send task to SQS queue
-        if sqs_helper:
-            try:
-                sqs_helper.send_crawl_task(task_id, user_id)
-                logger.info(f"Sent crawl task {task_id} to SQS queue")
-            except Exception as e:
-                logger.error(f"Failed to send task to SQS: {e}")
-                # Update task status to failed
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
-                finally:
-                    loop.close()
-                return {
-                    'statusCode': 500,
-                    'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
-                }
-        else:
-            logger.warning("SQS helper not available, task not queued")
+        # REMOVE: sqs_helper = SQSHelper()
+        # REMOVE: sqs_helper.send_crawl_task(task_id, user_id)
+        # REMOVE: logger.info(f"Sent crawl task {task_id} to SQS queue")
+        # REMOVE: except Exception as e:
+        # REMOVE: logger.error(f"Failed to send task to SQS: {e}")
+        # REMOVE: loop = asyncio.new_event_loop()
+        # REMOVE: asyncio.set_event_loop(loop)
+        # REMOVE: try:
+        # REMOVE: loop.run_until_complete(update_task_status(task_id, "failed", {"error": str(e)}))
+        # REMOVE: finally:
+        # REMOVE: loop.close()
+        # REMOVE: return {
+        # REMOVE: 'statusCode': 500,
+        # REMOVE: 'headers': {'Content-Type': 'application/json'},
+        # REMOVE: 'body': json.dumps({'error': f'Failed to queue task: {str(e)}'}, ensure_ascii=False)
+        # REMOVE: }
+        # REMOVE: else:
+        # REMOVE: logger.warning("SQS helper not available, task not queued")
         
         return {
             'statusCode': 200,

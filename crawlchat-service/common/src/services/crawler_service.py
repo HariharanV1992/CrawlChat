@@ -20,7 +20,8 @@ from common.src.core.config import config
 from common.src.core.exceptions import CrawlerError, DatabaseError
 from common.src.models.auth import User, UserCreate, Token, TokenData
 from common.src.services.document_service import DocumentService
-from common.src.services.sqs_helper import sqs_helper
+# SQS helper removed - no longer needed for direct Lambda invocation
+# from common.src.services.sqs_helper import sqs_helper
 
 logger = logging.getLogger(__name__)
 
@@ -329,31 +330,10 @@ class CrawlerService:
                 print(f"Traceback: {traceback.format_exc()}")
                 raise
             
-            # Send to SQS
-            print("Sending task to SQS...")
-            try:
-                sqs_helper.send_crawl_task(task_id, user_id or task.user_id)
-                logger.info(f"[SQS] Task {task_id} enqueued for crawling")
-                print(f"[SQS] Task {task_id} enqueued for crawling successfully")
-            except Exception as e:
-                error_msg = f"Failed to send task {task_id} to SQS: {e}"
-                logger.error(error_msg)
-                print(f"ERROR: {error_msg}")
-                print(f"Traceback: {traceback.format_exc()}")
-                
-                # Revert task status to PENDING since SQS send failed
-                try:
-                    task.status = TaskStatus.PENDING
-                    await self.db.get_collection("tasks").update_one(
-                        {"task_id": task_id},
-                        {"$set": {"status": task.status.value}}
-                    )
-                    print(f"Reverted task {task_id} status to PENDING")
-                except Exception as revert_error:
-                    logger.error(f"Failed to revert task status: {revert_error}")
-                    print(f"ERROR: Failed to revert task status: {revert_error}")
-                
-                raise
+            # SQS removed - using direct Lambda invocation instead
+            # Task will be processed directly by the crawler Lambda
+            logger.info(f"Task {task_id} ready for direct processing")
+            print(f"Task {task_id} ready for direct processing")
             
             return CrawlStatus(
                 task_id=task_id,

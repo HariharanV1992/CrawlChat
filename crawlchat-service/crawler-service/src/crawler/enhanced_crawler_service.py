@@ -18,24 +18,28 @@ sys.path.insert(0, crawler_path)
 
 from .advanced_crawler import AdvancedCrawler
 from .link_extractor import LinkExtractor
+from .s3_document_storage import S3DocumentStorage
 
 logger = logging.getLogger(__name__)
 
 class EnhancedCrawlerService:
-    """Enhanced crawler service with max document count support."""
+    """Enhanced crawler service with max document count support and S3 storage."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, user_id: str = "default"):
         self.api_key = api_key
+        self.user_id = user_id
         self.documents = []
         self.visited_urls = set()
+        self.s3_storage = S3DocumentStorage()
         
-    def crawl_with_max_docs(self, base_url: str, max_doc_count: int = 1) -> Dict[str, Any]:
+    def crawl_with_max_docs(self, base_url: str, max_doc_count: int = 1, task_id: str = None) -> Dict[str, Any]:
         """
-        Crawl with max document count logic.
+        Crawl with max document count logic and S3 storage.
         
         Args:
             base_url: URL to crawl
             max_doc_count: Maximum number of documents to extract
+            task_id: Task identifier for S3 storage
             
         Returns:
             Dictionary with crawl results
@@ -68,6 +72,13 @@ class EnhancedCrawlerService:
             # Close crawler
             crawler.close()
             
+            # Store documents in S3 if task_id is provided
+            s3_results = None
+            if task_id and self.documents:
+                logger.info(f"Storing {len(self.documents)} documents in S3 for task {task_id}")
+                s3_results = self.s3_storage.store_documents_batch(self.user_id, task_id, self.documents)
+                logger.info(f"S3 storage results: {s3_results['stored_count']} stored, {s3_results['failed_count']} failed")
+            
             # Prepare response
             response = {
                 "success": True,
@@ -77,7 +88,8 @@ class EnhancedCrawlerService:
                 "documents": self.documents,
                 "crawl_time": datetime.utcnow().isoformat(),
                 "total_pages": len(self.visited_urls),
-                "total_documents": len(self.documents)
+                "total_documents": len(self.documents),
+                "s3_storage": s3_results
             }
             
             logger.info(f"Enhanced crawl completed: {len(self.documents)} documents found")
