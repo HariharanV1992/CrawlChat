@@ -271,81 +271,76 @@ class AdvancedCrawler:
             # Use optimized parameters for binary file downloads
             params = {
                 'render_js': 'False',  # No JS rendering for file downloads
-                'timeout': '60',  # Longer timeout for file downloads
+                'timeout': '1410',  # Maximum timeout in milliseconds (1.41 seconds)
                 'block_resources': 'False',  # Don't block resources for binary files
                 'premium_proxy': 'True',  # Use premium proxy for better reliability
-                'forward_headers': 'True',  # Forward headers for better compatibility
+                'forward_headers': 'True'  # Forward original headers
             }
             
-            # Add special headers for binary content
+            logger.info(f"Making request with params: {params}")
+            
+            # Set headers for binary content
             headers = {
                 'Accept': '*/*',  # Accept all content types
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
+                'Pragma': 'no-cache'
             }
             
-            logger.info(f"Making request with params: {params}")
             logger.info(f"Request headers: {headers}")
             
-            # Make the request with optimized parameters
+            # Make the request
             response = self.scrapingbee_client.get(url, params=params, headers=headers)
-            content = response.content
             
             logger.info(f"Response status: {response.status_code}")
             logger.info(f"Response headers: {dict(response.headers)}")
-            logger.info(f"Content length: {len(content)} bytes")
-            logger.info(f"Content preview: {content[:100]}")  # First 100 bytes
             
-            # Check file size (ScrapingBee has 2MB limit)
-            if len(content) > 2 * 1024 * 1024:  # 2MB
-                logger.warning(f"File size ({len(content)} bytes) exceeds 2MB limit")
+            # Get content
+            content = response.content
+            content_length = len(content)
+            logger.info(f"Content length: {content_length} bytes")
+            
+            # Log first 100 bytes for debugging
+            content_preview = content[:100] if content else b''
+            logger.info(f"Content preview: {content_preview}")
+            
+            # Check if request was successful
+            if response.status_code != 200:
+                logger.error(f"Failed to download {url}: HTTP {response.status_code}")
                 return {
                     "success": False,
+                    "error": f"HTTP {response.status_code}",
                     "url": url,
-                    "status_code": 413,  # Payload Too Large
-                    "error": "File size exceeds 2MB limit",
-                    "download_time": round(time.time() - start_time, 2),
-                    "stats": {"requests": 1, "successes": 0, "failures": 1},
+                    "content_length": content_length
                 }
             
             # Determine file type
-            file_type = self._determine_file_type(url, content)
+            file_type = self._determine_file_type(url, response.headers.get('content-type', ''))
             
-            # Get content type from response headers
-            content_type = response.headers.get('content-type', file_type)
-            
+            # Calculate download time
             download_time = time.time() - start_time
             
-            result = {
+            logger.info(f"Successfully downloaded {url} ({content_length} bytes, {file_type}) in {download_time:.2f}s")
+            
+            return {
                 "success": True,
                 "url": url,
-                "status_code": getattr(response, 'status_code', 200),
                 "content": content,
-                "content_length": len(content),
-                "file_type": file_type,
-                "content_type": content_type,
-                "download_time": round(download_time, 2),
-                "proxy_mode": "premium",
-                "headers": dict(response.headers),
-                "stats": {"requests": 1, "successes": 1, "failures": 0},
+                "content_type": file_type,
+                "content_length": content_length,
+                "download_time": download_time,
+                "headers": dict(response.headers)
             }
-            
-            logger.info(f"Successfully downloaded {url} ({len(content)} bytes, {file_type}) in {download_time:.2f}s")
-            return result
             
         except Exception as e:
             download_time = time.time() - start_time
-            logger.error(f"Failed to download {url}: {e}")
-            
+            logger.error(f"Error downloading {url}: {e}")
             return {
                 "success": False,
-                "url": url,
-                "status_code": 500,  # Internal Server Error
                 "error": str(e),
-                "download_time": round(download_time, 2),
-                "stats": {"requests": 1, "successes": 0, "failures": 1},
+                "url": url,
+                "download_time": download_time
             }
     
     def take_screenshot(self, url: str, full_page: bool = True, 
@@ -472,93 +467,95 @@ class AdvancedCrawler:
         """Crawl with JavaScript scenario."""
         return self.crawl_with_js_scenario(url, scenario)
     
-    def _determine_file_type(self, url: str, content: bytes) -> str:
-        """Determine file type from URL and content."""
+    def _determine_file_type(self, url: str, content_type: str) -> str:
+        """Determine file type from URL and content type."""
         # Try to determine from URL first
-        parsed_url = urlparse(url)
-        path = parsed_url.path.lower()
+        url_lower = url.lower()
         
-        # Common file extensions
-        if path.endswith('.pdf'):
+        if url_lower.endswith('.pdf'):
             return 'application/pdf'
-        elif path.endswith(('.jpg', '.jpeg')):
+        elif url_lower.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
-        elif path.endswith('.png'):
+        elif url_lower.endswith('.png'):
             return 'image/png'
-        elif path.endswith('.gif'):
+        elif url_lower.endswith('.gif'):
             return 'image/gif'
-        elif path.endswith('.bmp'):
+        elif url_lower.endswith('.bmp'):
             return 'image/bmp'
-        elif path.endswith('.tiff') or path.endswith('.tif'):
+        elif url_lower.endswith(('.tiff', '.tif')):
             return 'image/tiff'
-        elif path.endswith('.webp'):
+        elif url_lower.endswith('.webp'):
             return 'image/webp'
-        elif path.endswith('.svg'):
-            return 'image/svg+xml'
-        elif path.endswith(('.doc', '.docx')):
+        elif url_lower.endswith('.zip'):
+            return 'application/zip'
+        elif url_lower.endswith('.rar'):
+            return 'application/x-rar-compressed'
+        elif url_lower.endswith('.7z'):
+            return 'application/x-7z-compressed'
+        elif url_lower.endswith(('.tar', '.tar.gz', '.tgz')):
+            return 'application/x-tar'
+        elif url_lower.endswith('.gz'):
+            return 'application/gzip'
+        elif url_lower.endswith(('.doc', '.docx')):
             return 'application/msword'
-        elif path.endswith(('.xls', '.xlsx')):
+        elif url_lower.endswith(('.xls', '.xlsx')):
             return 'application/vnd.ms-excel'
-        elif path.endswith(('.ppt', '.pptx')):
+        elif url_lower.endswith(('.ppt', '.pptx')):
             return 'application/vnd.ms-powerpoint'
-        elif path.endswith('.txt'):
+        elif url_lower.endswith('.txt'):
             return 'text/plain'
-        elif path.endswith('.csv'):
-            return 'text/csv'
-        elif path.endswith('.json'):
+        elif url_lower.endswith('.json'):
             return 'application/json'
-        elif path.endswith('.xml'):
+        elif url_lower.endswith('.xml'):
             return 'application/xml'
-        elif path.endswith('.zip'):
-            return 'application/zip'
-        elif path.endswith('.rar'):
-            return 'application/x-rar-compressed'
-        elif path.endswith('.7z'):
-            return 'application/x-7z-compressed'
-        elif path.endswith('.tar'):
-            return 'application/x-tar'
-        elif path.endswith('.gz'):
-            return 'application/gzip'
+        elif url_lower.endswith('.csv'):
+            return 'text/csv'
         
-        # Try to determine from content (magic bytes)
-        if content.startswith(b'%PDF'):
-            return 'application/pdf'
-        elif content.startswith(b'\xff\xd8\xff'):
-            return 'image/jpeg'
-        elif content.startswith(b'\x89PNG'):
-            return 'image/png'
-        elif content.startswith(b'GIF8'):
-            return 'image/gif'
-        elif content.startswith(b'BM'):
-            return 'image/bmp'
-        elif content.startswith(b'II*\x00') or content.startswith(b'MM\x00*'):
-            return 'image/tiff'
-        elif content.startswith(b'RIFF') and content[8:12] == b'WEBP':
-            return 'image/webp'
-        elif content.startswith(b'PK\x03\x04'):
-            return 'application/zip'
-        elif content.startswith(b'Rar!'):
-            return 'application/x-rar-compressed'
-        elif content.startswith(b'7z\xbc\xaf\x27\x1c'):
-            return 'application/x-7z-compressed'
-        elif content.startswith(b'ustar'):
-            return 'application/x-tar'
-        elif content.startswith(b'\x1f\x8b'):
-            return 'application/gzip'
-        
-        # Try to determine if it's HTML
-        if content.startswith(b'<!DOCTYPE') or content.startswith(b'<html'):
-            return 'text/html'
-        
-        # Try to determine if it's JSON
-        try:
-            content.decode('utf-8')
-            if content.strip().startswith(b'{') or content.strip().startswith(b'['):
+        # Try to determine from content type header
+        if content_type:
+            content_type_lower = content_type.lower()
+            if 'pdf' in content_type_lower:
+                return 'application/pdf'
+            elif 'jpeg' in content_type_lower or 'jpg' in content_type_lower:
+                return 'image/jpeg'
+            elif 'png' in content_type_lower:
+                return 'image/png'
+            elif 'gif' in content_type_lower:
+                return 'image/gif'
+            elif 'bmp' in content_type_lower:
+                return 'image/bmp'
+            elif 'tiff' in content_type_lower:
+                return 'image/tiff'
+            elif 'webp' in content_type_lower:
+                return 'image/webp'
+            elif 'zip' in content_type_lower:
+                return 'application/zip'
+            elif 'rar' in content_type_lower:
+                return 'application/x-rar-compressed'
+            elif '7z' in content_type_lower:
+                return 'application/x-7z-compressed'
+            elif 'tar' in content_type_lower:
+                return 'application/x-tar'
+            elif 'gzip' in content_type_lower:
+                return 'application/gzip'
+            elif 'msword' in content_type_lower or 'word' in content_type_lower:
+                return 'application/msword'
+            elif 'excel' in content_type_lower or 'spreadsheet' in content_type_lower:
+                return 'application/vnd.ms-excel'
+            elif 'powerpoint' in content_type_lower or 'presentation' in content_type_lower:
+                return 'application/vnd.ms-powerpoint'
+            elif 'text/plain' in content_type_lower:
+                return 'text/plain'
+            elif 'json' in content_type_lower:
                 return 'application/json'
-        except:
-            pass
+            elif 'xml' in content_type_lower:
+                return 'application/xml'
+            elif 'csv' in content_type_lower:
+                return 'text/csv'
+            elif 'html' in content_type_lower:
+                return 'text/html'
         
-        # Default to binary
+        # Default to binary if we can't determine
         return 'application/octet-stream'
     
     def _get_used_proxy_mode(self, url: str) -> str:
