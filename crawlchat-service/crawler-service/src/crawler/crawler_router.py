@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 import asyncio
 
-# Setup logger first
+# Force deployment - trigger GitHub Actions
 logger = logging.getLogger(__name__)
 
 # Import database modules
