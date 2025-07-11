@@ -53,15 +53,16 @@ class EnhancedCrawlerService:
             # Extract domain for link filtering
             domain = urlparse(base_url).netloc
             
-            if max_doc_count == 1:
-                # Single page crawl
-                logger.info(f"Crawling single page: {base_url}")
-                result = self._crawl_and_save_page(crawler, base_url, domain)
-                if result:
-                    self.documents.append(result)
-            else:
-                # Multi-page crawl with document extraction
-                logger.info(f"Crawling with max_doc_count={max_doc_count}: {base_url}")
+            # Always crawl the main page first
+            logger.info(f"Crawling main page: {base_url}")
+            main_page_doc = self._crawl_and_save_page(crawler, base_url, domain)
+            if main_page_doc:
+                self.documents.append(main_page_doc)
+                logger.info(f"Added main page document: {base_url}")
+            
+            # If we need more documents, do recursive crawling
+            if max_doc_count > 1 and len(self.documents) < max_doc_count:
+                logger.info(f"Starting recursive crawl for additional documents (max_doc_count={max_doc_count})")
                 self._crawl_recursive(crawler, base_url, domain, max_doc_count)
             
             # Close crawler
@@ -107,17 +108,20 @@ class EnhancedCrawlerService:
                 logger.warning(f"Failed to crawl {url}: {result.get('error')}")
                 return None
             
-            # Extract title from HTML
+            # Extract title and clean content from HTML
             title = self._extract_title(result['content'])
+            clean_content = self._extract_clean_content(result['content'])
             
             # Create document object
             document = {
                 "id": f"doc_{len(self.documents) + 1}",
                 "url": url,
                 "title": title,
-                "content": result['content'],
+                "content": clean_content,  # Use cleaned content
+                "raw_html": result['content'],  # Keep original HTML too
                 "content_type": "html",
-                "content_length": result.get('content_length', 0),
+                "content_length": len(clean_content),
+                "raw_content_length": result.get('content_length', 0),
                 "crawl_time": result.get('crawl_time', 0),
                 "status_code": result.get('status_code', 0),
                 "headers": result.get('headers', {}),
@@ -243,6 +247,28 @@ class EnhancedCrawlerService:
             return "Untitled Document"
         except Exception:
             return "Untitled Document"
+    
+    def _extract_clean_content(self, html_content: str) -> str:
+        """Extract clean text content from HTML."""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Remove script and style elements
+            for script in soup(["script", "style", "nav", "footer", "header"]):
+                script.decompose()
+            
+            # Get text content
+            text = soup.get_text()
+            
+            # Clean up whitespace
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = ' '.join(chunk for chunk in chunks if chunk)
+            
+            return text
+        except Exception as e:
+            logger.error(f"Error extracting clean content: {e}")
+            return html_content
     
     def _extract_filename(self, url: str) -> str:
         """Extract filename from URL."""
