@@ -25,12 +25,21 @@ logger = logging.getLogger(__name__)
 class EnhancedCrawlerService:
     """Enhanced crawler service with max document count support and S3 storage."""
     
-    def __init__(self, api_key: str, user_id: str = "default"):
+    def __init__(self, api_key: str, user_id: str = "default", task_id: str = None):
         self.api_key = api_key
         self.user_id = user_id
+        self.task_id = task_id
         self.documents = []
         self.visited_urls = set()
         self.s3_storage = S3DocumentStorage()
+        self.mongodb_helper = None
+        
+        # Initialize MongoDB helper for progress updates
+        try:
+            from .mongodb_helper import MongoDBHelper
+            self.mongodb_helper = MongoDBHelper()
+        except ImportError:
+            logger.warning("MongoDB helper not available for progress tracking")
         
     def crawl_with_max_docs(self, base_url: str, max_doc_count: int = 1, task_id: str = None) -> Dict[str, Any]:
         """
@@ -50,9 +59,16 @@ class EnhancedCrawlerService:
         self.documents = []
         self.visited_urls = set()
         
+        # Update task_id if provided
+        if task_id:
+            self.task_id = task_id
+        
         try:
             # Initialize crawler
             crawler = AdvancedCrawler(self.api_key)
+            
+            # Update initial progress
+            self._update_progress(0, max_doc_count, "Starting crawl...")
             
             # Extract domain for link filtering
             domain = urlparse(base_url).netloc
@@ -63,6 +79,8 @@ class EnhancedCrawlerService:
             if main_page_doc:
                 self.documents.append(main_page_doc)
                 logger.info(f"Added main page document: {base_url}")
+                # Update progress after adding main page
+                self._update_progress(len(self.documents), max_doc_count, f"Found main page document")
             
             # Always do recursive crawling if we need more documents
             if len(self.documents) < max_doc_count:
@@ -88,6 +106,8 @@ class EnhancedCrawlerService:
                             if doc:
                                 self.documents.append(doc)
                                 logger.info(f"Added document: {doc_url} (total: {len(self.documents)}/{max_doc_count})")
+                                # Update progress after adding document
+                                self._update_progress(len(self.documents), max_doc_count, f"Found document: {doc_url}")
                         
                         # Then, crawl sub-pages if we still have room (limit to first 10 to avoid infinite recursion)
                         sub_pages_to_crawl = page_links[:10]  # Limit to first 10 sub-pages
@@ -159,7 +179,7 @@ class EnhancedCrawlerService:
                 url, 
                 content_type="generic",
                 render_js=False,  # Disable JS for speed
-                timeout=30,  # 30 second timeout
+                timeout=30000,  # 30 second timeout in milliseconds
                 block_resources=True,  # Block images/CSS for speed
                 wait=1000  # Wait 1 second after page load
             )
@@ -171,7 +191,7 @@ class EnhancedCrawlerService:
                     url, 
                     content_type="generic",
                     render_js=True,
-                    timeout=30,
+                    timeout=30000,  # 30 second timeout in milliseconds
                     wait=2000  # Wait 2 seconds for JS to load
                 )
             
@@ -412,4 +432,26 @@ class EnhancedCrawlerService:
                     return filename
             return "unknown_file"
         except Exception:
-            return "unknown_file" 
+            return "unknown_file"
+    
+    def _update_progress(self, current_count: int, max_count: int, message: str = ""):
+        """Update progress in MongoDB for real-time tracking."""
+        if not self.mongodb_helper or not self.task_id:
+            return
+        
+        try:
+            progress_data = {
+                "documents_found": current_count,
+                "documents_downloaded": current_count,
+                "max_documents": max_count,
+                "progress_percentage": min(100, int((current_count / max_count) * 100)) if max_count > 0 else 0,
+                "status_message": message,
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            
+            # Update task progress in MongoDB
+            self.mongodb_helper.update_task_progress(self.task_id, progress_data)
+            logger.info(f"Progress updated: {current_count}/{max_count} documents - {message}")
+            
+        except Exception as e:
+            logger.error(f"Failed to update progress: {e}") 

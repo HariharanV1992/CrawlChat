@@ -128,7 +128,13 @@ class AdvancedCrawler:
             if not render_js:
                 params['render_js'] = 'False'
             if timeout:
-                params['timeout'] = str(timeout)
+                # Ensure timeout is in milliseconds and within ScrapingBee limits (1000-141000)
+                timeout_ms = int(timeout)
+                if timeout_ms < 1000:
+                    timeout_ms = 1000
+                elif timeout_ms > 141000:
+                    timeout_ms = 141000
+                params['timeout'] = str(timeout_ms)
             if wait:
                 params['wait'] = str(wait)
             if wait_for:

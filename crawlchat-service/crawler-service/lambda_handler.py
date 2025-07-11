@@ -289,7 +289,7 @@ def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
 
             # Run the crawl
             if EnhancedCrawlerService and SCRAPINGBEE_API_KEY:
-                crawler = EnhancedCrawlerService(api_key=SCRAPINGBEE_API_KEY, user_id=user_id)
+                crawler = EnhancedCrawlerService(api_key=SCRAPINGBEE_API_KEY, user_id=user_id, task_id=task_id)
                 result = crawler.crawl_with_max_docs(url, max_doc_count=max_doc_count, task_id=task_id)
 
                 # Truncate document content for MongoDB storage

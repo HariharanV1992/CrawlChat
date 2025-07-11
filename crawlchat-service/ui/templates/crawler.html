@@ -1135,11 +1135,13 @@
                 ...taskData,
                 status: 'pending',
                 progress: {
-                    documents_downloaded: progress.documents_downloaded || 0,
-                    pages_crawled: progress.pages_crawled || 0
+                    documents_downloaded: progress.documents_downloaded || progress.documents_found || 0,
+                    pages_crawled: progress.pages_crawled || 0,
+                    max_documents: progress.max_documents || 0,
+                    status_message: progress.status_message || ""
                 },
-                // Set max_documents from progress.total_documents or config
-                max_documents: progress.total_documents || 
+                // Set max_documents from progress.max_documents, progress.total_documents or config
+                max_documents: progress.max_documents || progress.total_documents || 
                               (taskData.config && taskData.config.max_documents) || 1
             };
             updateTasksDisplay();
@@ -1200,9 +1202,9 @@
                 
                 // Ensure progress object exists with default values
                 const progress = task.progress || { documents_downloaded: 0, pages_crawled: 0 };
-                const documentsDownloaded = progress.documents_downloaded || 0;
+                const documentsDownloaded = progress.documents_downloaded || progress.documents_found || 0;
                 const pagesCrawled = progress.pages_crawled || 0;
-                const maxDocuments = task.max_documents || 1;
+                const maxDocuments = progress.max_documents || task.max_documents || 1;
                 
                 const statusColor = getStatusColor(task.status);
                 const progressPercent = documentsDownloaded / maxDocuments * 100;
@@ -1236,6 +1238,9 @@
                                 <div class="w-full bg-gray-200 rounded-full h-2">
                                     <div class="progress-bar bg-green-600 h-2 rounded-full" style="width: ${progressPercent}%"></div>
                                 </div>
+                                ${task.progress && task.progress.status_message ? `
+                                    <p class="text-xs text-gray-500 mt-1">${task.progress.status_message}</p>
+                                ` : ''}
                             </div>
                             
                             <div class="flex justify-between text-sm text-gray-600">
@@ -1441,12 +1446,14 @@
                             const progress = task.progress || {};
                             activeTasks[task.task_id] = {
                                 ...task,
-                                progress: {
-                                    documents_downloaded: progress.documents_downloaded || 0,
-                                    pages_crawled: progress.pages_crawled || 0
-                                },
-                                // Set max_documents from progress.total_documents or config
-                                max_documents: progress.total_documents || 
+                                                progress: {
+                    documents_downloaded: progress.documents_downloaded || progress.documents_found || 0,
+                    pages_crawled: progress.pages_crawled || 0,
+                    max_documents: progress.max_documents || 0,
+                    status_message: progress.status_message || ""
+                },
+                // Set max_documents from progress.max_documents, progress.total_documents or config
+                max_documents: progress.max_documents || progress.total_documents || 
                                               (task.config && task.config.max_documents) || 1
                             };
                             
@@ -1476,11 +1483,13 @@
                     ...activeTasks[taskId],
                     ...taskStatus,
                     progress: {
-                        documents_downloaded: newProgress.documents_downloaded || currentProgress.documents_downloaded || 0,
-                        pages_crawled: newProgress.pages_crawled || currentProgress.pages_crawled || 0
+                        documents_downloaded: newProgress.documents_downloaded || newProgress.documents_found || currentProgress.documents_downloaded || currentProgress.documents_found || 0,
+                        pages_crawled: newProgress.pages_crawled || currentProgress.pages_crawled || 0,
+                        max_documents: newProgress.max_documents || currentProgress.max_documents || 0,
+                        status_message: newProgress.status_message || currentProgress.status_message || ""
                     },
                     // Update max_documents if available in new status
-                    max_documents: newProgress.total_documents || 
+                    max_documents: newProgress.max_documents || newProgress.total_documents || 
                                   (taskStatus.config && taskStatus.config.max_documents) ||
                                   activeTasks[taskId].max_documents || 1
                 };
