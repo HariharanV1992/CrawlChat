@@ -285,16 +285,17 @@ async def start_task(task_id: str):
         logger.info(f"Starting crawler task: {task_id}")
         
         # Run the crawl task directly in this Lambda function
-        # Since we don't have a separate crawler Lambda, we'll run it here
+        # We'll run it synchronously to ensure it completes
         logger.info(f"Starting local crawl execution for task {task_id}")
         
-        # Create background task to run crawling
-        asyncio.create_task(run_crawl_task(task_id))
+        # Run the crawl task directly (not asynchronously)
+        # This ensures the task completes before the Lambda function returns
+        await run_crawl_task(task_id)
         
         return {
             "task_id": task_id,
-            "status": "running",
-            "message": "Task started successfully - Crawling in progress"
+            "status": "completed",
+            "message": "Task completed successfully"
         }
     except Exception as e:
         logger.error(f"Failed to start task {task_id}: {e}")
@@ -325,8 +326,16 @@ async def run_crawl_task(task_id: str):
         
         # Initialize enhanced crawler service
         logger.info(f"Initializing EnhancedCrawlerService for task {task_id}")
-        enhanced_crawler = EnhancedCrawlerService(api_key=api_key)
-        logger.info(f"EnhancedCrawlerService initialized successfully")
+        try:
+            enhanced_crawler = EnhancedCrawlerService(api_key=api_key)
+            logger.info(f"EnhancedCrawlerService initialized successfully")
+        except Exception as init_error:
+            logger.error(f"Failed to initialize EnhancedCrawlerService: {init_error}")
+            task["status"] = "failed"
+            task["error"] = f"Failed to initialize crawler: {str(init_error)}"
+            task["updated_at"] = datetime.utcnow().isoformat()
+            await save_task_to_db(task)
+            return
         
         try:
             # Get max document count from config
@@ -335,8 +344,19 @@ async def run_crawl_task(task_id: str):
             
             # Use enhanced crawler with max document count support
             logger.info(f"Calling enhanced_crawler.crawl_with_max_docs for task {task_id}")
-            result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
-            logger.info(f"Crawl completed for task {task_id}. Result: {result}")
+            logger.info(f"Parameters: url={url}, max_doc_count={max_documents}")
+            
+            try:
+                result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
+                logger.info(f"Crawl completed for task {task_id}. Result: {result}")
+            except Exception as crawl_error:
+                logger.error(f"Exception during crawl_with_max_docs for task {task_id}: {crawl_error}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                task["status"] = "failed"
+                task["error"] = f"Crawl execution failed: {str(crawl_error)}"
+                task["updated_at"] = datetime.utcnow().isoformat()
+                await save_task_to_db(task)
+                return
             
             # Update task with enhanced results
             success = result.get("success", False)
