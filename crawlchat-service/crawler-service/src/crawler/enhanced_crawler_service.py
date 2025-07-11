@@ -16,8 +16,8 @@ from datetime import datetime
 crawler_path = os.path.join(os.path.dirname(__file__))
 sys.path.insert(0, crawler_path)
 
-from advanced_crawler import AdvancedCrawler
-from link_extractor import LinkExtractor
+from .advanced_crawler import AdvancedCrawler
+from .link_extractor import LinkExtractor
 
 logger = logging.getLogger(__name__)
 
