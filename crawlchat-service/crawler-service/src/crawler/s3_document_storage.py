@@ -194,11 +194,31 @@ class S3DocumentStorage:
                 content_to_store = raw_html
                 s3_content_type = "text/html"
             
+            # Handle binary content (PDFs, images, etc.)
+            if document.get("is_binary", False) and document.get("content_base64"):
+                # Convert base64 back to binary for storage
+                try:
+                    binary_content = base64.b64decode(document["content_base64"])
+                    content_to_store = binary_content
+                    logger.info(f"Storing binary content: {len(binary_content)} bytes")
+                except Exception as e:
+                    logger.error(f"Failed to decode base64 content: {e}")
+                    # Fallback to text content
+                    content_to_store = content
+            
+            # Prepare body for S3 upload
+            if isinstance(content_to_store, str):
+                body = content_to_store.encode('utf-8')
+            elif isinstance(content_to_store, bytes):
+                body = content_to_store
+            else:
+                body = str(content_to_store).encode('utf-8')
+            
             # Upload content file to S3
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=s3_key,
-                Body=content_to_store.encode('utf-8') if isinstance(content_to_store, str) else content_to_store,
+                Body=body,
                 ContentType=s3_content_type,
                 Metadata={
                     'document_id': document_id,
@@ -237,7 +257,7 @@ class S3DocumentStorage:
                 "metadata_key": metadata_key,
                 "document_id": document_id,
                 "content_type": content_type,
-                "size": len(content_to_store) if isinstance(content_to_store, str) else len(content_to_store),
+                "size": len(body),
                 "metadata_size": len(json_metadata)
             }
             
@@ -338,7 +358,15 @@ class S3DocumentStorage:
                 
                 # For text content, decode as UTF-8
                 if content_type in ["html", "text/html", "text/plain", "text/csv", "application/json"]:
-                    content = content.decode('utf-8')
+                    try:
+                        content = content.decode('utf-8')
+                    except UnicodeDecodeError:
+                        # If UTF-8 fails, try other encodings
+                        try:
+                            content = content.decode('latin-1')
+                        except:
+                            # Keep as bytes if all decoding fails
+                            pass
                 
                 # Combine metadata and content
                 document = metadata.copy()
@@ -380,7 +408,15 @@ class S3DocumentStorage:
                     
                     # For text content, decode as UTF-8
                     if content_type in ["html", "text/html", "text/plain", "text/csv", "application/json"]:
-                        content = content.decode('utf-8')
+                        try:
+                            content = content.decode('utf-8')
+                        except UnicodeDecodeError:
+                            # If UTF-8 fails, try other encodings
+                            try:
+                                content = content.decode('latin-1')
+                            except:
+                                # Keep as bytes if all decoding fails
+                                pass
                     
                     # Create basic document object
                     document = {
