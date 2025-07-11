@@ -64,9 +64,9 @@ class EnhancedCrawlerService:
             if len(self.documents) < max_doc_count:
                 logger.info(f"Starting recursive crawl for additional documents (current: {len(self.documents)}, target: {max_doc_count})")
                 # Extract links from the main page and crawl sub-pages
-                if main_page_doc and main_page_doc.get('content'):
+                if main_page_doc and main_page_doc.get('raw_html'):
                     try:
-                        soup = BeautifulSoup(main_page_doc['content'], 'html.parser')
+                        soup = BeautifulSoup(main_page_doc['raw_html'], 'html.parser')
                         link_extractor = LinkExtractor(domain)
                         
                         # Extract page links and document links
@@ -94,14 +94,14 @@ class EnhancedCrawlerService:
                                 logger.info(f"Reached max document count, stopping page crawling")
                                 break
                             
-                            logger.info(f"Recursively crawling sub-page: {page_url} (depth: {depth + 1})")
+                            logger.info(f"Recursively crawling sub-page: {page_url} (depth: 1)")
                             # Recursively crawl sub-pages
-                            self._crawl_recursive(crawler, page_url, domain, max_doc_count, depth + 1)
+                            self._crawl_recursive(crawler, page_url, domain, max_doc_count, 1)
                             
                     except Exception as e:
                         logger.error(f"Error in recursive crawl for main page: {e}")
                 else:
-                    logger.warning(f"No content found in main page, skipping link extraction")
+                    logger.warning(f"No raw HTML found in main page, skipping link extraction")
             else:
                 logger.info(f"Already have {len(self.documents)} documents, no need for recursive crawl")
             
@@ -170,6 +170,15 @@ class EnhancedCrawlerService:
             # Extract title and clean content from HTML
             title = self._extract_title(result['content'])
             clean_content = self._extract_clean_content(result['content'])
+            
+            # Debug: Log content lengths
+            raw_content_length = len(result.get('content', ''))
+            clean_content_length = len(clean_content)
+            logger.info(f"Content lengths for {url}: raw={raw_content_length}, clean={clean_content_length}")
+            
+            # Debug: Log first 200 characters of raw HTML
+            raw_html_preview = result.get('content', '')[:200]
+            logger.info(f"Raw HTML preview for {url}: {raw_html_preview}")
             
             # Create document object
             document = {
@@ -264,9 +273,9 @@ class EnhancedCrawlerService:
                 return
             
             # Extract links from the page
-            if page_doc and page_doc.get('content'):
+            if page_doc and page_doc.get('raw_html'):
                 try:
-                    soup = BeautifulSoup(page_doc['content'], 'html.parser')
+                    soup = BeautifulSoup(page_doc['raw_html'], 'html.parser')
                     link_extractor = LinkExtractor(domain)
                     
                     # Extract page links and document links
@@ -291,14 +300,14 @@ class EnhancedCrawlerService:
                             logger.info(f"Reached max document count, stopping page crawling")
                             break
                         
-                        logger.info(f"Recursively crawling sub-page: {page_url}")
+                        logger.info(f"Recursively crawling sub-page: {page_url} (depth: {depth + 1})")
                         # Recursively crawl sub-pages
-                        self._crawl_recursive(crawler, page_url, domain, max_doc_count)
+                        self._crawl_recursive(crawler, page_url, domain, max_doc_count, depth + 1)
                         
                 except Exception as e:
                     logger.error(f"Error in recursive crawl for {url}: {e}")
             else:
-                logger.warning(f"No content found in page {url}, skipping link extraction")
+                logger.warning(f"No raw HTML found in page {url}, skipping link extraction")
                     
         except Exception as e:
             logger.error(f"Error crawling {url}: {e}")
