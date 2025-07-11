@@ -52,6 +52,60 @@ class SmartScrapingBeeManager:
         self.session.mount('http://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
         self.session.mount('https://', requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10))
     
+    def make_binary_request(self, url: str, timeout: int = 30) -> requests.Response:
+        """
+        Make a request specifically for binary files (PDFs, images, etc.).
+        Uses no-JS rendering and proper headers for binary content.
+        
+        Args:
+            url: Target URL to download
+            timeout: Request timeout in seconds
+        
+        Returns:
+            requests.Response object
+        """
+        logger.info(f"Making binary request for {url}")
+        
+        params = {
+            "api_key": self.api_key,
+            "url": url,
+            # No JavaScript rendering for binary files
+            "render_js": "false",
+            # Don't block resources for binary files
+            "block_resources": "false",
+            # Use premium proxy for better reliability
+            "premium_proxy": "true",
+        }
+        params.update(self.base_options)
+        
+        # Special headers for binary content
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',  # Accept all content types
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+        }
+        
+        try:
+            response = self.session.get(
+                self.base_url,
+                params=params,
+                headers=headers,
+                timeout=timeout,
+                verify=False
+            )
+            
+            logger.info(f"Binary request completed for {url}: status={response.status_code}, size={len(response.content)} bytes")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Binary request failed for {url}: {e}")
+            raise
+
     def make_smart_request(self, url: str, content_checker=None, timeout: int = 30) -> requests.Response:
         """
         Make a smart request that tries no-JS first, then retries with JS if needed.

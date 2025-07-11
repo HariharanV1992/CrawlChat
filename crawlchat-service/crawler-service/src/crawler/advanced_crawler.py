@@ -268,15 +268,35 @@ class AdvancedCrawler:
         start_time = time.time()
         
         try:
-            # Use ScrapingBee client to download file
-            # For file downloads, we typically want render_js=False
+            # Use optimized parameters for binary file downloads
             params = {
                 'render_js': 'False',  # No JS rendering for file downloads
-                'timeout': '60'  # Longer timeout for file downloads
+                'timeout': '60',  # Longer timeout for file downloads
+                'block_resources': 'False',  # Don't block resources for binary files
+                'premium_proxy': 'True',  # Use premium proxy for better reliability
+                'forward_headers': 'True',  # Forward headers for better compatibility
             }
             
-            response = self.scrapingbee_client.get(url, params=params)
+            # Add special headers for binary content
+            headers = {
+                'Accept': '*/*',  # Accept all content types
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+            }
+            
+            logger.info(f"Making request with params: {params}")
+            logger.info(f"Request headers: {headers}")
+            
+            # Make the request with optimized parameters
+            response = self.scrapingbee_client.get(url, params=params, headers=headers)
             content = response.content
+            
+            logger.info(f"Response status: {response.status_code}")
+            logger.info(f"Response headers: {dict(response.headers)}")
+            logger.info(f"Content length: {len(content)} bytes")
+            logger.info(f"Content preview: {content[:100]}")  # First 100 bytes
             
             # Check file size (ScrapingBee has 2MB limit)
             if len(content) > 2 * 1024 * 1024:  # 2MB
@@ -307,7 +327,7 @@ class AdvancedCrawler:
                 "file_type": file_type,
                 "content_type": content_type,
                 "download_time": round(download_time, 2),
-                "proxy_mode": "standard",
+                "proxy_mode": "premium",
                 "headers": dict(response.headers),
                 "stats": {"requests": 1, "successes": 1, "failures": 0},
             }

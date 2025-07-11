@@ -41,7 +41,7 @@ class ScrapingBeeProxyManager:
             }
         }
     
-    async def make_request(self, url: str, site_type: str = 'generic', timeout: int = 30) -> aiohttp.ClientResponse:
+    async def make_request(self, url: str, site_type: str = 'generic', timeout: int = 30, is_binary: bool = False) -> aiohttp.ClientResponse:
         """
         Make a smart request using ScrapingBee with automatic JS rendering control.
         
@@ -49,10 +49,17 @@ class ScrapingBeeProxyManager:
             url: Target URL to scrape
             site_type: Type of site ('news', 'stock', 'financial', 'generic')
             timeout: Request timeout in seconds
+            is_binary: Whether this is a binary file request (PDF, image, etc.)
         
         Returns:
             aiohttp.ClientResponse object
         """
+        # For binary files, use no-JS and special headers
+        if is_binary:
+            logger.info(f"Making binary request for {url}")
+            response = self.smart_manager.make_binary_request(url, timeout)
+            return self._wrap_response(response)
+        
         # Select content checker based on site type
         content_checker = self._get_content_checker(site_type)
         
