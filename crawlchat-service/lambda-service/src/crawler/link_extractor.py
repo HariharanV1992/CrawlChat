@@ -57,7 +57,27 @@ class LinkExtractor:
             # Content types
             'report', 'presentation', 'webinar', 'conference', 'call',
             'transcript', 'filing', 'document', 'prospectus', 'offering',
-            'circular', 'notice', 'bulletin', 'newsletter', 'update'
+            'circular', 'notice', 'bulletin', 'newsletter', 'update',
+            
+            # News and media
+            'news', 'breaking', 'latest', 'update', 'alert', 'flash',
+            'headline', 'story', 'article', 'coverage', 'analysis',
+            'commentary', 'opinion', 'editorial', 'feature', 'special',
+            
+            # Economics and macro
+            'economics', 'economic', 'gdp', 'inflation', 'unemployment',
+            'interest-rate', 'monetary', 'fiscal', 'policy', 'central-bank',
+            'federal-reserve', 'fed', 'ecb', 'boj', 'boe', 'rbi',
+            'recession', 'growth', 'recovery', 'stimulus', 'austerity',
+            'trade', 'tariff', 'import', 'export', 'balance', 'deficit',
+            'surplus', 'currency', 'exchange-rate', 'forex', 'commodity',
+            'oil', 'gold', 'silver', 'copper', 'agriculture', 'energy',
+            
+            # Market sentiment and indicators
+            'sentiment', 'confidence', 'survey', 'index', 'indicator',
+            'vix', 'fear', 'greed', 'momentum', 'trend', 'pattern',
+            'support', 'resistance', 'breakout', 'breakdown', 'consolidation',
+            'volatility', 'risk', 'uncertainty', 'stability', 'instability'
         ]
         
         # Patterns to exclude (less relevant) - reduced list to be more permissive
@@ -108,7 +128,15 @@ class LinkExtractor:
             'sec-filing', '10-k', '10-q', '8-k', 'proxy', 'prospectus',
             'financial-statement', 'balance-sheet', 'income-statement', 'cash-flow',
             'investor-presentation', 'analyst-presentation', 'conference-call',
-            'press-release', 'announcement', 'disclosure', 'filing', 'report'
+            'press-release', 'announcement', 'disclosure', 'filing', 'report',
+            
+            # News and economics document patterns
+            'news', 'article', 'story', 'headline', 'breaking', 'latest',
+            'economics', 'economic', 'macro', 'policy', 'analysis',
+            'commentary', 'opinion', 'editorial', 'feature', 'special',
+            'market-update', 'trading-update', 'market-analysis', 'economic-report',
+            'gdp-report', 'inflation-data', 'employment-report', 'fed-meeting',
+            'central-bank', 'monetary-policy', 'fiscal-policy', 'trade-data'
         ]
         
         # If URL contains financial document patterns, consider it a document

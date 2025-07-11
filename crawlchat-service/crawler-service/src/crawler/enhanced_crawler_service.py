@@ -290,7 +290,18 @@ class EnhancedCrawlerService:
                 'div[class*="data"]', 'div[class*="metrics"]', 'div[class*="results"]',
                 'section[class*="financial"]', 'section[class*="earnings"]',
                 'article[class*="financial"]', 'article[class*="earnings"]',
-                'table[class*="financial"]', 'table[class*="data"]', 'table[class*="results"]'
+                'table[class*="financial"]', 'table[class*="data"]', 'table[class*="results"]',
+                
+                # News and economics content areas
+                'div[class*="news"]', 'div[class*="article"]', 'div[class*="story"]',
+                'div[class*="headline"]', 'div[class*="breaking"]', 'div[class*="latest"]',
+                'div[class*="economics"]', 'div[class*="economic"]', 'div[class*="macro"]',
+                'div[class*="policy"]', 'div[class*="central-bank"]', 'div[class*="fed"]',
+                'div[class*="market"]', 'div[class*="trading"]', 'div[class*="analysis"]',
+                'div[class*="commentary"]', 'div[class*="opinion"]', 'div[class*="editorial"]',
+                'section[class*="news"]', 'section[class*="article"]', 'section[class*="economics"]',
+                'article[class*="news"]', 'article[class*="article"]', 'article[class*="economics"]',
+                'div[class*="content"]', 'div[class*="main-content"]', 'div[class*="body"]'
             ]
             
             for selector in financial_selectors:
