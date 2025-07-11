@@ -1152,10 +1152,18 @@
         }
 
         async function addTask(taskData) {
+            // Extract progress data from taskData if available
+            const progress = taskData.progress || {};
             activeTasks[taskData.task_id] = {
                 ...taskData,
                 status: 'pending',
-                progress: { documents_downloaded: 0, pages_crawled: 0 }
+                progress: {
+                    documents_downloaded: progress.documents_downloaded || 0,
+                    pages_crawled: progress.pages_crawled || 0
+                },
+                // Set max_documents from progress.total_documents or config
+                max_documents: progress.total_documents || 
+                              (taskData.config && taskData.config.max_documents) || 1
             };
             updateTasksDisplay();
             
@@ -1452,12 +1460,17 @@
                     
                     if (data.tasks && Array.isArray(data.tasks)) {
                         data.tasks.forEach(task => {
+                            // Correctly extract progress data from the backend response
+                            const progress = task.progress || {};
                             activeTasks[task.task_id] = {
                                 ...task,
                                 progress: {
-                                    documents_downloaded: task.documents_downloaded || 0,
-                                    pages_crawled: task.pages_crawled || 0
-                                }
+                                    documents_downloaded: progress.documents_downloaded || 0,
+                                    pages_crawled: progress.pages_crawled || 0
+                                },
+                                // Set max_documents from progress.total_documents or config
+                                max_documents: progress.total_documents || 
+                                              (task.config && task.config.max_documents) || 1
                             };
                             
                             // Start polling for running tasks
@@ -1478,10 +1491,21 @@
 
         function updateTaskStatus(taskId, taskStatus) {
             if (activeTasks[taskId]) {
+                // Correctly merge progress data from taskStatus
+                const newProgress = taskStatus.progress || {};
+                const currentProgress = activeTasks[taskId].progress || {};
+                
                 activeTasks[taskId] = {
                     ...activeTasks[taskId],
                     ...taskStatus,
-                    progress: taskStatus.progress || activeTasks[taskId].progress || { documents_downloaded: 0, pages_crawled: 0 }
+                    progress: {
+                        documents_downloaded: newProgress.documents_downloaded || currentProgress.documents_downloaded || 0,
+                        pages_crawled: newProgress.pages_crawled || currentProgress.pages_crawled || 0
+                    },
+                    // Update max_documents if available in new status
+                    max_documents: newProgress.total_documents || 
+                                  (taskStatus.config && taskStatus.config.max_documents) ||
+                                  activeTasks[taskId].max_documents || 1
                 };
                 updateTasksDisplay();
                 
@@ -1591,7 +1615,7 @@
             } else {
                 // If no task ID, use the most recent completed task
                 const completedTasks = Object.values(activeTasks).filter(task => 
-                    task.status === 'completed' && task.documents_downloaded > 0
+                    task.status === 'completed' && (task.progress && task.progress.documents_downloaded > 0)
                 );
                 
                 if (completedTasks.length > 0) {
@@ -1711,7 +1735,7 @@
             
             // Find the most recent completed crawl task
             const completedTasks = Object.values(activeTasks).filter(task => 
-                task.status === 'completed' && task.documents_downloaded > 0
+                task.status === 'completed' && (task.progress && task.progress.documents_downloaded > 0)
             );
             
             if (completedTasks.length > 0) {
