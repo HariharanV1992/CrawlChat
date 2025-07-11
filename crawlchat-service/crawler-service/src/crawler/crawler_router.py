@@ -16,16 +16,18 @@ logger = logging.getLogger(__name__)
 # Import real crawler modules
 try:
     from .advanced_crawler import AdvancedCrawler
-    logger.info("Successfully imported AdvancedCrawler")
+    from .enhanced_crawler_service import EnhancedCrawlerService
+    logger.info("Successfully imported AdvancedCrawler and EnhancedCrawlerService")
 except ImportError as e:
-    logger.warning(f"Failed to import AdvancedCrawler: {e}")
+    logger.warning(f"Failed to import crawler modules: {e}")
     # Try absolute import as fallback
     try:
         from advanced_crawler import AdvancedCrawler
-        logger.info("Successfully imported AdvancedCrawler with absolute import")
+        from enhanced_crawler_service import EnhancedCrawlerService
+        logger.info("Successfully imported crawler modules with absolute import")
     except ImportError as e2:
-        logger.warning(f"Failed to import AdvancedCrawler with absolute import: {e2}")
-        # Create dummy class for fallback
+        logger.warning(f"Failed to import crawler modules with absolute import: {e2}")
+        # Create dummy classes for fallback
         class AdvancedCrawler:
             def __init__(self, api_key):
                 self.api_key = api_key
@@ -33,6 +35,12 @@ except ImportError as e:
                 return {"success": False, "error": "Crawler not available"}
             def close(self):
                 pass
+        
+        class EnhancedCrawlerService:
+            def __init__(self, api_key):
+                self.api_key = api_key
+            def crawl_with_max_docs(self, url, max_doc_count=1):
+                return {"success": False, "error": "Enhanced crawler not available"}
 
 # In-memory task storage (in production, use database)
 TASK_STORAGE = {}
@@ -69,28 +77,22 @@ async def crawl_url(
         if not api_key:
             raise HTTPException(status_code=500, detail="SCRAPINGBEE_API_KEY not configured")
         
-        # Initialize crawler
-        crawler = AdvancedCrawler(api_key=api_key)
+        # Initialize enhanced crawler service
+        enhanced_crawler = EnhancedCrawlerService(api_key=api_key)
         
-        # Configure crawler parameters
-        crawler_params = {
-            "render_js": render_js,
-            "max_documents": max_documents,
-            "max_pages": max_pages
-        }
-        
-        # Perform crawl
-        result = crawler.crawl_url(url, **crawler_params)
-        
-        # Clean up
-        crawler.close()
+        # Use enhanced crawler with max document count
+        result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
         
         logger.info(f"Crawl completed for URL: {url}")
         return {
             "success": result.get('success', False),
             "url": url,
             "result": result,
-            "config": crawler_params
+            "config": {
+                "render_js": render_js,
+                "max_documents": max_documents,
+                "max_pages": max_pages
+            }
         }
         
     except Exception as e:
@@ -195,13 +197,13 @@ async def start_task(task_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to start task: {str(e)}")
 
 async def run_crawl_task(task_id: str):
-    """Run the actual crawling task in background."""
+    """Run the actual crawling task in background using enhanced crawler service."""
     try:
         task = TASK_STORAGE[task_id]
         url = task["url"]
         config = task["config"]
         
-        logger.info(f"Running crawl task {task_id} for URL: {url}")
+        logger.info(f"Running enhanced crawl task {task_id} for URL: {url}")
         
         # Get API key
         api_key = os.getenv("SCRAPINGBEE_API_KEY")
@@ -211,28 +213,38 @@ async def run_crawl_task(task_id: str):
             task["updated_at"] = datetime.utcnow().isoformat()
             return
         
-        # Initialize crawler
-        crawler = AdvancedCrawler(api_key=api_key)
+        # Initialize enhanced crawler service
+        enhanced_crawler = EnhancedCrawlerService(api_key=api_key)
         
         try:
-            # Perform crawl
-            result = crawler.crawl_url(url, **config)
+            # Get max document count from config
+            max_documents = config.get('max_documents', 1)
             
-            # Update task with results
+            # Use enhanced crawler with max document count support
+            result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
+            
+            # Update task with enhanced results
             task["status"] = "completed" if result.get("success", False) else "failed"
             task["result"] = result
             task["error"] = result.get("error") if not result.get("success", False) else None
+            
+            # Set progress from enhanced crawler results
             task["progress"]["documents_found"] = result.get("documents_found", 0)
-            task["progress"]["pages_crawled"] = result.get("pages_crawled", 0)
+            task["progress"]["pages_crawled"] = result.get("total_pages", 0)
+            task["progress"]["documents_processed"] = len(result.get("documents", []))
+                
             task["updated_at"] = datetime.utcnow().isoformat()
             
-            logger.info(f"Crawl task {task_id} completed with status: {task['status']}")
+            logger.info(f"Enhanced crawl task {task_id} completed with status: {task['status']}")
+            logger.info(f"Documents found: {result.get('documents_found', 0)}")
+            logger.info(f"Pages crawled: {result.get('total_pages', 0)}")
             
         finally:
-            crawler.close()
+            # Enhanced crawler service doesn't need explicit close
+            pass
             
     except Exception as e:
-        logger.error(f"Crawl task {task_id} failed: {e}")
+        logger.error(f"Enhanced crawl task {task_id} failed: {e}")
         task["status"] = "failed"
         task["error"] = str(e)
         task["updated_at"] = datetime.utcnow().isoformat()
