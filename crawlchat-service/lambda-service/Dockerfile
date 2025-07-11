@@ -9,7 +9,7 @@ COPY lambda-service/requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
 COPY common/ ${LAMBDA_TASK_ROOT}/common/
 
 # Copy crawler-service modules (replaces old crawlchat-crawler)
-COPY crawler-service/src/crawler/ ${LAMBDA_TASK_ROOT}/src/crawler/
+COPY crawler-service/src/ ${LAMBDA_TASK_ROOT}/src/
 ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/common:${LAMBDA_TASK_ROOT}/src"
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
