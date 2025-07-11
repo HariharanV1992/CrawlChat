@@ -35,7 +35,13 @@ try:
     logger.info("Successfully imported EnhancedCrawlerService")
 except ImportError as e:
     logger.error(f"Failed to import EnhancedCrawlerService: {e}")
-    EnhancedCrawlerService = None
+    # Try alternative import path
+    try:
+        from crawler.enhanced_crawler_service import EnhancedCrawlerService
+        logger.info("Successfully imported EnhancedCrawlerService with alternative path")
+    except ImportError as e2:
+        logger.error(f"Failed to import EnhancedCrawlerService with alternative path: {e2}")
+        EnhancedCrawlerService = None
 
 class SQSHelper:
     def __init__(self, queue_name=SQS_QUEUE_NAME):
@@ -468,7 +474,7 @@ def handle_http_task_start(event: Dict[str, Any]) -> Dict[str, Any]:
                     'body': json.dumps({'error': 'Database not available'}, ensure_ascii=False)
                 }
             
-            # Use asyncio.run() instead of manual event loop management
+            # Use a single event loop for all async operations
             async def get_task_and_crawl():
                 await mongodb.connect()
                 collection = mongodb.get_collection("crawl_tasks")
@@ -558,20 +564,23 @@ def handle_http_task_status(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"Getting status for task {task_id}")
         
         # Get task status from MongoDB
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
+        async def get_task_status():
             if not mongodb:
-                return {
-                    'statusCode': 500,
-                    'headers': {'Content-Type': 'application/json'},
-                    'body': json.dumps({'error': 'Database not available'}, ensure_ascii=False)
-                }
+                return None
             
-            loop.run_until_complete(mongodb.connect())
+            await mongodb.connect()
             collection = mongodb.get_collection("crawl_tasks")
+            return await collection.find_one({"task_id": task_id})
+        
+        try:
+            task = asyncio.run(get_task_status())
             
-            task = loop.run_until_complete(collection.find_one({"task_id": task_id}))
+            if not task:
+                return {
+                    'statusCode': 404,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Task not found'}, ensure_ascii=False)
+                }
             if not task:
                 return {
                     'statusCode': 404,
@@ -622,8 +631,6 @@ def handle_http_task_status(event: Dict[str, Any]) -> Dict[str, Any]:
                 'headers': {'Content-Type': 'application/json'},
                 'body': json.dumps({'error': f'Failed to get task status: {str(e)}'}, ensure_ascii=False)
             }
-        finally:
-            loop.close()
     
     except Exception as e:
         logger.error(f"Error in handle_http_task_status: {str(e)}", exc_info=True)
