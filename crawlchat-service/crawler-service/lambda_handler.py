@@ -15,9 +15,26 @@ crawler_path = os.path.join(current_dir, 'src', 'crawler')
 sys.path.insert(0, crawler_path)
 sys.path.insert(0, current_dir)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging for Lambda environment
+import sys
+import os
+
+# Force logging to stdout/stderr for CloudWatch
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.StreamHandler(sys.stderr)
+    ],
+    force=True
+)
+
 logger = logging.getLogger(__name__)
+
+# Ensure immediate flush
+sys.stdout.flush()
+sys.stderr.flush()
 
 # AWS Configuration
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
@@ -30,18 +47,50 @@ SCRAPINGBEE_API_KEY = os.getenv("SCRAPINGBEE_API_KEY", "")
 sqs_client = boto3.client("sqs", region_name=AWS_REGION)
 
 # Import enhanced crawler service
+logger.info("Starting import of EnhancedCrawlerService...")
+logger.info(f"Current sys.path: {sys.path}")
+logger.info(f"Current working directory: {os.getcwd()}")
+
+# Test basic imports first
 try:
-    from src.crawler.enhanced_crawler_service import EnhancedCrawlerService
+    logger.info("Testing basic imports...")
+    import scrapingbee
+    logger.info("Successfully imported scrapingbee")
+except ImportError as e:
+    logger.error(f"Failed to import scrapingbee: {e}")
+
+try:
+    logger.info("Testing crawler module import...")
+    import crawler
+    logger.info("Successfully imported crawler module")
+except ImportError as e:
+    logger.error(f"Failed to import crawler module: {e}")
+
+try:
+    logger.info("Testing advanced_crawler import...")
+    from crawler.advanced_crawler import AdvancedCrawler
+    logger.info("Successfully imported AdvancedCrawler")
+except ImportError as e:
+    logger.error(f"Failed to import AdvancedCrawler: {e}")
+
+try:
+    logger.info("Attempting import: from crawler.enhanced_crawler_service import EnhancedCrawlerService")
+    from crawler.enhanced_crawler_service import EnhancedCrawlerService
     logger.info("Successfully imported EnhancedCrawlerService")
 except ImportError as e:
     logger.error(f"Failed to import EnhancedCrawlerService: {e}")
+    logger.error(f"Import error details: {type(e).__name__}: {str(e)}")
     # Try alternative import path
     try:
-        from crawler.enhanced_crawler_service import EnhancedCrawlerService
+        logger.info("Attempting alternative import: from src.crawler.enhanced_crawler_service import EnhancedCrawlerService")
+        from src.crawler.enhanced_crawler_service import EnhancedCrawlerService
         logger.info("Successfully imported EnhancedCrawlerService with alternative path")
     except ImportError as e2:
         logger.error(f"Failed to import EnhancedCrawlerService with alternative path: {e2}")
+        logger.error(f"Alternative import error details: {type(e2).__name__}: {str(e2)}")
         EnhancedCrawlerService = None
+
+logger.info(f"EnhancedCrawlerService import result: {EnhancedCrawlerService is not None}")
 
 class SQSHelper:
     def __init__(self, queue_name=SQS_QUEUE_NAME):
@@ -235,6 +284,25 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     
     This handler creates crawl tasks and sends them to SQS queue for processing.
     """
+    # Immediate logging at the very start
+    import sys
+    import os
+    
+    # Force immediate output
+    print("=== LAMBDA HANDLER STARTED ===", file=sys.stdout, flush=True)
+    print("=== LAMBDA HANDLER STARTED ===", file=sys.stderr, flush=True)
+    print(f"EVENT: {event}", file=sys.stdout, flush=True)
+    print(f"CONTEXT: {context}", file=sys.stdout, flush=True)
+    print(f"ENVIRONMENT: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'NOT_SET')}", file=sys.stdout, flush=True)
+    
+    # Ensure logging is configured
+    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().info(f"LOGGER: Lambda invoked with event: {event}")
+    
+    # Force flush again
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
     try:
         
         # Check if this is a direct invocation or HTTP API Gateway event

@@ -1930,26 +1930,19 @@
                         if (response.ok) {
                             console.log(`Document ${filename} permanently deleted from database and S3`);
                             selectedDocuments.delete(filename);
-                            successCount++;
+                            // Remove from allDocuments immediately for better UX
+                            allDocuments = allDocuments.filter(doc => doc.filename !== filename);
                         } else {
-                            console.error(`Failed to delete document ${filename}:`, response.status);
-                            errorCount++;
+                            const errorText = await response.text();
+                            alert(`Failed to delete document ${filename}: ${errorText}`);
                         }
                     } catch (error) {
-                        console.error(`Error deleting document ${filename}:`, error);
-                        errorCount++;
+                        alert(`Error deleting document ${filename}: ${error.message}`);
                     }
                 }
 
-                // Clear local documents array and reload fresh data from server
-                allDocuments = [];
+                // Always reload fresh data from server after deletion
                 await loadDocuments();
-                
-                if (successCount > 0) {
-                    alert(`Successfully permanently deleted ${successCount} document(s) from database and S3${errorCount > 0 ? `. ${errorCount} document(s) failed to delete.` : ''}`);
-                } else {
-                    alert(`Failed to delete any documents. ${errorCount} error(s) occurred.`);
-                }
             } finally {
                 // Restore button state
                 deleteBtn.innerHTML = originalText;

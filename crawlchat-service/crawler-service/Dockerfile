@@ -1,18 +1,21 @@
 # ---------- CRAWLER SERVICE LAMBDA IMAGE ----------
 FROM public.ecr.aws/lambda/python:3.10
 
-# Install system dependencies for PDF processing
-RUN yum update -y && yum install -y poppler-utils poppler-cpp-devel && yum clean all
+# Install system dependencies if needed (optional)
+# RUN yum update -y && yum install -y ... && yum clean all
 
-# Copy requirements and install dependencies
-COPY requirements.txt ${LAMBDA_TASK_ROOT}/requirements.txt
-RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+# Copy the entire src directory
+COPY src/ ${LAMBDA_TASK_ROOT}/src/
 
-# Copy crawler modules
-COPY src/crawler/ ${LAMBDA_TASK_ROOT}/crawler/
+# Set PYTHONPATH so 'src' is importable
+ENV PYTHONPATH="${LAMBDA_TASK_ROOT}/src:${PYTHONPATH}"
 
-# Copy crawler handler
+# Install requirements if needed
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the lambda handler
 COPY lambda_handler.py ${LAMBDA_TASK_ROOT}/
 
-# Lambda handler entry point
+# Set the handler
 CMD ["lambda_handler.lambda_handler"] 
