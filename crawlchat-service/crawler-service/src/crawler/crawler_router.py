@@ -13,6 +13,9 @@ import uuid
 from datetime import datetime
 import asyncio
 
+# Setup logger first
+logger = logging.getLogger(__name__)
+
 # Import database modules
 try:
     from common.src.core.database import mongodb
@@ -31,8 +34,6 @@ except ImportError as e:
         logger.warning(f"Failed to import database modules with alternative path: {e2}")
         mongodb = None
         config = None
-
-logger = logging.getLogger(__name__)
 
 # Import real crawler modules
 try:
