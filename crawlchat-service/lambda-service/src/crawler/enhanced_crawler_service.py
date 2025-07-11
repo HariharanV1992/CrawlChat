@@ -53,16 +53,19 @@ class EnhancedCrawlerService:
             # Extract domain for link filtering
             domain = urlparse(base_url).netloc
             
-            if max_doc_count == 1:
-                # Single page crawl
-                logger.info(f"Crawling single page: {base_url}")
-                result = self._crawl_and_save_page(crawler, base_url, domain)
-                if result:
-                    self.documents.append(result)
-            else:
-                # Multi-page crawl with document extraction
-                logger.info(f"Crawling with max_doc_count={max_doc_count}: {base_url}")
+            # Always crawl the main page first
+            logger.info(f"Crawling main page: {base_url}")
+            main_page_doc = self._crawl_and_save_page(crawler, base_url, domain)
+            if main_page_doc:
+                self.documents.append(main_page_doc)
+                logger.info(f"Added main page document: {base_url}")
+            
+            # Always do recursive crawling if we need more documents
+            if len(self.documents) < max_doc_count:
+                logger.info(f"Starting recursive crawl for additional documents (current: {len(self.documents)}, target: {max_doc_count})")
                 self._crawl_recursive(crawler, base_url, domain, max_doc_count)
+            else:
+                logger.info(f"Already have {len(self.documents)} documents, no need for recursive crawl")
             
             # Close crawler
             crawler.close()
@@ -107,17 +110,20 @@ class EnhancedCrawlerService:
                 logger.warning(f"Failed to crawl {url}: {result.get('error')}")
                 return None
             
-            # Extract title from HTML
+            # Extract title and clean content from HTML
             title = self._extract_title(result['content'])
+            clean_content = self._extract_clean_content(result['content'])
             
             # Create document object
             document = {
                 "id": f"doc_{len(self.documents) + 1}",
                 "url": url,
                 "title": title,
-                "content": result['content'],
+                "content": clean_content,  # Use cleaned content
+                "raw_html": result['content'],  # Keep original HTML too
                 "content_type": "html",
-                "content_length": result.get('content_length', 0),
+                "content_length": len(clean_content),
+                "raw_content_length": result.get('content_length', 0),
                 "crawl_time": result.get('crawl_time', 0),
                 "status_code": result.get('status_code', 0),
                 "headers": result.get('headers', {}),
@@ -192,6 +198,7 @@ class EnhancedCrawlerService:
             
             # Check if we've reached the limit
             if len(self.documents) >= max_doc_count:
+                logger.info(f"Reached max document count after adding page {url}")
                 return
             
             # Extract links from the page
@@ -203,29 +210,85 @@ class EnhancedCrawlerService:
                     # Extract page links and document links
                     page_links, document_links = link_extractor.extract_links(soup, url, self.visited_urls)
                     
+                    logger.info(f"Found {len(page_links)} page links and {len(document_links)} document links on {url}")
+                    
                     # First, try to download documents
                     for doc_url in document_links:
                         if len(self.documents) >= max_doc_count:
+                            logger.info(f"Reached max document count, stopping document downloads")
                             break
                         
                         doc = self._crawl_and_save_file(crawler, doc_url)
                         if doc:
                             self.documents.append(doc)
-                            logger.info(f"Added document: {doc_url}")
+                            logger.info(f"Added document: {doc_url} (total: {len(self.documents)}/{max_doc_count})")
                     
                     # Then, crawl sub-pages if we still have room
                     for page_url in page_links:
                         if len(self.documents) >= max_doc_count:
+                            logger.info(f"Reached max document count, stopping page crawling")
                             break
                         
+                        logger.info(f"Recursively crawling sub-page: {page_url}")
                         # Recursively crawl sub-pages
                         self._crawl_recursive(crawler, page_url, domain, max_doc_count)
                         
                 except Exception as e:
                     logger.error(f"Error in recursive crawl for {url}: {e}")
+            else:
+                logger.warning(f"No content found in page {url}, skipping link extraction")
                     
         except Exception as e:
             logger.error(f"Error crawling {url}: {e}")
+    
+    def _extract_clean_content(self, html_content: str) -> str:
+        """Extract clean text content from HTML with focus on financial content."""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Remove script and style elements
+            for script in soup(["script", "style", "nav", "footer", "header"]):
+                script.decompose()
+            
+            # Prioritize financial content areas
+            financial_content = []
+            
+            # Look for financial-specific content areas
+            financial_selectors = [
+                'div[class*="financial"]', 'div[class*="earnings"]', 'div[class*="report"]',
+                'div[class*="statement"]', 'div[class*="filing"]', 'div[class*="disclosure"]',
+                'div[class*="announcement"]', 'div[class*="press"]', 'div[class*="news"]',
+                'div[class*="data"]', 'div[class*="metrics"]', 'div[class*="results"]',
+                'section[class*="financial"]', 'section[class*="earnings"]',
+                'article[class*="financial"]', 'article[class*="earnings"]',
+                'table[class*="financial"]', 'table[class*="data"]', 'table[class*="results"]'
+            ]
+            
+            for selector in financial_selectors:
+                elements = soup.select(selector)
+                for element in elements:
+                    text = element.get_text(strip=True)
+                    if text and len(text) > 50:  # Only include substantial content
+                        financial_content.append(text)
+            
+            # If no financial-specific content found, get all text
+            if not financial_content:
+                text = soup.get_text()
+            else:
+                # Combine financial content with general content
+                general_text = soup.get_text()
+                financial_content.append(general_text)
+                text = ' '.join(financial_content)
+            
+            # Clean up whitespace
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = ' '.join(chunk for chunk in chunks if chunk)
+            
+            return text
+        except Exception as e:
+            logger.error(f"Error extracting clean content: {e}")
+            return html_content
     
     def _extract_title(self, html_content: str) -> str:
         """Extract title from HTML content."""

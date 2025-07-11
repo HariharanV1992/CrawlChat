@@ -18,20 +18,54 @@ class LinkExtractor:
         
         # Keywords that indicate relevant financial content
         self.relevant_keywords = [
+            # Core financial terms
             'stock', 'market', 'financial', 'investor', 'earnings', 'revenue',
             'profit', 'dividend', 'share', 'equity', 'trading', 'quote',
             'annual', 'quarterly', 'report', 'statement', 'filing', 'sec',
             'board', 'governance', 'corporate', 'news', 'announcement',
-            'press', 'release', 'update', 'information', 'data', 'analysis'
+            'press', 'release', 'update', 'information', 'data', 'analysis',
+            
+            # Investment and trading terms
+            'investment', 'portfolio', 'fund', 'mutual', 'etf', 'bond',
+            'derivative', 'option', 'future', 'commodity', 'forex', 'currency',
+            'crypto', 'bitcoin', 'blockchain', 'asset', 'wealth', 'capital',
+            'return', 'yield', 'growth', 'value', 'momentum', 'volatility',
+            
+            # Company and business terms
+            'company', 'corporation', 'business', 'enterprise', 'firm',
+            'sector', 'industry', 'market', 'exchange', 'listing', 'ipo',
+            'merger', 'acquisition', 'takeover', 'buyout', 'restructuring',
+            
+            # Financial metrics and ratios
+            'pe', 'pb', 'roe', 'roa', 'debt', 'leverage', 'margin',
+            'cashflow', 'ebitda', 'eps', 'book', 'value', 'price',
+            'volume', 'marketcap', 'market-cap', 'market_cap',
+            
+            # Regulatory and compliance
+            'regulation', 'compliance', 'audit', 'disclosure', 'transparency',
+            'governance', 'policy', 'guideline', 'standard', 'requirement',
+            
+            # Research and analysis
+            'research', 'analyst', 'rating', 'target', 'forecast', 'outlook',
+            'projection', 'estimate', 'prediction', 'trend', 'pattern',
+            'technical', 'fundamental', 'chart', 'graph', 'indicator',
+            
+            # Market data and feeds
+            'price', 'quote', 'ticker', 'symbol', 'index', 'benchmark',
+            'sector', 'industry', 'market', 'exchange', 'listing',
+            
+            # Content types
+            'report', 'presentation', 'webinar', 'conference', 'call',
+            'transcript', 'filing', 'document', 'prospectus', 'offering',
+            'circular', 'notice', 'bulletin', 'newsletter', 'update'
         ]
         
-        # Patterns to exclude (less relevant)
+        # Patterns to exclude (less relevant) - reduced list to be more permissive
         self.exclude_patterns = [
             'login', 'admin', 'private', 'internal', 'test', 'dev',
             'temp', 'cache', 'session', 'cookie', 'tracking', 'advertisement',
             'ad', 'banner', 'social', 'facebook', 'twitter', 'linkedin',
-            'youtube', 'instagram', 'subscribe', 'newsletter', 'contact',
-            'about', 'careers', 'jobs', 'support', 'help', 'faq'
+            'youtube', 'instagram', 'subscribe', 'newsletter'
         ]
     
     def is_same_domain(self, url: str) -> bool:
@@ -68,6 +102,19 @@ class LinkExtractor:
         if '?' in url and any(param in url_lower for param in ['api_key', 'token', 'auth', 'callback']):
             return False
         
+        # Include financial-specific document patterns
+        financial_doc_patterns = [
+            'annual-report', 'quarterly-report', 'earnings-report', 'financial-report',
+            'sec-filing', '10-k', '10-q', '8-k', 'proxy', 'prospectus',
+            'financial-statement', 'balance-sheet', 'income-statement', 'cash-flow',
+            'investor-presentation', 'analyst-presentation', 'conference-call',
+            'press-release', 'announcement', 'disclosure', 'filing', 'report'
+        ]
+        
+        # If URL contains financial document patterns, consider it a document
+        if any(pattern in url_lower for pattern in financial_doc_patterns):
+            return True
+        
         return True
     
     def is_relevant_link(self, url: str, link_text: str = "") -> bool:
@@ -85,7 +132,8 @@ class LinkExtractor:
             if keyword in url_lower or keyword in text_lower:
                 return True
         
-        # If no relevant keywords found, still include if it's not explicitly excluded
+        # Be more permissive - include most links that aren't explicitly excluded
+        # This helps find more child pages to crawl
         return True
     
     def extract_links(self, soup: BeautifulSoup, base_url: str, visited_urls: set) -> Tuple[List[str], List[str]]:

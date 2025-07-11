@@ -162,8 +162,7 @@ async def crawler_health():
 async def crawl_url(
     url: str = Query(..., description="URL to crawl"),
     render_js: bool = Query(True, description="Enable JavaScript rendering"),
-    max_documents: int = Query(5, description="Maximum documents to download"),
-    max_pages: int = Query(10, description="Maximum pages to crawl")
+    max_documents: int = Query(5, description="Maximum documents to download")
 ):
     """Simple crawl endpoint for testing."""
     try:
@@ -187,8 +186,7 @@ async def crawl_url(
             "result": result,
             "config": {
                 "render_js": render_js,
-                "max_documents": max_documents,
-                "max_pages": max_pages
+                "max_documents": max_documents
             }
         }
         
@@ -205,8 +203,7 @@ async def get_crawler_config():
             "scrapingbee_configured": bool(api_key),
             "default_config": {
                 "render_js": True,
-                "max_documents": 5,
-                "max_pages": 10
+                "max_documents": 5
             }
         }
     except Exception as e:
@@ -222,7 +219,6 @@ async def create_task(request_data: Dict[str, Any] = Body(...)):
         # Extract task parameters
         url = request_data.get("url", "")
         max_documents = request_data.get("max_documents", 5)
-        max_pages = request_data.get("max_pages", 10)
         render_js = request_data.get("render_js", True)
         user_id = request_data.get("user_id", "default")
         
@@ -236,7 +232,6 @@ async def create_task(request_data: Dict[str, Any] = Body(...)):
             "updated_at": datetime.utcnow().isoformat(),
             "config": {
                 "max_documents": max_documents,
-                "max_pages": max_pages,
                 "render_js": render_js,
                 "user_id": user_id
             },
