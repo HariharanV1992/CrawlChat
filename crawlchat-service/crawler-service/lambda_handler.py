@@ -254,8 +254,37 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
 
 def handle_direct_invocation(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Handle direct Lambda invocation (from AWS CLI)."""
     try:
+        # If this is a direct crawl task from API Lambda
+        if "task_id" in event and "url" in event and "config" in event:
+            task_id = event["task_id"]
+            url = event["url"]
+            config = event["config"]
+            max_doc_count = config.get("max_documents", 1)
+            logger.info(f"Direct invocation for existing task {task_id} with URL: {url}, max_doc_count: {max_doc_count}")
+
+            # Run the crawl
+            if EnhancedCrawlerService and SCRAPINGBEE_API_KEY:
+                crawler = EnhancedCrawlerService(api_key=SCRAPINGBEE_API_KEY)
+                result = crawler.crawl_with_max_docs(url, max_doc_count=max_doc_count)
+                logger.info(f"Crawl for task {task_id} completed: {len(result.get('documents', []))} documents found")
+                # Update task status in MongoDB
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(update_task_status(task_id, "completed", result))
+                finally:
+                    loop.close()
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps({'task_id': task_id, 'status': 'completed', 'result': result})
+                }
+            else:
+                logger.error("EnhancedCrawlerService or SCRAPINGBEE_API_KEY not available")
+                return {
+                    'statusCode': 500,
+                    'body': json.dumps({'error': 'Enhanced crawler service not available'})
+                }
         # Extract parameters from direct event
         url = event.get('url')
         max_doc_count = event.get('max_doc_count', 1)
