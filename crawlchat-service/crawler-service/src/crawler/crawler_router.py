@@ -262,13 +262,15 @@ async def create_task(request_data: Dict[str, Any] = Body(...)):
 
 @router.post("/tasks/{task_id}/start")
 async def start_task(task_id: str):
-    """Start a crawler task."""
+    logger.error(f"CRAWLER STARTED: /tasks/{task_id}/start called for task_id={task_id}")
     try:
         if task_id not in TASK_STORAGE:
+            logger.error(f"CRAWLER ERROR: Task {task_id} not found in TASK_STORAGE at start")
             raise HTTPException(status_code=404, detail="Task not found")
         
         task = TASK_STORAGE[task_id]
         if task["status"] in ["running", "completed", "failed"]:
+            logger.error(f"CRAWLER STATUS: Task {task_id} is already {task['status']}")
             return {
                 "task_id": task_id,
                 "status": task["status"],
@@ -282,35 +284,34 @@ async def start_task(task_id: str):
         # Save updated task to database
         await save_task_to_db(task)
         
-        logger.info(f"Starting crawler task: {task_id}")
+        logger.error(f"CRAWLER: Starting crawler task: {task_id}")
         
         # Run the crawl task directly in this Lambda function
-        # We'll run it synchronously to ensure it completes
-        logger.info(f"Starting local crawl execution for task {task_id}")
+        logger.error(f"CRAWLER: Starting local crawl execution for task {task_id}")
         
         # Run the crawl task directly (not asynchronously)
-        # This ensures the task completes before the Lambda function returns
         await run_crawl_task(task_id)
         
+        logger.error(f"CRAWLER: Task {task_id} completed successfully!")
         return {
             "task_id": task_id,
             "status": "completed",
             "message": "Task completed successfully"
         }
     except Exception as e:
-        logger.error(f"Failed to start task {task_id}: {e}")
+        logger.error(f"CRAWLER EXCEPTION in /tasks/{{task_id}}/start: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start task: {str(e)}")
 
 async def run_crawl_task(task_id: str):
-    """Run the actual crawling task in background using enhanced crawler service."""
+    logger.error(f"CRAWLER: run_crawl_task called for task_id={task_id}")
     try:
         task = TASK_STORAGE[task_id]
         url = task["url"]
         config = task["config"]
         
-        logger.info(f"=== STARTING CRAWL TASK {task_id} ===")
-        logger.info(f"URL: {url}")
-        logger.info(f"Config: {config}")
+        logger.error(f"CRAWLER: === STARTING CRAWL TASK {task_id} ===")
+        logger.error(f"CRAWLER: URL: {url}")
+        logger.error(f"CRAWLER: Config: {config}")
         
         # Get API key
         api_key = os.getenv("SCRAPINGBEE_API_KEY")
