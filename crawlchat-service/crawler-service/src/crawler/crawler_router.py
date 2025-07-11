@@ -4,6 +4,7 @@ Crawler API router for integration with main FastAPI application
 
 import logging
 import json
+import traceback
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, Body
 from typing import Dict, Any, List
 import os
@@ -185,44 +186,18 @@ async def start_task(task_id: str):
         
         logger.info(f"Starting crawler task: {task_id}")
         
-        # Call the separate crawler Lambda function
-        try:
-            import boto3
-            lambda_client = boto3.client('lambda', region_name=os.getenv('AWS_REGION', 'ap-south-1'))
-            
-            # Prepare the payload for the crawler function
-            payload = {
-                "task_id": task_id,
-                "url": task["url"],
-                "max_doc_count": task["config"]["max_documents"],
-                "user_id": "default"
-            }
-            
-            # Invoke the crawler function
-            response = lambda_client.invoke(
-                FunctionName=os.getenv('CRAWLER_FUNCTION_NAME', 'crawlchat-crawler-function'),
-                InvocationType='Event',  # Async invocation
-                Payload=json.dumps(payload)
-            )
-            
-            logger.info(f"Invoked crawler function for task {task_id}: {response}")
-            
-            return {
-                "task_id": task_id,
-                "status": "running",
-                "message": "Task started successfully - Crawler function invoked"
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to invoke crawler function for task {task_id}: {e}")
-            # Fallback to local execution
-            asyncio.create_task(run_crawl_task(task_id))
-            
-            return {
-                "task_id": task_id,
-                "status": "running",
-                "message": "Task started successfully (local execution)"
-            }
+        # Run the crawl task directly in this Lambda function
+        # Since we don't have a separate crawler Lambda, we'll run it here
+        logger.info(f"Starting local crawl execution for task {task_id}")
+        
+        # Create background task to run crawling
+        asyncio.create_task(run_crawl_task(task_id))
+        
+        return {
+            "task_id": task_id,
+            "status": "running",
+            "message": "Task started successfully - Crawling in progress"
+        }
     except Exception as e:
         logger.error(f"Failed to start task {task_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start task: {str(e)}")
@@ -234,51 +209,81 @@ async def run_crawl_task(task_id: str):
         url = task["url"]
         config = task["config"]
         
-        logger.info(f"Running enhanced crawl task {task_id} for URL: {url}")
+        logger.info(f"=== STARTING CRAWL TASK {task_id} ===")
+        logger.info(f"URL: {url}")
+        logger.info(f"Config: {config}")
         
         # Get API key
         api_key = os.getenv("SCRAPINGBEE_API_KEY")
         if not api_key:
+            error_msg = "SCRAPINGBEE_API_KEY not configured"
+            logger.error(f"Crawl task {task_id} failed: {error_msg}")
             task["status"] = "failed"
-            task["error"] = "SCRAPINGBEE_API_KEY not configured"
+            task["error"] = error_msg
             task["updated_at"] = datetime.utcnow().isoformat()
             return
         
+        logger.info(f"ScrapingBee API key configured: {api_key[:10]}...")
+        
         # Initialize enhanced crawler service
+        logger.info(f"Initializing EnhancedCrawlerService for task {task_id}")
         enhanced_crawler = EnhancedCrawlerService(api_key=api_key)
+        logger.info(f"EnhancedCrawlerService initialized successfully")
         
         try:
             # Get max document count from config
             max_documents = config.get('max_documents', 1)
+            logger.info(f"Starting crawl with max_documents: {max_documents}")
             
             # Use enhanced crawler with max document count support
+            logger.info(f"Calling enhanced_crawler.crawl_with_max_docs for task {task_id}")
             result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
+            logger.info(f"Crawl completed for task {task_id}. Result: {result}")
             
             # Update task with enhanced results
-            task["status"] = "completed" if result.get("success", False) else "failed"
+            success = result.get("success", False)
+            task["status"] = "completed" if success else "failed"
             task["result"] = result
-            task["error"] = result.get("error") if not result.get("success", False) else None
+            task["error"] = result.get("error") if not success else None
             
             # Set progress from enhanced crawler results
-            task["progress"]["documents_found"] = result.get("documents_found", 0)
-            task["progress"]["pages_crawled"] = result.get("total_pages", 0)
-            task["progress"]["documents_processed"] = len(result.get("documents", []))
+            documents_found = result.get("documents_found", 0)
+            total_pages = result.get("total_pages", 0)
+            documents_processed = len(result.get("documents", []))
+            
+            task["progress"]["documents_found"] = documents_found
+            task["progress"]["pages_crawled"] = total_pages
+            task["progress"]["documents_processed"] = documents_processed
                 
             task["updated_at"] = datetime.utcnow().isoformat()
             
-            logger.info(f"Enhanced crawl task {task_id} completed with status: {task['status']}")
-            logger.info(f"Documents found: {result.get('documents_found', 0)}")
-            logger.info(f"Pages crawled: {result.get('total_pages', 0)}")
+            logger.info(f"=== CRAWL TASK {task_id} COMPLETED ===")
+            logger.info(f"Status: {task['status']}")
+            logger.info(f"Documents found: {documents_found}")
+            logger.info(f"Pages crawled: {total_pages}")
+            logger.info(f"Documents processed: {documents_processed}")
             
-        finally:
-            # Enhanced crawler service doesn't need explicit close
-            pass
+            if not success:
+                logger.error(f"Crawl failed for task {task_id}: {result.get('error', 'Unknown error')}")
+            
+        except Exception as crawl_error:
+            logger.error(f"Exception during crawl execution for task {task_id}: {crawl_error}")
+            task["status"] = "failed"
+            task["error"] = str(crawl_error)
+            task["updated_at"] = datetime.utcnow().isoformat()
             
     except Exception as e:
-        logger.error(f"Enhanced crawl task {task_id} failed: {e}")
-        task["status"] = "failed"
-        task["error"] = str(e)
-        task["updated_at"] = datetime.utcnow().isoformat()
+        logger.error(f"=== CRAWL TASK {task_id} FAILED ===")
+        logger.error(f"Error: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        if task_id in TASK_STORAGE:
+            task = TASK_STORAGE[task_id]
+            task["status"] = "failed"
+            task["error"] = str(e)
+            task["updated_at"] = datetime.utcnow().isoformat()
+        else:
+            logger.error(f"Task {task_id} not found in TASK_STORAGE")
 
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str):
