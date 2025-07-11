@@ -323,6 +323,7 @@
                         const crawlForm = document.getElementById('crawlForm');
                         if (authMsg) authMsg.classList.add('hidden');
                         if (crawlForm) crawlForm.classList.remove('hidden');
+                        console.log('User authenticated, showing crawler form');
                         // Load data for authenticated user
                         loadActiveTasks();
                         loadDocuments();
@@ -837,8 +838,22 @@
 
             crawlForm.addEventListener('submit', handleCrawlSubmit);
             urlInput.addEventListener('input', () => {
-                submitBtn.disabled = !urlInput.value.trim() || isSubmitting;
+                const hasUrl = urlInput.value.trim();
+                const shouldDisable = !hasUrl || isSubmitting;
+                submitBtn.disabled = shouldDisable;
+                console.log('URL input changed:', { hasUrl, isSubmitting, shouldDisable });
             });
+            
+            // Also enable button when form is shown (after authentication)
+            const checkButtonState = () => {
+                const hasUrl = urlInput.value.trim();
+                const shouldDisable = !hasUrl || isSubmitting;
+                submitBtn.disabled = shouldDisable;
+                console.log('Button state check:', { hasUrl, isSubmitting, shouldDisable });
+            };
+            
+            // Check button state after a short delay to ensure form is visible
+            setTimeout(checkButtonState, 500);
 
             // Advanced settings toggle
             advancedToggle.addEventListener('click', () => {
@@ -1049,6 +1064,9 @@
 
         async function handleCrawlSubmit(e) {
             e.preventDefault();
+            console.log('=== CRAWL FORM SUBMITTED ===');
+            console.log('Form data:', new FormData(e.target));
+            console.log('Auth token:', window.authToken ? 'Present' : 'Missing');
             
             // Prevent double submission
             if (isSubmitting) {

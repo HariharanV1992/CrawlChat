@@ -13,6 +13,25 @@ import uuid
 from datetime import datetime
 import asyncio
 
+# Import database modules
+try:
+    from common.src.core.database import mongodb
+    from common.src.core.config import config
+    logger.info("Successfully imported database modules")
+except ImportError as e:
+    logger.warning(f"Failed to import database modules: {e}")
+    # Try alternative import paths
+    try:
+        import sys
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'common', 'src'))
+        from core.database import mongodb
+        from core.config import config
+        logger.info("Successfully imported database modules with alternative path")
+    except ImportError as e2:
+        logger.warning(f"Failed to import database modules with alternative path: {e2}")
+        mongodb = None
+        config = None
+
 logger = logging.getLogger(__name__)
 
 # Import real crawler modules
@@ -44,8 +63,82 @@ except ImportError as e:
             def crawl_with_max_docs(self, url, max_doc_count=1):
                 return {"success": False, "error": "Enhanced crawler not available"}
 
-# In-memory task storage (in production, use database)
-TASK_STORAGE = {}
+# Database task storage - will be initialized when needed
+TASK_STORAGE = {}  # Fallback in-memory storage
+
+# Database functions for task persistence
+async def ensure_database_connection():
+    """Ensure MongoDB connection is established."""
+    if mongodb is None:
+        logger.warning("MongoDB not available, using in-memory storage")
+        return False
+    
+    try:
+        if mongodb.db is None:
+            await mongodb.connect()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        return False
+
+async def save_task_to_db(task_data: Dict[str, Any]) -> bool:
+    """Save task to database."""
+    if not await ensure_database_connection():
+        return False
+    
+    try:
+        collection = mongodb.db.crawler_tasks
+        result = await collection.replace_one(
+            {"task_id": task_data["task_id"]},
+            task_data,
+            upsert=True
+        )
+        logger.info(f"Task {task_data['task_id']} saved to database: {result.modified_count} modified, {result.upserted_id} upserted")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save task to database: {e}")
+        return False
+
+async def get_task_from_db(task_id: str) -> Dict[str, Any]:
+    """Get task from database."""
+    if not await ensure_database_connection():
+        return None
+    
+    try:
+        collection = mongodb.db.crawler_tasks
+        task = await collection.find_one({"task_id": task_id})
+        return task
+    except Exception as e:
+        logger.error(f"Failed to get task from database: {e}")
+        return None
+
+async def get_all_tasks_from_db() -> List[Dict[str, Any]]:
+    """Get all tasks from database."""
+    if not await ensure_database_connection():
+        return []
+    
+    try:
+        collection = mongodb.db.crawler_tasks
+        cursor = collection.find({}).sort("created_at", -1)
+        tasks = await cursor.to_list(length=None)
+        return tasks
+    except Exception as e:
+        logger.error(f"Failed to get tasks from database: {e}")
+        return []
+
+async def delete_task_from_db(task_id: str) -> bool:
+    """Delete task from database."""
+    if not await ensure_database_connection():
+        return False
+    
+    try:
+        collection = mongodb.db.crawler_tasks
+        result = await collection.delete_one({"task_id": task_id})
+        logger.info(f"Task {task_id} deleted from database: {result.deleted_count} deleted")
+        return result.deleted_count > 0
+    except Exception as e:
+        logger.error(f"Failed to delete task from database: {e}")
+        return False
 
 router = APIRouter(tags=["crawler"])
 
@@ -151,7 +244,8 @@ async def create_task(request_data: Dict[str, Any] = Body(...)):
             "error": None
         }
         
-        # Store task
+        # Store task in database and memory
+        await save_task_to_db(task)
         TASK_STORAGE[task_id] = task
         
         logger.info(f"Created crawler task: {task_id} for URL: {url}")
@@ -183,6 +277,9 @@ async def start_task(task_id: str):
         # Update task status
         task["status"] = "running"
         task["updated_at"] = datetime.utcnow().isoformat()
+        
+        # Save updated task to database
+        await save_task_to_db(task)
         
         logger.info(f"Starting crawler task: {task_id}")
         
@@ -257,6 +354,9 @@ async def run_crawl_task(task_id: str):
                 
             task["updated_at"] = datetime.utcnow().isoformat()
             
+            # Save updated task to database
+            await save_task_to_db(task)
+            
             logger.info(f"=== CRAWL TASK {task_id} COMPLETED ===")
             logger.info(f"Status: {task['status']}")
             logger.info(f"Documents found: {documents_found}")
@@ -272,6 +372,9 @@ async def run_crawl_task(task_id: str):
             task["error"] = str(crawl_error)
             task["updated_at"] = datetime.utcnow().isoformat()
             
+            # Save failed task to database
+            await save_task_to_db(task)
+            
     except Exception as e:
         logger.error(f"=== CRAWL TASK {task_id} FAILED ===")
         logger.error(f"Error: {e}")
@@ -282,6 +385,9 @@ async def run_crawl_task(task_id: str):
             task["status"] = "failed"
             task["error"] = str(e)
             task["updated_at"] = datetime.utcnow().isoformat()
+            
+            # Save failed task to database
+            await save_task_to_db(task)
         else:
             logger.error(f"Task {task_id} not found in TASK_STORAGE")
 
@@ -289,10 +395,18 @@ async def run_crawl_task(task_id: str):
 async def get_task(task_id: str):
     """Get task status."""
     try:
-        if task_id not in TASK_STORAGE:
-            raise HTTPException(status_code=404, detail="Task not found")
+        # First check in-memory storage
+        if task_id in TASK_STORAGE:
+            task = TASK_STORAGE[task_id]
+        else:
+            # Try to load from database
+            task = await get_task_from_db(task_id)
+            if task:
+                # Load into memory for faster access
+                TASK_STORAGE[task_id] = task
+            else:
+                raise HTTPException(status_code=404, detail="Task not found")
         
-        task = TASK_STORAGE[task_id]
         logger.info(f"Getting status for task: {task_id} - Status: {task['status']}")
         
         return {
@@ -316,10 +430,18 @@ async def list_tasks():
     try:
         logger.info("Listing crawler tasks")
         
+        # Load tasks from database
+        db_tasks = await get_all_tasks_from_db()
+        
+        # Update in-memory storage with database tasks
+        for task in db_tasks:
+            TASK_STORAGE[task["task_id"]] = task
+        
+        # Create response list
         tasks = []
-        for task_id, task in TASK_STORAGE.items():
+        for task in db_tasks:
             tasks.append({
-                "task_id": task_id,
+                "task_id": task["task_id"],
                 "status": task["status"],
                 "url": task["url"],
                 "created_at": task["created_at"],
@@ -330,6 +452,8 @@ async def list_tasks():
         # Sort by creation date (newest first)
         tasks.sort(key=lambda x: x["created_at"], reverse=True)
         
+        logger.info(f"Found {len(tasks)} tasks in database")
+        
         return {
             "tasks": tasks,
             "total": len(tasks)
@@ -337,6 +461,33 @@ async def list_tasks():
     except Exception as e:
         logger.error(f"Failed to list tasks: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list tasks: {str(e)}")
+
+@router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str):
+    """Delete a crawler task."""
+    try:
+        logger.info(f"Deleting task: {task_id}")
+        
+        # Delete from database
+        db_deleted = await delete_task_from_db(task_id)
+        
+        # Delete from memory
+        memory_deleted = task_id in TASK_STORAGE
+        if memory_deleted:
+            del TASK_STORAGE[task_id]
+        
+        if db_deleted or memory_deleted:
+            logger.info(f"Task {task_id} deleted successfully")
+            return {
+                "task_id": task_id,
+                "message": "Task deleted successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Task not found")
+            
+    except Exception as e:
+        logger.error(f"Failed to delete task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete task: {str(e)}")
 
 logger.info("Crawler router created with real functionality:")
 for route in router.routes:
