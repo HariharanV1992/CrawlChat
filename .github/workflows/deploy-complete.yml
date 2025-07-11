@@ -1,35 +1,22 @@
-name: Deploy Complete CrawlChat Service
+name: Deploy CrawlChat Lambda Functions
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
     inputs:
-      deploy_infrastructure:
-        description: 'Deploy/Update Infrastructure'
-        required: false
-        default: true
-        type: boolean
       deploy_lambda:
         description: 'Deploy Lambda Functions'
         required: false
         default: true
         type: boolean
-      deploy_ui:
-        description: 'Deploy UI (if applicable)'
-        required: false
-        default: false
-        type: boolean
 
 env:
   AWS_REGION: ap-south-1
-  STACK_NAME: crawlchat-complete-stack
   LAMBDA_ECR_REPOSITORY: crawlchat-api-function
   CRAWLER_ECR_REPOSITORY: crawlchat-crawler-function
   LAMBDA_FUNCTION_NAME: crawlchat-api-function
   CRAWLER_FUNCTION_NAME: crawlchat-crawler-function
-  S3_BUCKET: crawlchat-data
-  DOMAIN_NAME: api.crawlchat.site
 
 jobs:
   validate:
@@ -38,19 +25,22 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Validate CloudFormation templates
+    - name: Validate code structure
       run: |
-        echo "🔍 Validating CloudFormation templates..."
-        aws cloudformation validate-template --template-body file://infra/crawlchat-complete-infrastructure.yml
-        aws cloudformation validate-template --template-body file://infra/crawlchat-crawl-worker.yml
-        echo "✅ All templates are valid"
+        echo "🔍 Validating code structure..."
+        if [ ! -d "crawlchat-service" ]; then
+          echo "❌ crawlchat-service directory not found"
+          exit 1
+        fi
+        if [ ! -f "crawlchat-service/lambda-service/Dockerfile" ]; then
+          echo "❌ Lambda Dockerfile not found"
+          exit 1
+        fi
+        if [ ! -f "crawlchat-service/crawler-service/Dockerfile" ]; then
+          echo "❌ Crawler Dockerfile not found"
+          exit 1
+        fi
+        echo "✅ Code structure validation successful"
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -179,203 +169,9 @@ jobs:
         echo "crawler-image=$ECR_REGISTRY/${{ env.CRAWLER_ECR_REPOSITORY }}:$IMAGE_TAG" >> $GITHUB_OUTPUT
         echo "✅ Enhanced Crawler image built and pushed"
 
-  # Add debug job to print outputs
-  debug-print-lambda-image:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    steps:
-      - name: Print lambda-image output
-        run: |
-          echo "lambda-image output: ${{ needs.build-and-push.outputs.lambda-image }}"
-
-  deploy-infrastructure:
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    if: ${{ github.event.inputs.deploy_infrastructure != 'false' || github.event_name == 'push' }}
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Create S3 bucket for deployment
-      run: |
-        echo "🪣 Creating S3 bucket for deployment..."
-        aws s3api create-bucket \
-          --bucket ${{ env.S3_BUCKET }} \
-          --region ${{ env.AWS_REGION }} \
-          --create-bucket-configuration LocationConstraint=${{ env.AWS_REGION }} \
-          2>/dev/null || echo "Bucket already exists"
-        
-        # Enable versioning
-        aws s3api put-bucket-versioning \
-          --bucket ${{ env.S3_BUCKET }} \
-          --versioning-configuration Status=Enabled
-    
-    - name: Check and fix CloudFormation stack state
-      run: |
-        echo "🔍 Checking CloudFormation stack state..."
-        
-        # Check if stack exists and get its status
-        STACK_EXISTS=$(aws cloudformation describe-stacks \
-          --stack-name ${{ env.STACK_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --query 'Stacks[0].StackStatus' \
-          --output text 2>/dev/null || echo "STACK_NOT_FOUND")
-        
-        echo "📋 Current stack status: $STACK_EXISTS"
-        
-        # Delete stack if it's in a failed state
-        if [ "$STACK_EXISTS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_EXISTS" = "CREATE_FAILED" ] || [ "$STACK_EXISTS" = "UPDATE_FAILED" ] || [ "$STACK_EXISTS" = "ROLLBACK_IN_PROGRESS" ]; then
-          echo "🗑️  Deleting failed stack in $STACK_EXISTS state..."
-          
-          # Force delete the stack
-          aws cloudformation delete-stack \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }}
-          
-          echo "⏳ Waiting for stack deletion to complete..."
-          
-          # Wait for deletion with timeout
-          TIMEOUT=600  # 10 minutes
-          ELAPSED=0
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            STACK_STATUS=$(aws cloudformation describe-stacks \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region ${{ env.AWS_REGION }} \
-              --query 'Stacks[0].StackStatus' \
-              --output text 2>/dev/null || echo "STACK_NOT_FOUND")
-            
-            if [ "$STACK_STATUS" = "STACK_NOT_FOUND" ]; then
-              echo "✅ Stack deleted successfully"
-              break
-            fi
-            
-            echo "⏳ Still deleting... Status: $STACK_STATUS"
-            sleep 30
-            ELAPSED=$((ELAPSED + 30))
-          done
-          
-          if [ $ELAPSED -ge $TIMEOUT ]; then
-            echo "⚠️  Stack deletion timed out, but continuing with deployment"
-          fi
-        elif [ "$STACK_EXISTS" = "STACK_NOT_FOUND" ]; then
-          echo "ℹ️  Stack does not exist - will create new one"
-        else
-          echo "ℹ️  Stack is in state: $STACK_EXISTS - proceeding with deployment"
-        fi
-
-    - name: Deploy complete infrastructure
-      run: |
-        echo "🏗️ Deploying complete infrastructure..."
-        
-        # Validate that we have a valid image URI
-        LAMBDA_IMAGE_URI="${{ needs.build-and-push.outputs.lambda-image }}"
-        echo "📋 Lambda Image URI: $LAMBDA_IMAGE_URI"
-        
-        if [ -z "$LAMBDA_IMAGE_URI" ]; then
-          echo "❌ Lambda Image URI is empty - cannot deploy"
-          exit 1
-        fi
-        
-        # Validate that the image exists in ECR
-        echo "🔍 Validating image exists in ECR..."
-        IMAGE_TAG=$(echo "$LAMBDA_IMAGE_URI" | sed 's/.*://')
-        REPO_NAME=$(echo "$LAMBDA_IMAGE_URI" | sed 's/.*\///' | sed 's/:.*//')
-        
-        if ! aws ecr describe-images --repository-name $REPO_NAME --image-ids imageTag=$IMAGE_TAG --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-          echo "❌ Image not found in ECR - cannot deploy"
-          exit 1
-        fi
-        
-        echo "✅ Image validation successful"
-        
-        # Build parameter overrides
-        PARAM_OVERRIDES="LambdaImageUri=$LAMBDA_IMAGE_URI DomainName=${{ env.DOMAIN_NAME }}"
-        
-        # Add certificate if available
-        if [ -n "${{ secrets.CERTIFICATE_ARN }}" ]; then
-          PARAM_OVERRIDES="$PARAM_OVERRIDES CertificateArn=${{ secrets.CERTIFICATE_ARN }}"
-          echo "📋 Using certificate: ${{ secrets.CERTIFICATE_ARN }}"
-        else
-          echo "⚠️  No certificate provided - custom domain will not be configured"
-        fi
-        
-        # Try to deploy with retry logic
-        MAX_RETRIES=3
-        RETRY_COUNT=0
-        
-        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-          echo "🔄 Deployment attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES"
-          
-          if aws cloudformation deploy \
-            --template-file infra/crawlchat-complete-infrastructure.yml \
-            --stack-name ${{ env.STACK_NAME }} \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides $PARAM_OVERRIDES \
-            --region ${{ env.AWS_REGION }}; then
-            echo "✅ Infrastructure deployed successfully"
-            break
-          else
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "❌ Deployment attempt $RETRY_COUNT failed"
-            
-            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-              echo "⏳ Waiting 30 seconds before retry..."
-              sleep 30
-              
-              # Check if stack is in a failed state and delete it
-              STACK_STATUS=$(aws cloudformation describe-stacks \
-                --stack-name ${{ env.STACK_NAME }} \
-                --region ${{ env.AWS_REGION }} \
-                --query 'Stacks[0].StackStatus' \
-                --output text 2>/dev/null || echo "STACK_NOT_FOUND")
-              
-              if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ] || [ "$STACK_STATUS" = "CREATE_FAILED" ] || [ "$STACK_STATUS" = "UPDATE_FAILED" ]; then
-                echo "🗑️  Deleting failed stack before retry..."
-                aws cloudformation delete-stack \
-                  --stack-name ${{ env.STACK_NAME }} \
-                  --region ${{ env.AWS_REGION }}
-                
-                echo "⏳ Waiting for stack deletion..."
-                sleep 60
-              fi
-            fi
-          fi
-        done
-        
-        if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-          echo "❌ All deployment attempts failed"
-          exit 1
-        fi
-    
-    - name: Get deployment outputs
-      id: outputs
-      run: |
-        echo "📋 Getting deployment outputs..."
-        API_URL=$(aws cloudformation describe-stacks \
-          --stack-name ${{ env.STACK_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' \
-          --output text)
-        
-        CUSTOM_URL=$(aws cloudformation describe-stacks \
-          --stack-name ${{ env.STACK_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --query 'Stacks[0].Outputs[?OutputKey==`CustomDomainUrl`].OutputValue' \
-          --output text)
-        
-        echo "api-url=$API_URL" >> $GITHUB_OUTPUT
-        echo "custom-url=$CUSTOM_URL" >> $GITHUB_OUTPUT
-
   deploy-lambda-functions:
     runs-on: ubuntu-latest
-    needs: [build-and-push, deploy-infrastructure]
+    needs: build-and-push
     if: ${{ github.event.inputs.deploy_lambda != 'false' || github.event_name == 'push' }}
     steps:
     - name: Checkout code
@@ -396,181 +192,40 @@ jobs:
           --image-uri ${{ needs.build-and-push.outputs.lambda-image }} \
           --region ${{ env.AWS_REGION }}
         
-        echo "⏳ Waiting for Lambda update..."
-        aws lambda wait function-updated \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --region ${{ env.AWS_REGION }}
-        
         echo "✅ Lambda API function updated"
     
-    - name: Update Lambda environment variables
-      if: false  # Skipping this step as per user request
+    - name: Update Lambda Crawler function
       run: |
-        echo "⚙️ Updating Lambda environment variables..."
-        VARS=$(jq -c -n '{
-          ENVIRONMENT: "production",
-          S3_BUCKET: "${{ env.S3_BUCKET }}",
-          MONGODB_URI: "${{ secrets.MONGODB_URI }}",
-          DB_NAME: "stock_market_crawler",
-          COLLECTION_PREFIX: "crawler",
-          SCRAPINGBEE_API_KEY: "${{ secrets.SCRAPINGBEE_API_KEY }}",
-          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}",
-          OPENAI_MODEL: "gpt-4o-mini",
-          OPENAI_MAX_TOKENS: "4000",
-          OPENAI_TEMPERATURE: "0.1",
-          SECRET_KEY: "${{ secrets.SECRET_KEY }}",
-          ALGORITHM: "HS256",
-          ACCESS_TOKEN_EXPIRE_MINUTES: "30",
-          CORS_ORIGINS: "[\"https://crawlchat.site\",\"https://www.crawlchat.site\"]",
-          CRAWLER_MAX_WORKERS: "10",
-          CRAWLER_TIMEOUT: "30",
-          CRAWLER_DELAY: "1.0",
-          CRAWLER_MAX_PAGES: "100",
-          CRAWLER_MAX_DOCUMENTS: "20",
-          CRAWLER_USER_AGENT: "StockMarketCrawler/1.0",
-          USE_PROXY: "true",
-          PROXY_API_KEY: "${{ secrets.PROXY_API_KEY }}",
-          S3_DOCUMENTS_PREFIX: "documents/",
-          S3_CRAWLED_DATA_PREFIX: "crawled_data/",
-          MAX_FILE_SIZE_MB: "50",
-          PROCESSING_TIMEOUT: "300",
-          BATCH_SIZE: "10",
-          LOG_LEVEL: "INFO",
-          LOG_FILE: "/var/log/crawlchat/app.log"
-        }')
-        aws lambda update-function-configuration \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-          --environment "Variables=$VARS" \
-          --region ${{ env.AWS_REGION }}
-        echo "✅ Environment variables updated"
-    
-    - name: Update Crawler function
-      run: |
-        echo "🔄 Updating Crawler function..."
-        echo "📋 Crawler Image URI: ${{ needs.build-and-push.outputs.crawler-image }}"
-        
-        # Validate that we have a valid crawler image URI
-        CRAWLER_IMAGE_URI="${{ needs.build-and-push.outputs.crawler-image }}"
-        if [ -z "$CRAWLER_IMAGE_URI" ]; then
-          echo "❌ Crawler Image URI is empty - cannot update crawler function"
-          exit 1
-        fi
-        
-        # Validate that the crawler image exists in ECR
-        echo "🔍 Validating crawler image exists in ECR..."
-        IMAGE_TAG=$(echo "$CRAWLER_IMAGE_URI" | sed 's/.*://')
-        REPO_NAME=$(echo "$CRAWLER_IMAGE_URI" | sed 's/.*\///' | sed 's/:.*//')
-        
-        if ! aws ecr describe-images --repository-name $REPO_NAME --image-ids imageTag=$IMAGE_TAG --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
-          echo "❌ Crawler image not found in ECR - cannot update function"
-          exit 1
-        fi
-        
-        echo "✅ Crawler image validation successful"
-        
-        # Update the crawler function
+        echo "🔄 Updating Lambda Crawler function..."
         aws lambda update-function-code \
           --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-          --image-uri $CRAWLER_IMAGE_URI \
+          --image-uri ${{ needs.build-and-push.outputs.crawler-image }} \
           --region ${{ env.AWS_REGION }}
         
-        echo "⏳ Waiting for Crawler function update..."
-        aws lambda wait function-updated \
-          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-          --region ${{ env.AWS_REGION }}
-        
-        echo "✅ Crawler function updated successfully"
-        
-        # Verify the update
-        echo "🔍 Verifying crawler function update..."
-        UPDATED_IMAGE=$(aws lambda get-function \
-          --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-          --region ${{ env.AWS_REGION }} \
-          --query 'Code.ImageUri' \
-          --output text)
-        
-        echo "📋 Updated crawler function image: $UPDATED_IMAGE"
-        
-        if [ "$UPDATED_IMAGE" = "$CRAWLER_IMAGE_URI" ]; then
-          echo "✅ Crawler function update verified"
-        else
-          echo "❌ Crawler function update verification failed"
-          echo "Expected: $CRAWLER_IMAGE_URI"
-          echo "Actual: $UPDATED_IMAGE"
-          exit 1
-        fi
+        echo "✅ Lambda Crawler function updated"
+    
+    - name: Wait for function updates
+      run: |
+        echo "⏳ Waiting for function updates to complete..."
+        aws lambda wait function-updated --function-name ${{ env.LAMBDA_FUNCTION_NAME }} --region ${{ env.AWS_REGION }}
+        aws lambda wait function-updated --function-name ${{ env.CRAWLER_FUNCTION_NAME }} --region ${{ env.AWS_REGION }}
+        echo "✅ Function updates completed"
 
-
-
-  deployment-summary:
+  notify-success:
     runs-on: ubuntu-latest
-    needs: [deploy-infrastructure, deploy-lambda-functions]
+    needs: deploy-lambda-functions
     if: always()
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Deployment Summary
+    - name: Notify deployment success
       run: |
-        echo "🎉 CrawlChat Deployment Summary"
-        echo "================================"
-        echo ""
-        echo "📋 Infrastructure Status:"
-        if [ "${{ needs.deploy-infrastructure.result }}" = "success" ]; then
-          echo "✅ Infrastructure deployed successfully"
-          
-          # Get API Gateway URL
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`ApiGatewayUrl`].OutputValue' \
-            --output text 2>/dev/null || echo "Not available")
-          
-          echo "🌐 API Gateway URL: $API_URL"
+        if [ "${{ needs.deploy-lambda-functions.result }}" == "success" ]; then
+          echo "🎉 Deployment completed successfully!"
+          echo "📋 Lambda API function: ${{ env.LAMBDA_FUNCTION_NAME }}"
+          echo "📋 Lambda Crawler function: ${{ env.CRAWLER_FUNCTION_NAME }}"
+          echo "📋 Lambda API image: ${{ needs.build-and-push.outputs.lambda-image }}"
+          echo "📋 Lambda Crawler image: ${{ needs.build-and-push.outputs.crawler-image }}"
         else
-          echo "❌ Infrastructure deployment failed"
+          echo "❌ Deployment failed!"
+          exit 1
         fi
-        
-        echo ""
-        echo "📋 Lambda Functions Status:"
-        if [ "${{ needs.deploy-lambda-functions.result }}" = "success" ]; then
-          echo "✅ Lambda functions updated successfully"
-          
-          # Get function details
-          echo "🔧 Lambda API Function: ${{ env.LAMBDA_FUNCTION_NAME }}"
-          echo "🔧 Crawler Function: ${{ env.CRAWLER_FUNCTION_NAME }}"
-          
-          # Get current image URIs
-          LAMBDA_IMAGE=$(aws lambda get-function \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Code.ImageUri' \
-            --output text 2>/dev/null || echo "Not available")
-          
-          CRAWLER_IMAGE=$(aws lambda get-function \
-            --function-name ${{ env.CRAWLER_FUNCTION_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Code.ImageUri' \
-            --output text 2>/dev/null || echo "Not available")
-          
-          echo "🐳 Lambda API Image: $LAMBDA_IMAGE"
-          echo "🐳 Crawler Image: $CRAWLER_IMAGE"
-        else
-          echo "❌ Lambda functions update failed"
-        fi
-        
-
-        
-        echo ""
-        echo "🚀 Deployment completed!"
-        echo "📝 Commit: ${{ github.sha }}"
-        echo "📝 Branch: ${{ github.ref_name }}"
-        echo "📝 Triggered by: ${{ github.actor }}"
 
