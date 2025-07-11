@@ -74,7 +74,7 @@ try:
         logger.info(f"Added crawler path to sys.path: {crawler_path}")
     else:
         logger.warning("Could not find crawler path in any of the expected locations")
-    from crawler_router import router as crawler_router
+    from crawler.crawler_router import router as crawler_router
     logger.info("Successfully imported crawler router")
 except ImportError as e:
     logger.warning(f"Failed to import crawler router: {e}")
