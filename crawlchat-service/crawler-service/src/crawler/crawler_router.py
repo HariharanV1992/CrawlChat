@@ -12,6 +12,7 @@ import sys
 import uuid
 from datetime import datetime
 import asyncio
+import boto3
 
 # Force deployment - trigger GitHub Actions
 logger = logging.getLogger(__name__)
@@ -280,23 +281,26 @@ async def start_task(task_id: str):
         # Update task status
         task["status"] = "running"
         task["updated_at"] = datetime.utcnow().isoformat()
-        
-        # Save updated task to database
         await save_task_to_db(task)
-        
         logger.error(f"CRAWLER: Starting crawler task: {task_id}")
         
-        # Run the crawl task directly in this Lambda function
-        logger.error(f"CRAWLER: Starting local crawl execution for task {task_id}")
-        
-        # Run the crawl task directly (not asynchronously)
-        await run_crawl_task(task_id)
-        
-        logger.error(f"CRAWLER: Task {task_id} completed successfully!")
+        # Trigger the crawler Lambda function asynchronously
+        lambda_client = boto3.client("lambda")
+        payload = {
+            "task_id": task_id,
+            "url": task["url"],
+            "config": task["config"]
+        }
+        response = lambda_client.invoke(
+            FunctionName="crawlchat-crawler-function",
+            InvocationType="Event",
+            Payload=json.dumps(payload)
+        )
+        logger.error(f"CRAWLER: Invoked crawlchat-crawler-function Lambda for task {task_id}, response: {response}")
         return {
             "task_id": task_id,
-            "status": "completed",
-            "message": "Task completed successfully"
+            "status": "running",
+            "message": "Task started in crawler Lambda"
         }
     except Exception as e:
         logger.error(f"CRAWLER EXCEPTION in /tasks/{{task_id}}/start: {e}", exc_info=True)
