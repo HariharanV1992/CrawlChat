@@ -341,18 +341,21 @@ async def run_crawl_task(task_id: str):
         try:
             # Get max document count from config
             max_documents = config.get('max_documents', 1)
-            logger.info(f"Starting crawl with max_documents: {max_documents}")
+            logger.error(f"CRAWLER: Starting crawl with max_documents: {max_documents}")
             
             # Use enhanced crawler with max document count support
-            logger.info(f"Calling enhanced_crawler.crawl_with_max_docs for task {task_id}")
-            logger.info(f"Parameters: url={url}, max_doc_count={max_documents}")
+            logger.error(f"CRAWLER: About to call enhanced_crawler.crawl_with_max_docs for task {task_id}")
+            logger.error(f"CRAWLER: Parameters: url={url}, max_doc_count={max_documents}")
             
             try:
+                logger.error(f"CRAWLER: Calling crawl_with_max_docs NOW...")
                 result = enhanced_crawler.crawl_with_max_docs(url, max_doc_count=max_documents)
-                logger.info(f"Crawl completed for task {task_id}. Result: {result}")
+                logger.error(f"CRAWLER: crawl_with_max_docs returned: {result}")
+                logger.error(f"CRAWLER: Result type: {type(result)}")
+                logger.error(f"CRAWLER: Result keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
             except Exception as crawl_error:
-                logger.error(f"Exception during crawl_with_max_docs for task {task_id}: {crawl_error}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
+                logger.error(f"CRAWLER EXCEPTION during crawl_with_max_docs for task {task_id}: {crawl_error}")
+                logger.error(f"CRAWLER Traceback: {traceback.format_exc()}")
                 task["status"] = "failed"
                 task["error"] = f"Crawl execution failed: {str(crawl_error)}"
                 task["updated_at"] = datetime.utcnow().isoformat()
@@ -361,6 +364,7 @@ async def run_crawl_task(task_id: str):
             
             # Update task with enhanced results
             success = result.get("success", False)
+            logger.error(f"CRAWLER: Task success status: {success}")
             task["status"] = "completed" if success else "failed"
             task["result"] = result
             task["error"] = result.get("error") if not success else None
@@ -369,6 +373,10 @@ async def run_crawl_task(task_id: str):
             documents_found = result.get("documents_found", 0)
             total_pages = result.get("total_pages", 0)
             documents_processed = len(result.get("documents", []))
+            
+            logger.error(f"CRAWLER: Documents found: {documents_found}")
+            logger.error(f"CRAWLER: Total pages: {total_pages}")
+            logger.error(f"CRAWLER: Documents processed: {documents_processed}")
             
             task["progress"]["documents_found"] = documents_found
             task["progress"]["pages_crawled"] = total_pages
@@ -379,17 +387,18 @@ async def run_crawl_task(task_id: str):
             # Save updated task to database
             await save_task_to_db(task)
             
-            logger.info(f"=== CRAWL TASK {task_id} COMPLETED ===")
-            logger.info(f"Status: {task['status']}")
-            logger.info(f"Documents found: {documents_found}")
-            logger.info(f"Pages crawled: {total_pages}")
-            logger.info(f"Documents processed: {documents_processed}")
+            logger.error(f"CRAWLER: === CRAWL TASK {task_id} COMPLETED ===")
+            logger.error(f"CRAWLER: Status: {task['status']}")
+            logger.error(f"CRAWLER: Documents found: {documents_found}")
+            logger.error(f"CRAWLER: Pages crawled: {total_pages}")
+            logger.error(f"CRAWLER: Documents processed: {documents_processed}")
             
             if not success:
-                logger.error(f"Crawl failed for task {task_id}: {result.get('error', 'Unknown error')}")
+                logger.error(f"CRAWLER: Crawl failed for task {task_id}: {result.get('error', 'Unknown error')}")
             
         except Exception as crawl_error:
-            logger.error(f"Exception during crawl execution for task {task_id}: {crawl_error}")
+            logger.error(f"CRAWLER EXCEPTION during crawl execution for task {task_id}: {crawl_error}")
+            logger.error(f"CRAWLER Traceback: {traceback.format_exc()}")
             task["status"] = "failed"
             task["error"] = str(crawl_error)
             task["updated_at"] = datetime.utcnow().isoformat()
