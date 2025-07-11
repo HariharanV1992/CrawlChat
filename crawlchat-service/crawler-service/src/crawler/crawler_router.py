@@ -15,18 +15,24 @@ logger = logging.getLogger(__name__)
 
 # Import real crawler modules
 try:
-    from advanced_crawler import AdvancedCrawler
+    from .advanced_crawler import AdvancedCrawler
     logger.info("Successfully imported AdvancedCrawler")
 except ImportError as e:
     logger.warning(f"Failed to import AdvancedCrawler: {e}")
-    # Create dummy class for fallback
-    class AdvancedCrawler:
-        def __init__(self, api_key):
-            self.api_key = api_key
-        def crawl_url(self, url, **kwargs):
-            return {"success": False, "error": "Crawler not available"}
-        def close(self):
-            pass
+    # Try absolute import as fallback
+    try:
+        from advanced_crawler import AdvancedCrawler
+        logger.info("Successfully imported AdvancedCrawler with absolute import")
+    except ImportError as e2:
+        logger.warning(f"Failed to import AdvancedCrawler with absolute import: {e2}")
+        # Create dummy class for fallback
+        class AdvancedCrawler:
+            def __init__(self, api_key):
+                self.api_key = api_key
+            def crawl_url(self, url, **kwargs):
+                return {"success": False, "error": "Crawler not available"}
+            def close(self):
+                pass
 
 # In-memory task storage (in production, use database)
 TASK_STORAGE = {}
