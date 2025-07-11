@@ -291,12 +291,15 @@ async def start_task(task_id: str):
             "url": task["url"],
             "config": task["config"]
         }
+        print(f"[API LAMBDA] Invoking crawlchat-crawler-function with payload: {payload}")
+        logger.error(f"[API LAMBDA] Invoking crawlchat-crawler-function with payload: {payload}")
         response = lambda_client.invoke(
             FunctionName="crawlchat-crawler-function",
             InvocationType="Event",
             Payload=json.dumps(payload)
         )
-        logger.error(f"CRAWLER: Invoked crawlchat-crawler-function Lambda for task {task_id}, response: {response}")
+        print(f"[API LAMBDA] Lambda invoke response: {response}")
+        logger.error(f"[API LAMBDA] Lambda invoke response: {response}")
         return {
             "task_id": task_id,
             "status": "running",
@@ -382,7 +385,9 @@ async def run_crawl_task(task_id: str):
             logger.error(f"CRAWLER: Total pages: {total_pages}")
             logger.error(f"CRAWLER: Documents processed: {documents_processed}")
             
+            # Add documents_downloaded for UI compatibility
             task["progress"]["documents_found"] = documents_found
+            task["progress"]["documents_downloaded"] = documents_found  # <-- Add this line
             task["progress"]["pages_crawled"] = total_pages
             task["progress"]["documents_processed"] = documents_processed
                 
