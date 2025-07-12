@@ -10,6 +10,7 @@ import asyncio
 import time
 import uuid
 import hashlib
+import json
 from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import boto3
@@ -24,34 +25,66 @@ logger = logging.getLogger(__name__)
 
 class TextractAPI(Enum):
     """Textract API types for different use cases."""
-    DETECT_DOCUMENT_TEXT = "detect_document_text"  # Default, cheaper
-    ANALYZE_DOCUMENT = "analyze_document"  # For forms/tables, more expensive
+    DETECT_DOCUMENT_TEXT = "detect_document_text"  # Synchronous, for small documents
+    ANALYZE_DOCUMENT = "analyze_document"  # Synchronous, for forms/tables
+    START_DOCUMENT_TEXT_DETECTION = "start_document_text_detection"  # Asynchronous, for large documents
+    START_DOCUMENT_ANALYSIS = "start_document_analysis"  # Asynchronous, for large forms/tables
 
 class DocumentType(Enum):
     """Document types for API selection."""
-    GENERAL = "general"  # Use DetectDocumentText
-    FORM = "form"  # Use AnalyzeDocument
-    INVOICE = "invoice"  # Use AnalyzeDocument
-    TABLE_HEAVY = "table_heavy"  # Use AnalyzeDocument
+    GENERAL = "general"  # Use DetectDocumentText or StartDocumentTextDetection
+    FORM = "form"  # Use AnalyzeDocument or StartDocumentAnalysis
+    INVOICE = "invoice"  # Use AnalyzeDocument or StartDocumentAnalysis
+    TABLE_HEAVY = "table_heavy"  # Use AnalyzeDocument or StartDocumentAnalysis
 
 class AWSTextractService:
-    """AWS Textract service for document text extraction."""
+    """AWS Textract service for document text extraction with async support."""
     
     def __init__(self):
         """Initialize the Textract service."""
         self.textract_client = None
         self.s3_client = None
+        self.sqs_client = None
+        self.sns_client = None
         self._init_clients()
     
     def _init_clients(self):
-        """Initialize AWS clients."""
+        """Initialize AWS clients with optimized configuration."""
         try:
+            # Configure boto3 with optimized settings
+            config = boto3.Config(
+                retries=dict(
+                    max_attempts=3,
+                    mode='adaptive'
+                ),
+                read_timeout=60,
+                connect_timeout=30
+            )
+            
             # Initialize Textract client
             if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
                 # Running in Lambda - use IAM role
                 logger.info("Running in Lambda environment, using IAM role for AWS clients")
-                self.textract_client = boto3.client('textract', region_name=aws_config.textract_region)
-                self.s3_client = boto3.client('s3', region_name=aws_config.region)
+                self.textract_client = boto3.client(
+                    'textract', 
+                    region_name=aws_config.textract_region,
+                    config=config
+                )
+                self.s3_client = boto3.client(
+                    's3', 
+                    region_name=aws_config.region,
+                    config=config
+                )
+                self.sqs_client = boto3.client(
+                    'sqs',
+                    region_name=aws_config.region,
+                    config=config
+                )
+                self.sns_client = boto3.client(
+                    'sns',
+                    region_name=aws_config.region,
+                    config=config
+                )
             else:
                 # Running locally - use credentials if available
                 if aws_config.access_key_id and aws_config.secret_access_key:
@@ -60,28 +93,60 @@ class AWSTextractService:
                         'textract',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=aws_config.textract_region
+                        region_name=aws_config.textract_region,
+                        config=config
                     )
                     self.s3_client = boto3.client(
                         's3',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=aws_config.region
+                        region_name=aws_config.region,
+                        config=config
+                    )
+                    self.sqs_client = boto3.client(
+                        'sqs',
+                        aws_access_key_id=aws_config.access_key_id,
+                        aws_secret_access_key=aws_config.secret_access_key,
+                        region_name=aws_config.region,
+                        config=config
+                    )
+                    self.sns_client = boto3.client(
+                        'sns',
+                        aws_access_key_id=aws_config.access_key_id,
+                        aws_secret_access_key=aws_config.secret_access_key,
+                        region_name=aws_config.region,
+                        config=config
                     )
                 else:
                     logger.warning("AWS credentials not available for local environment")
                     self.textract_client = None
                     self.s3_client = None
+                    self.sqs_client = None
+                    self.sns_client = None
             
             if self.textract_client:
                 logger.info(f"Textract client initialized successfully in region: {aws_config.textract_region}")
+                # Test client connectivity
+                try:
+                    # Simple test call to verify client works
+                    self.textract_client.list_document_analysis_jobs(MaxResults=1)
+                    logger.info("Textract client connectivity test passed")
+                except Exception as test_e:
+                    logger.warning(f"Textract client connectivity test failed: {test_e}")
+                    
             if self.s3_client:
                 logger.info(f"S3 client initialized successfully in region: {aws_config.region}")
+            if self.sqs_client:
+                logger.info(f"SQS client initialized successfully in region: {aws_config.region}")
+            if self.sns_client:
+                logger.info(f"SNS client initialized successfully in region: {aws_config.region}")
                 
         except Exception as e:
             logger.error(f"Failed to initialize AWS clients: {e}")
             self.textract_client = None
             self.s3_client = None
+            self.sqs_client = None
+            self.sns_client = None
     
     async def extract_text_from_s3_pdf(
         self, 
@@ -91,7 +156,7 @@ class AWSTextractService:
     ) -> (str, int):
         """
         Extract text from PDF stored in S3 using AWS Textract.
-        Assumes the document has been preprocessed and normalized.
+        Intelligently chooses between sync and async APIs based on document size.
         Returns (text_content, page_count)
         """
         try:
@@ -100,12 +165,48 @@ class AWSTextractService:
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
             
+            # Validate document before processing
+            await self._validate_document_for_textract(s3_bucket, s3_key)
+            
             # Wait for S3 object to be available
             if not await self._wait_for_s3_object(s3_bucket, s3_key):
                 raise TextractError(f"S3 object {s3_key} not available after waiting")
             
+            # Get document size to decide on sync vs async
+            try:
+                response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                document_size = response.get('ContentLength', 0)
+                logger.info(f"Document size: {document_size} bytes")
+                
+                # Use async for documents larger than 1MB or if explicitly configured
+                use_async = (
+                    document_size > 1024 * 1024 or  # > 1MB
+                    os.getenv('TEXTRACT_FORCE_ASYNC', 'false').lower() == 'true' or
+                    os.getenv('TEXTRACT_SNS_TOPIC_ARN') is not None  # Async configured
+                )
+                
+                if use_async:
+                    logger.info(f"Using async Textract API for document ({document_size} bytes)")
+                    return await self._extract_text_async(s3_bucket, s3_key)
+                else:
+                    logger.info(f"Using sync Textract API for document ({document_size} bytes)")
+                    return await self._extract_text_sync(s3_bucket, s3_key, document_type)
+                    
+            except Exception as size_e:
+                logger.warning(f"Could not determine document size: {size_e}, using sync API")
+                return await self._extract_text_sync(s3_bucket, s3_key, document_type)
+                    
+        except Exception as e:
+            logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
+            raise TextractError(f"Textract extraction failed: {e}")
+
+    async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
+        """
+        Extract text using synchronous Textract API.
+        """
+        try:
             # Process with Textract
-            logger.info(f"Processing document {s3_key} with Textract")
+            logger.info(f"Processing document {s3_key} with sync Textract")
             api_type = self._select_api_type(document_type)
             logger.info(f"Using API: {api_type.value}")
             
@@ -116,14 +217,53 @@ class AWSTextractService:
             
             # Check if we got meaningful text
             if text_content and len(text_content.strip()) > 10:
-                logger.info(f"✅ Textract succeeded: {len(text_content)} characters extracted")
+                logger.info(f"✅ Sync Textract succeeded: {len(text_content)} characters extracted")
                 return text_content, page_count
             else:
-                raise TextractError("Textract returned empty or minimal text")
-                    
+                raise TextractError("Sync Textract returned empty or minimal text")
+                
         except Exception as e:
-            logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
-            raise TextractError(f"Textract extraction failed: {e}")
+            logger.error(f"Sync Textract extraction failed: {e}")
+            raise TextractError(f"Sync extraction failed: {e}")
+
+    async def _validate_document_for_textract(self, s3_bucket: str, s3_key: str):
+        """
+        Validate document format and size for Textract processing.
+        """
+        try:
+            # Get object metadata
+            response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+            content_length = response.get('ContentLength', 0)
+            content_type = response.get('ContentType', '')
+            
+            logger.info(f"Document validation - Size: {content_length} bytes, Type: {content_type}")
+            
+            # Check file size limits
+            if content_length > 5 * 1024 * 1024:  # 5MB limit for synchronous API
+                logger.warning(f"Document size ({content_length} bytes) exceeds 5MB limit for synchronous Textract")
+                raise TextractError("Document too large for synchronous Textract processing (max 5MB)")
+            
+            if content_length < 1024:  # 1KB minimum
+                logger.warning(f"Document size ({content_length} bytes) is suspiciously small")
+                raise TextractError("Document too small for meaningful text extraction")
+            
+            # Validate content type
+            valid_types = ['application/pdf', 'image/jpeg', 'image/png', 'image/tiff', 'image/bmp']
+            if content_type and content_type.lower() not in valid_types:
+                logger.warning(f"Unsupported content type: {content_type}")
+                raise TextractError(f"Unsupported document type: {content_type}")
+            
+            logger.info(f"✅ Document validation passed - Size: {content_length} bytes")
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchKey':
+                raise TextractError(f"S3 object {s3_key} not found")
+            else:
+                raise TextractError(f"S3 error during validation: {error_code}")
+        except Exception as e:
+            logger.error(f"Error validating document: {e}")
+            raise TextractError(f"Document validation failed: {e}")
 
     async def _wait_for_s3_object(self, s3_bucket: str, s3_key: str, max_wait: int = 10) -> bool:
         """
@@ -189,18 +329,21 @@ class AWSTextractService:
 
     async def _detect_document_text(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
-        Call AWS Textract DetectDocumentText API.
+        Call AWS Textract DetectDocumentText API with optimized parameters.
         """
         try:
             logger.info(f"Calling DetectDocumentText for s3://{s3_bucket}/{s3_key}")
             
+            # Enhanced Textract call with optimized parameters
             response = self.textract_client.detect_document_text(
                 Document={
                     'S3Object': {
                         'Bucket': s3_bucket,
                         'Name': s3_key
                     }
-                }
+                },
+                # Add client configuration for better performance
+                ClientRequestToken=str(uuid.uuid4())  # Unique request token for idempotency
             )
             
             # Log response structure for debugging
@@ -727,14 +870,21 @@ class AWSTextractService:
                 pdf_content,
                 dpi=300,  # High DPI for better Textract OCR results
                 fmt='PNG',
-                thread_count=1  # Single thread for Lambda compatibility
+                thread_count=1,  # Single thread for Lambda compatibility
+                # Additional parameters for better rendering
+                transparent=False,  # Ensure solid background
+                grayscale=False,  # Keep color for better OCR
+                size=(None, None)  # Use original size with DPI scaling
             )
             
             image_files = []
             for i, image in enumerate(images):
+                # Optimize image for Textract processing
+                optimized_image = self._optimize_image_for_textract(image)
+                
                 # Convert PIL image to bytes
                 img_buffer = io.BytesIO()
-                image.save(img_buffer, format='PNG', optimize=True)
+                optimized_image.save(img_buffer, format='PNG', optimize=True)
                 img_bytes = img_buffer.getvalue()
                 
                 image_filename = f"{os.path.splitext(filename)[0]}_page_{i+1}.png"
@@ -803,6 +953,42 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"Error converting PDF to images locally: {e}")
             return []
+
+    def _optimize_image_for_textract(self, image):
+        """
+        Optimize image for better Textract OCR results.
+        """
+        try:
+            # Convert to RGB if needed (Textract works better with RGB)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Enhance contrast for better text recognition
+            from PIL import ImageEnhance
+            
+            # Increase contrast slightly
+            enhancer = ImageEnhance.Contrast(image)
+            image = enhancer.enhance(1.2)  # 20% more contrast
+            
+            # Increase sharpness
+            enhancer = ImageEnhance.Sharpness(image)
+            image = enhancer.enhance(1.1)  # 10% more sharpness
+            
+            # Ensure minimum size for Textract (at least 100x100 pixels)
+            min_size = 100
+            if image.size[0] < min_size or image.size[1] < min_size:
+                logger.warning(f"Image too small ({image.size}), scaling up for Textract")
+                # Scale up while maintaining aspect ratio
+                ratio = max(min_size / image.size[0], min_size / image.size[1])
+                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
+                image = image.resize(new_size, Image.Resampling.LANCZOS)
+            
+            logger.info(f"Image optimized for Textract - Size: {image.size}, Mode: {image.mode}")
+            return image
+            
+        except Exception as e:
+            logger.warning(f"Image optimization failed: {e}, using original image")
+            return image
 
 
 
@@ -1367,6 +1553,223 @@ class AWSTextractService:
         combined_text = "\n\n".join(all_text)
         logger.info(f"Image manifest processing completed: {len(combined_text)} total characters from {total_pages} pages")
         return combined_text, total_pages
+
+    def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
+        """
+        Select the appropriate Textract API based on document type and size.
+        """
+        # For now, use synchronous APIs for simplicity
+        # TODO: Implement size-based decision making
+        if document_type in [DocumentType.FORM, DocumentType.INVOICE, DocumentType.TABLE_HEAVY]:
+            return TextractAPI.ANALYZE_DOCUMENT
+        else:
+            return TextractAPI.DETECT_DOCUMENT_TEXT
+
+    async def _start_async_text_detection_job(self, s3_bucket: str, s3_key: str) -> str:
+        """
+        Start asynchronous Textract text detection job.
+        """
+        try:
+            logger.info(f"Starting async Textract job for s3://{s3_bucket}/{s3_key}")
+            
+            # Get SNS topic and SQS queue from environment or config
+            sns_topic_arn = os.getenv('TEXTRACT_SNS_TOPIC_ARN')
+            role_arn = os.getenv('TEXTRACT_ROLE_ARN')
+            
+            if not sns_topic_arn or not role_arn:
+                logger.warning("SNS topic ARN or IAM role ARN not configured, falling back to sync API")
+                raise TextractError("Async Textract not configured - missing SNS topic or IAM role")
+            
+            response = self.textract_client.start_document_text_detection(
+                DocumentLocation={
+                    'S3Object': {
+                        'Bucket': s3_bucket,
+                        'Name': s3_key
+                    }
+                },
+                NotificationChannel={
+                    'RoleArn': role_arn,
+                    'SNSTopicArn': sns_topic_arn
+                },
+                ClientRequestToken=str(uuid.uuid4())
+            )
+            
+            job_id = response['JobId']
+            logger.info(f"✅ Async Textract job started: {job_id}")
+            return job_id
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+            logger.error(f"Failed to start async Textract job: {error_code} - {error_message}")
+            raise TextractError(f"Async job start failed: {error_code} - {error_message}")
+        except Exception as e:
+            logger.error(f"Unexpected error starting async job: {e}")
+            raise TextractError(f"Async job start failed: {e}")
+
+    async def _wait_for_async_job_completion(self, job_id: str, max_wait_time: int = 300) -> bool:
+        """
+        Wait for async Textract job completion using SQS.
+        """
+        try:
+            queue_url = os.getenv('TEXTRACT_SQS_QUEUE_URL')
+            if not queue_url:
+                logger.warning("SQS queue URL not configured, using polling fallback")
+                return await self._poll_job_status(job_id, max_wait_time)
+            
+            logger.info(f"Waiting for async job {job_id} completion via SQS...")
+            start_time = time.time()
+            
+            while time.time() - start_time < max_wait_time:
+                try:
+                    # Receive messages from SQS queue
+                    response = self.sqs_client.receive_message(
+                        QueueUrl=queue_url,
+                        MaxNumberOfMessages=1,
+                        WaitTimeSeconds=20  # Long polling
+                    )
+                    
+                    if 'Messages' in response:
+                        for message in response['Messages']:
+                            try:
+                                # Parse the message body
+                                message_body = json.loads(message['Body'])
+                                if 'Message' in message_body:
+                                    job_message = json.loads(message_body['Message'])
+                                    
+                                    # Check if this message is for our job
+                                    if (job_message.get('JobId') == job_id and 
+                                        job_message.get('Status') in ['SUCCEEDED', 'FAILED']):
+                                        
+                                        # Delete the message from queue
+                                        self.sqs_client.delete_message(
+                                            QueueUrl=queue_url,
+                                            ReceiptHandle=message['ReceiptHandle']
+                                        )
+                                        
+                                        if job_message['Status'] == 'SUCCEEDED':
+                                            logger.info(f"✅ Async job {job_id} completed successfully")
+                                            return True
+                                        else:
+                                            error_message = job_message.get('StatusMessage', 'Unknown error')
+                                            logger.error(f"❌ Async job {job_id} failed: {error_message}")
+                                            raise TextractError(f"Async job failed: {error_message}")
+                                            
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse SQS message: {e}")
+                                continue
+                                
+                except ClientError as e:
+                    logger.warning(f"SQS receive error: {e}")
+                    await asyncio.sleep(5)
+                    continue
+                    
+                await asyncio.sleep(1)
+            
+            logger.warning(f"Async job {job_id} did not complete within {max_wait_time} seconds")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error waiting for async job completion: {e}")
+            return False
+
+    async def _poll_job_status(self, job_id: str, max_wait_time: int = 300) -> bool:
+        """
+        Fallback method to poll job status directly.
+        """
+        logger.info(f"Polling job status for {job_id}")
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait_time:
+            try:
+                response = self.textract_client.get_document_text_detection(JobId=job_id)
+                status = response['JobStatus']
+                
+                if status == 'SUCCEEDED':
+                    logger.info(f"✅ Job {job_id} completed successfully")
+                    return True
+                elif status == 'FAILED':
+                    error_message = response.get('StatusMessage', 'Unknown error')
+                    logger.error(f"❌ Job {job_id} failed: {error_message}")
+                    raise TextractError(f"Job failed: {error_message}")
+                elif status == 'IN_PROGRESS':
+                    logger.info(f"Job {job_id} still in progress...")
+                    await asyncio.sleep(10)  # Wait 10 seconds before next poll
+                else:
+                    logger.warning(f"Unknown job status: {status}")
+                    await asyncio.sleep(10)
+                    
+            except ClientError as e:
+                logger.warning(f"Error polling job status: {e}")
+                await asyncio.sleep(10)
+                
+        logger.warning(f"Job {job_id} did not complete within {max_wait_time} seconds")
+        return False
+
+    async def _get_async_job_results(self, job_id: str) -> List[Dict[str, Any]]:
+        """
+        Get results from completed async Textract job.
+        """
+        try:
+            logger.info(f"Fetching results for async job {job_id}")
+            all_blocks = []
+            next_token = None
+            
+            while True:
+                if next_token:
+                    response = self.textract_client.get_document_text_detection(
+                        JobId=job_id,
+                        NextToken=next_token
+                    )
+                else:
+                    response = self.textract_client.get_document_text_detection(JobId=job_id)
+                
+                blocks = response.get('Blocks', [])
+                all_blocks.extend(blocks)
+                
+                next_token = response.get('NextToken')
+                if not next_token:
+                    break
+                    
+                logger.info(f"Retrieved {len(blocks)} blocks, total: {len(all_blocks)}")
+            
+            logger.info(f"✅ Retrieved {len(all_blocks)} total blocks from async job {job_id}")
+            return all_blocks
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+            logger.error(f"Failed to get async job results: {error_code} - {error_message}")
+            raise TextractError(f"Failed to get async results: {error_code} - {error_message}")
+        except Exception as e:
+            logger.error(f"Unexpected error getting async results: {e}")
+            raise TextractError(f"Failed to get async results: {e}")
+
+    async def _extract_text_async(self, s3_bucket: str, s3_key: str) -> (str, int):
+        """
+        Extract text using asynchronous Textract API.
+        """
+        try:
+            # Start async job
+            job_id = await self._start_async_text_detection_job(s3_bucket, s3_key)
+            
+            # Wait for completion
+            if await self._wait_for_async_job_completion(job_id):
+                # Get results
+                blocks = await self._get_async_job_results(job_id)
+                
+                # Extract text from blocks
+                text_content = self._extract_text_from_blocks(blocks)
+                page_count = len([block for block in blocks if block['BlockType'] == 'PAGE'])
+                
+                logger.info(f"Async Textract completed: {len(text_content)} characters, {page_count} pages")
+                return text_content, page_count
+            else:
+                raise TextractError("Async job did not complete within timeout")
+                
+        except Exception as e:
+            logger.error(f"Async Textract extraction failed: {e}")
+            raise TextractError(f"Async extraction failed: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 

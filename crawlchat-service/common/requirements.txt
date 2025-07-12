@@ -17,9 +17,14 @@ PyPDF2>=3.0.0  # Lightweight PDF text extraction (primary fallback)
 pdfminer.six>=20221105  # Advanced PDF text extraction
 pdf2image>=1.16.0  # PDF to image conversion for OCR fallback
 Pillow>=10.0.0  # Image processing (required for pdf2image)
+Pillow-SIMD>=10.0.0  # Enhanced image processing (optional, for better performance)
 
-# Email
-# smtplib is part of Python standard library
+# Additional document processing
+openpyxl>=3.1.0  # For Excel file support
+python-docx>=1.1.0  # For Word documents
+python-pptx>=0.6.21  # For PowerPoint files
+html2text>=2020.1.16  # HTML to text conversion
+python-dateutil>=2.8.2  # Date parsing utilities
 
 # Utilities
 python-multipart>=0.0.6 

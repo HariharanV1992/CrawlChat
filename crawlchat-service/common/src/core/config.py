@@ -66,21 +66,21 @@ class Settings(BaseSettings):
     cors_allow_headers: List[str] = Field(default=["*"], description="Allowed CORS headers")
     
     # MongoDB Configuration
-    mongodb_uri: str = Field(default="mongodb+srv://hariharanv:welcome030219@financedata.doarsxf.mongodb.net/?retryWrites=true&w=majority&appName=FinanceData", alias="MONGODB_URI", description="MongoDB connection URI")
-    mongodb_db: str = Field(default="stock_market_crawler", alias="MONGODB_DB", description="MongoDB database name")
+    mongodb_uri: str = Field(default="", alias="MONGODB_URI", description="MongoDB connection URI")
+    mongodb_db: str = Field(default="crawlchat", alias="MONGODB_DB", description="MongoDB database name")
     
     # Email Configuration
     smtp_server: str = Field(default="smtp.gmail.com", description="SMTP server for sending emails")
     smtp_port: int = Field(default=587, description="SMTP port")
-    smtp_username: Optional[str] = Field(default="harito2do@gmail.com", description="SMTP username/email")
-    smtp_password: Optional[str] = Field(default="xuls mlzo ygho hviv", description="SMTP password/app password")
+    smtp_username: Optional[str] = Field(default="", description="SMTP username/email")
+    smtp_password: Optional[str] = Field(default="", description="SMTP password/app password")
     smtp_use_tls: bool = Field(default=True, description="Use TLS for SMTP")
-    email_from: str = Field(default="harito2do@gmail.com", description="From email address")
+    email_from: str = Field(default="", description="From email address")
     app_url: str = Field(default="http://localhost:8000", description="Application URL for confirmation links")
     
     # Database settings
-    mongodb_url: str = "mongodb://localhost:27017"
-    mongodb_database: str = "stock_market_crawler"
+    mongodb_url: str = Field(default="", description="MongoDB URL")
+    mongodb_database: str = Field(default="crawlchat", description="MongoDB database name")
     
     # Redis settings for caching
     redis_url: str = "redis://localhost:6379"
@@ -91,24 +91,24 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/0"
     
     # AWS settings
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    aws_region: str = "us-east-1"
-    aws_account_id: str = ""
+    aws_access_key_id: str = Field(default="", description="AWS access key ID")
+    aws_secret_access_key: str = Field(default="", description="AWS secret access key")
+    aws_region: str = Field(default="us-east-1", description="AWS region")
+    aws_account_id: str = Field(default="", description="AWS account ID")
     
     # Lambda settings
-    lambda_function_name: str = "stock-market-crawler-background-processor"
+    lambda_function_name: str = Field(default="crawlchat-api-function", description="Lambda function name")
     
     # ElastiCache Redis settings
     redis_endpoint: str = ""
     redis_port: int = 6379
     
     # S3 settings
-    s3_bucket_name: str = "stock-market-crawler-data"
-    s3_documents_prefix: str = "documents/"
-    s3_crawled_data_prefix: str = "crawled_data/"
-    s3_uploaded_documents_prefix: str = "uploaded_documents/"
-    s3_temp_prefix: str = "temp/"
+    s3_bucket_name: str = Field(default="crawlchat-documents", description="S3 bucket name")
+    s3_documents_prefix: str = Field(default="documents/", description="S3 documents prefix")
+    s3_crawled_data_prefix: str = Field(default="crawled_data/", description="S3 crawled data prefix")
+    s3_uploaded_documents_prefix: str = Field(default="uploaded_documents/", description="S3 uploaded documents prefix")
+    s3_temp_prefix: str = Field(default="temp/", description="S3 temp prefix")
     
     # OpenAI settings
     openai_model: str = "gpt-4o-mini"

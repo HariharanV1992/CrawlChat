@@ -31,10 +31,10 @@ class AWSConfig:
                         "region": os.getenv("AWS_REGION", "ap-south-1")
                     },
                     "lambda": {
-                        "function_name": "stock-market-crawler-background-processor"
+                        "function_name": os.getenv("LAMBDA_FUNCTION_NAME", "crawlchat-api-function")
                     },
                     "s3": {
-                        "bucket_name": os.getenv("S3_BUCKET_NAME") or os.getenv("S3_BUCKET", "stock-market-crawler-data"),
+                        "bucket_name": os.getenv("S3_BUCKET_NAME") or os.getenv("S3_BUCKET", "crawlchat-documents"),
                         "documents_prefix": "documents/",
                         "crawled_data_prefix": "crawled_data/",
                         "uploaded_documents_prefix": "uploaded_documents/",
