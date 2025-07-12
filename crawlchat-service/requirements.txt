@@ -45,7 +45,7 @@ Pillow>=10.0.0  # Image processing (required for pdf2image)
 Pillow-SIMD>=10.0.0  # Enhanced image processing (optional, for better performance)
 
 # Additional OCR fallback (optional for local development)
-# pytesseract>=0.3.10  # Tesseract OCR wrapper (uncomment for local OCR fallback)
+# pytesseract>=0.3.10  # Tesseract OCR wrapper (uncomment if needed for extreme fallback)
 # Note: Requires system installation of tesseract-ocr
 
 # AI and machine learning

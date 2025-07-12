@@ -742,20 +742,69 @@ class AWSTextractService:
                 
                 logger.info(f"Converted page {i+1} to image: {len(img_bytes)} bytes (300 DPI)")
                 
-                # Debug: Save image locally for inspection (only in development)
-                if os.getenv('DEBUG_SAVE_IMAGES', 'false').lower() == 'true':
-                    try:
-                        debug_path = f"/tmp/debug_page_{i+1}.png"
-                        image.save(debug_path)
-                        logger.info(f"DEBUG: Saved image to {debug_path} for inspection")
-                    except Exception as debug_e:
-                        logger.warning(f"DEBUG: Failed to save debug image: {debug_e}")
+                # CRITICAL: Always save images for debugging in Lambda
+                try:
+                    debug_path = f"/tmp/page_{i+1}.png"
+                    image.save(debug_path)
+                    file_size = os.path.getsize(debug_path)
+                    logger.info(f"CRITICAL DEBUG: Saved rendered PNG: {debug_path} (size: {file_size} bytes)")
+                    
+                    # Check if image is suspiciously small
+                    if file_size < 50000:  # Less than 50KB
+                        logger.warning(f"⚠️ SUSPICIOUS: Image {debug_path} is very small ({file_size} bytes) - may indicate rendering issues")
+                        
+                        # Log image dimensions for debugging
+                        width, height = image.size
+                        logger.warning(f"⚠️ Image dimensions: {width}x{height} pixels")
+                        
+                        # Check if image is mostly blank
+                        try:
+                            # Convert to grayscale and check if mostly white/blank
+                            gray_image = image.convert('L')
+                            pixels = list(gray_image.getdata())
+                            white_pixels = sum(1 for p in pixels if p > 240)  # Threshold for "white"
+                            total_pixels = len(pixels)
+                            white_percentage = (white_pixels / total_pixels) * 100
+                            
+                            logger.warning(f"⚠️ Image analysis: {white_percentage:.1f}% white pixels")
+                            if white_percentage > 90:
+                                logger.error(f"❌ CRITICAL: Image appears to be mostly blank ({white_percentage:.1f}% white)")
+                        except Exception as analysis_e:
+                            logger.warning(f"⚠️ Could not analyze image content: {analysis_e}")
+                    
+                except Exception as debug_e:
+                    logger.error(f"❌ CRITICAL: Failed to save debug image: {debug_e}")
+                
+                # Additional debug info
+                logger.info(f"Image format: {image.format}, Mode: {image.mode}, Size: {image.size}")
+                
+                # Check if image has any non-white content
+                try:
+                    # Sample some pixels to check for content
+                    sample_pixels = []
+                    for x in range(0, min(image.size[0], 100), 10):
+                        for y in range(0, min(image.size[1], 100), 10):
+                            pixel = image.getpixel((x, y))
+                            if isinstance(pixel, tuple):
+                                # RGB/RGBA
+                                sample_pixels.append(sum(pixel[:3]) / 3)
+                            else:
+                                # Grayscale
+                                sample_pixels.append(pixel)
+                    
+                    avg_brightness = sum(sample_pixels) / len(sample_pixels)
+                    logger.info(f"Sample pixel analysis: Average brightness = {avg_brightness:.1f}")
+                    
+                except Exception as pixel_e:
+                    logger.warning(f"Could not analyze pixel data: {pixel_e}")
             
             return image_files
             
         except Exception as e:
             logger.error(f"Error converting PDF to images locally: {e}")
             return []
+
+
 
     async def _cleanup_s3_objects(self, bucket_name: str, s3_keys: List[str]):
         """
@@ -825,6 +874,7 @@ class AWSTextractService:
             "- The PDF is corrupted or damaged\n"
             "- The PDF has no embedded text content\n"
             "- AWS Textract is not available or configured\n"
+            "- Font rendering issues in the container\n"
             "Please try uploading a different document format.",
             1
         )
