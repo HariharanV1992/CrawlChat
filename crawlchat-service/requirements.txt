@@ -42,7 +42,6 @@ python-dateutil>=2.8.2  # Date parsing utilities
 
 # AWS Textract and OCR dependencies
 Pillow>=10.0.0  # Image processing (required for pdf2image)
-Pillow-SIMD>=9.5.0  # Enhanced image processing (optional, for better performance)
 
 # Additional OCR fallback (optional for local development)
 # pytesseract>=0.3.10  # Tesseract OCR wrapper (uncomment if needed for extreme fallback)

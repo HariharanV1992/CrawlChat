@@ -18,7 +18,6 @@ setup(
         "pdfminer.six>=20221105",
         "pdf2image>=1.16.0",
         "Pillow>=10.0.0",
-        "Pillow-SIMD>=9.5.0",
         "openpyxl>=3.1.0",
         "python-docx>=1.1.0",
         "python-pptx>=0.6.21",
