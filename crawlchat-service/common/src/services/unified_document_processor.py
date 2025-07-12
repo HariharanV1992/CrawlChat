@@ -114,7 +114,7 @@ class UnifiedDocumentProcessor:
                 document_id=document_id,
                 content=text_content,
                 vector_result=vector_result,
-                processing_status="completed" if vector_result else "processed_no_text"
+                processing_status="processed" if vector_result else "processed_no_text"
             )
             
             return {
@@ -192,7 +192,7 @@ class UnifiedDocumentProcessor:
                 document_id=document_id,
                 content=cleaned_content,
                 vector_result=vector_result,
-                processing_status="completed"
+                processing_status="processed"
             )
             
             return {
@@ -604,7 +604,7 @@ class UnifiedDocumentProcessor:
         document_id: str,
         content: str,
         vector_result: Optional[Dict[str, Any]] = None,
-        processing_status: str = "completed"
+        processing_status: str = "processed"
     ):
         """Update document record with processing results."""
         try:
