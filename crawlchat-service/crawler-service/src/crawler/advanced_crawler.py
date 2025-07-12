@@ -364,13 +364,27 @@ class AdvancedCrawler:
                 
                 # Make the request using requests directly instead of scrapingbee_client
                 import requests
+                from urllib.parse import quote
                 
-                # Build the ScrapingBee URL
+                # ScrapingBee base URL
                 scrapingbee_url = "https://app.scrapingbee.com/api/v1/"
                 
+                # Ensure the 'url' parameter is properly passed (ScrapingBee handles encoding, avoid double encoding)
+                if not params.get("url"):
+                    logger.error("Missing 'url' in request parameters")
+                    return {
+                        'success': False,
+                        'error': "Missing 'url' in request parameters",
+                        'url': url
+                    }
+                
+                # Debug: Log the final constructed URL (without API key)
+                safe_params = params.copy()
+                safe_params['api_key'] = '***HIDDEN***'
+                logger.debug(f"Final ScrapingBee request URL: {scrapingbee_url}?url={params['url']}")
                 logger.info(f"Making request to ScrapingBee API for: {url}")
                 
-                # Make the request
+                # Perform request
                 response = requests.get(scrapingbee_url, params=params, headers=headers, timeout=70)
                 
                 logger.info(f"Response status: {response.status_code}")
@@ -403,6 +417,23 @@ class AdvancedCrawler:
                     content_length = len(content)
                     logger.info(f"Content length: {content_length} bytes")
                     
+                    # Safety check: Ensure we didn't get HTML instead of binary content
+                    content_type = response.headers.get('Content-Type', '')
+                    if 'text/html' in content_type:
+                        logger.warning(f"Received HTML instead of binary content (Content-Type: {content_type})")
+                        logger.warning("This indicates a failed download or redirect page")
+                        if attempt < max_retries - 1:
+                            logger.info("Retrying download...")
+                            continue
+                        else:
+                            return {
+                                'success': False,
+                                'error': f'Received HTML instead of binary content (Content-Type: {content_type})',
+                                'url': url,
+                                'status_code': response.status_code,
+                                'content_length': content_length
+                            }
+                    
                     # Check 2MB file size limit per ScrapingBee documentation
                     if content_length > MAX_FILE_SIZE:
                         logger.error(f"File size {content_length} bytes exceeds ScrapingBee 2MB limit")
@@ -423,10 +454,10 @@ class AdvancedCrawler:
                     content_type = response.headers.get('Content-Type', 'unknown')
                     file_type = self._determine_file_type(url, content_type)
                     
-                    # Check if content looks like HTML (error page or redirect)
-                    # Increase threshold for large files
+                    # Additional check: Look for HTML content in the response body
+                    # This is a backup check in case Content-Type header is missing or incorrect
                     if content_length < 50000 and (b'<!DOCTYPE html>' in content[:2000] or b'<html' in content[:2000]):
-                        logger.warning(f"Received HTML page instead of file for {url}")
+                        logger.warning(f"Detected HTML content in response body for {url}")
                         # Check if it's a redirect page
                         if b'redirect' in content.lower() or b'location.href' in content.lower():
                             logger.info(f"Detected redirect page, retrying...")
