@@ -20,6 +20,7 @@ from common.src.core.exceptions import ChatError, DatabaseError
 from common.src.services.vector_store_service import VectorStoreService
 from common.src.services.document_service import DocumentService
 from common.src.services.document_processing_service import document_processing_service
+from common.src.services.unified_storage_service import unified_storage_service
 from common.src.utils.prompts import PromptManager
 
 logger = logging.getLogger(__name__)

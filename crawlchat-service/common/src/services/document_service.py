@@ -782,9 +782,10 @@ class DocumentService:
         try:
             await mongodb.connect()
             # Sum up page_count from all processed documents for this user
+            # Use $ifNull to handle documents without metadata.page_count
             pipeline = [
                 {"$match": {"user_id": user_id, "status": "processed"}},
-                {"$group": {"_id": None, "total_pages": {"$sum": "$metadata.page_count"}}}
+                {"$group": {"_id": None, "total_pages": {"$sum": {"$ifNull": ["$metadata.page_count", 1]}}}}
             ]
             cursor = mongodb.get_collection("documents").aggregate(pipeline)
             result = await cursor.to_list(length=None)
