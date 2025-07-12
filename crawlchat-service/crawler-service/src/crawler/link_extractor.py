@@ -189,6 +189,11 @@ class LinkExtractor:
             link_text = link.get_text(strip=True)
             full_url = urljoin(base_url, href)
             
+            # Clean and validate URL
+            full_url = self._clean_url(full_url)
+            if not full_url:
+                continue
+                
             if self.is_same_domain(full_url) and full_url not in visited_urls:
                 if self.is_document_link(full_url):
                     document_links.append(full_url)
@@ -198,162 +203,124 @@ class LinkExtractor:
         # 2. Extract from buttons with onclick handlers
         for button in soup.find_all(['button', 'div', 'span'], onclick=True):
             onclick = button.get('onclick', '')
-            if onclick:
-                # Extract URLs from onclick handlers (including PDF patterns)
-                urls = re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', onclick, re.IGNORECASE)
-                # Also look for PDF patterns without extensions
-                pdf_urls = re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', onclick, re.IGNORECASE)
-                urls.extend(pdf_urls)
-                for url_match in urls:
-                    full_url = urljoin(base_url, url_match)
-                    if self.is_same_domain(full_url) and full_url not in visited_urls:
-                        document_links.append(full_url)
+            extracted_urls = self._extract_urls_from_javascript(onclick, base_url)
+            
+            for url in extracted_urls:
+                url = self._clean_url(url)
+                if url and self.is_same_domain(url) and url not in visited_urls:
+                    if self.is_document_link(url):
+                        document_links.append(url)
+                    elif self.is_relevant_link(url):
+                        page_links.append(url)
         
-        # 3. Extract from data attributes
+        # 3. Extract from data attributes and other sources
         for element in soup.find_all(attrs={'data-url': True}):
-            data_url = element.get('data-url')
-            if data_url:
-                full_url = urljoin(base_url, data_url)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    if self.is_document_link(full_url):
-                        document_links.append(full_url)
-                    elif self.is_relevant_link(full_url):
-                        page_links.append(full_url)
+            url = element.get('data-url')
+            url = self._clean_url(urljoin(base_url, url))
+            if url and self.is_same_domain(url) and url not in visited_urls:
+                if self.is_document_link(url):
+                    document_links.append(url)
+                elif self.is_relevant_link(url):
+                    page_links.append(url)
         
-        # 4. Extract from data-href attributes
-        for element in soup.find_all(attrs={'data-href': True}):
-            data_href = element.get('data-href')
-            if data_href:
-                full_url = urljoin(base_url, data_href)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    if self.is_document_link(full_url):
-                        document_links.append(full_url)
-                    elif self.is_relevant_link(full_url):
-                        page_links.append(full_url)
-        
-        # 5. Extract from data-pdf attributes
-        for element in soup.find_all(attrs={'data-pdf': True}):
-            data_pdf = element.get('data-pdf')
-            if data_pdf:
-                full_url = urljoin(base_url, data_pdf)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    document_links.append(full_url)
-        
-        # 5.1. Extract from PDF-specific elements and classes
-        for element in soup.find_all(['a', 'div', 'span'], class_=re.compile(r'pdf|document|report|filing|statement', re.IGNORECASE)):
-            href = element.get('href')
-            if href:
-                full_url = urljoin(base_url, href)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    if self.is_document_link(full_url):
-                        document_links.append(full_url)
-        
-        # 5.2. Extract from elements with PDF-related text
-        for element in soup.find_all(['a', 'div', 'span']):
-            text = element.get_text(strip=True).lower()
-            if any(keyword in text for keyword in ['pdf', 'download', 'document', 'report', 'filing']):
-                href = element.get('href')
-                if href:
-                    full_url = urljoin(base_url, href)
-                    if self.is_same_domain(full_url) and full_url not in visited_urls:
-                        if self.is_document_link(full_url):
-                            document_links.append(full_url)
-        
-        # 6. Extract from iframe sources
-        for iframe in soup.find_all('iframe', src=True):
-            src = iframe['src']
-            full_url = urljoin(base_url, src)
-            if self.is_same_domain(full_url) and full_url not in visited_urls:
-                if self.is_document_link(full_url):
-                    document_links.append(full_url)
-                elif self.is_relevant_link(full_url):
-                    page_links.append(full_url)
-        
-        # 7. Extract from object/embed tags
-        for obj in soup.find_all(['object', 'embed'], data=True):
-            data = obj.get('data')
-            if data:
-                full_url = urljoin(base_url, data)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    if self.is_document_link(full_url):
-                        document_links.append(full_url)
-                    elif self.is_relevant_link(full_url):
-                        page_links.append(full_url)
-        
-        # 8. Extract from script tags (JavaScript variables)
+        # 4. Extract from script tags that might contain URLs
         for script in soup.find_all('script'):
             if script.string:
-                # Find document URLs in JavaScript
-                js_urls = re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', script.string, re.IGNORECASE)
-                # Also look for PDF patterns without extensions
-                pdf_js_urls = re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', script.string, re.IGNORECASE)
-                js_urls.extend(pdf_js_urls)
-                for js_url in js_urls:
-                    full_url = urljoin(base_url, js_url)
-                    if self.is_same_domain(full_url) and full_url not in visited_urls:
-                        document_links.append(full_url)
+                extracted_urls = self._extract_urls_from_javascript(script.string, base_url)
+                for url in extracted_urls:
+                    url = self._clean_url(url)
+                    if url and self.is_same_domain(url) and url not in visited_urls:
+                        if self.is_document_link(url):
+                            document_links.append(url)
+                        elif self.is_relevant_link(url):
+                            page_links.append(url)
         
-        # 9. Extract from meta tags (for PDF viewers)
-        for meta in soup.find_all('meta', attrs={'name': 'pdf-url'}):
-            content = meta.get('content')
-            if content:
-                full_url = urljoin(base_url, content)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    document_links.append(full_url)
+        # Remove duplicates and sort by relevance
+        page_links = list(set(page_links))
+        document_links = list(set(document_links))
         
-        # 10. Extract from JSON-LD structured data
-        for script in soup.find_all('script', type='application/ld+json'):
-            if script.string:
-                try:
-                    # Look for URLs in JSON-LD content
-                    json_urls = re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', script.string, re.IGNORECASE)
-                    # Also look for PDF patterns without extensions
-                    pdf_json_urls = re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', script.string, re.IGNORECASE)
-                    json_urls.extend(pdf_json_urls)
-                    for json_url in json_urls:
-                        full_url = urljoin(base_url, json_url)
-                        if self.is_same_domain(full_url) and full_url not in visited_urls:
-                            document_links.append(full_url)
-                except:
-                    continue
+        # Prioritize PDF documents
+        pdf_links = [url for url in document_links if url.lower().endswith('.pdf')]
+        other_doc_links = [url for url in document_links if not url.lower().endswith('.pdf')]
+        document_links = pdf_links + other_doc_links
         
-        # 11. Extract from common modern patterns
-        # Look for elements with download attributes
-        for element in soup.find_all(attrs={'download': True}):
-            href = element.get('href')
-            if href:
-                full_url = urljoin(base_url, href)
-                if self.is_same_domain(full_url) and full_url not in visited_urls:
-                    if self.is_document_link(full_url):
-                        document_links.append(full_url)
-                    elif self.is_relevant_link(full_url):
-                        page_links.append(full_url)
-        
-        # 12. Extract from form actions (for file upload/download forms)
-        for form in soup.find_all('form', action=True):
-            action = form['action']
-            full_url = urljoin(base_url, action)
-            if self.is_same_domain(full_url) and full_url not in visited_urls:
-                if self.is_document_link(full_url):
-                    document_links.append(full_url)
-                elif self.is_relevant_link(full_url):
-                    page_links.append(full_url)
-        
-        # Log summary of found links
+        # Log summary
         logger.info(f"Link extraction summary for {base_url}:")
         logger.info(f"  - Page links found: {len(page_links)}")
         logger.info(f"  - Document links found: {len(document_links)}")
-        if page_links:
-            logger.info(f"  - Sample page links: {page_links[:3]}")
-        if document_links:
-            logger.info(f"  - Sample document links: {document_links[:3]}")
-            # Log all PDF links specifically
-            pdf_links = [link for link in document_links if 'pdf' in link.lower() or link.lower().endswith('.pdf')]
-            if pdf_links:
-                logger.info(f"  - PDF links found: {pdf_links}")
+        logger.info(f"  - Sample page links: {page_links[:3]}")
+        logger.info(f"  - Sample document links: {document_links[:3]}")
         
-        # Remove duplicates and limit the number of links to avoid overwhelming
-        page_links = list(set(page_links))[:50]  # Limit to 50 most relevant page links
-        document_links = list(set(document_links))
+        # Log PDF links specifically
+        pdf_links = [url for url in document_links if url.lower().endswith('.pdf')]
+        if pdf_links:
+            logger.info(f"  - PDF links found: {pdf_links}")
         
-        return page_links, document_links 
+        return page_links, document_links
+    
+    def _clean_url(self, url: str) -> str:
+        """Clean and validate URL, removing malformed parts."""
+        if not url:
+            return None
+            
+        # Remove common malformed parts
+        url = url.strip()
+        
+        # Remove JavaScript code that might be appended
+        if ');' in url:
+            url = url.split(');')[0]
+        
+        # Remove any trailing JavaScript
+        if 'javascript:' in url.lower():
+            return None
+            
+        # Remove any trailing HTML entities or malformed parts
+        if '&amp;' in url:
+            url = url.split('&amp;')[0]
+        
+        # Ensure URL starts with http/https
+        if not url.startswith(('http://', 'https://')):
+            return None
+            
+        # Remove any query parameters that might be malformed
+        if '?' in url:
+            base_url, query = url.split('?', 1)
+            # Keep only valid query parameters
+            valid_params = []
+            for param in query.split('&'):
+                if '=' in param and not param.startswith('javascript'):
+                    valid_params.append(param)
+            if valid_params:
+                url = base_url + '?' + '&'.join(valid_params)
+            else:
+                url = base_url
+        
+        # Remove any trailing slashes from non-directory URLs
+        if url.endswith('/') and not url.endswith('.pdf'):
+            url = url.rstrip('/')
+        
+        return url
+    
+    def _extract_urls_from_javascript(self, onclick_code: str, base_url: str) -> List[str]:
+        """Extract URLs from onclick handlers and other JavaScript code."""
+        urls = []
+        # Look for URLs in onclick handlers (including PDF patterns)
+        urls.extend(re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', onclick_code, re.IGNORECASE))
+        # Also look for PDF patterns without extensions
+        urls.extend(re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', onclick_code, re.IGNORECASE))
+        # Look for URLs in data attributes
+        urls.extend(re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', onclick_code, re.IGNORECASE))
+        # Also look for PDF patterns without extensions
+        urls.extend(re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', onclick_code, re.IGNORECASE))
+        # Look for URLs in meta tags
+        urls.extend(re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', onclick_code, re.IGNORECASE))
+        # Also look for PDF patterns without extensions
+        urls.extend(re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', onclick_code, re.IGNORECASE))
+        # Look for URLs in JSON-LD structured data
+        urls.extend(re.findall(r'["\']([^"\']*\.(?:pdf|doc|docx|xlsx|xls|ppt|pptx|csv|json))["\']', onclick_code, re.IGNORECASE))
+        # Also look for PDF patterns without extensions
+        urls.extend(re.findall(r'["\']([^"\']*(?:pdf|document|report|filing|statement)[^"\']*)["\']', onclick_code, re.IGNORECASE))
+        
+        # Normalize URLs and remove duplicates
+        normalized_urls = list(set([urljoin(base_url, u) for u in urls]))
+        return normalized_urls 

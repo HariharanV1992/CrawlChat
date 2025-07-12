@@ -15,6 +15,7 @@ from scrapingbee import ScrapingBeeClient
 from .settings_manager import SettingsManager
 from .utils import get_file_extension, is_valid_url
 from .smart_scrapingbee_manager import ContentCheckers
+from .enhanced_scrapingbee_manager import JavaScriptScenarios
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class AdvancedCrawler:
         api_key = api_key or os.getenv('SCRAPINGBEE_API_KEY')
         if not api_key:
             raise ValueError("ScrapingBee API key is required")
-        
+        self.api_key = api_key  # <-- Ensure this is set
         self.scrapingbee_client = ScrapingBeeClient(api_key=api_key)
         logger.info("Advanced crawler initialized with official ScrapingBee client")
         
@@ -44,6 +45,47 @@ class AdvancedCrawler:
         }
         
         logger.info("Advanced crawler initialized with enhanced ScrapingBee manager")
+
+    def _clean_url(self, url: str) -> str:
+        """
+        Clean and validate URL to remove malformed content.
+        
+        Args:
+            url: URL to clean
+            
+        Returns:
+            Cleaned URL or None if invalid
+        """
+        if not url:
+            return None
+            
+        # Remove JavaScript code that might be appended
+        if ');' in url:
+            url = url.split(');')[0]
+        
+        # Remove any trailing JavaScript
+        if 'javascript:' in url.lower():
+            return None
+        
+        # Remove any trailing HTML entities or malformed parts
+        if '&amp;' in url:
+            url = url.split('&amp;')[0]
+        
+        # Remove any trailing spaces or newlines
+        url = url.strip()
+        
+        # Ensure URL starts with http/https
+        if not url.startswith(('http://', 'https://')):
+            return None
+        
+        # Basic URL validation
+        try:
+            parsed = urlparse(url)
+            if not parsed.netloc:
+                return None
+            return url
+        except Exception:
+            return None
     
     def crawl_url(self, url: str, content_type: str = "generic", 
                   use_js_scenario: bool = False, js_scenario: Dict[str, Any] = None,
@@ -266,6 +308,18 @@ class AdvancedCrawler:
         """
         logger.info(f"Downloading file from {url}")
         
+        # Clean and validate URL first
+        url = self._clean_url(url)
+        if not url:
+            return {
+                'success': False,
+                'error': 'Invalid or malformed URL',
+                'url': url
+            }
+        
+        # Check file size limit (2MB = 2 * 1024 * 1024 bytes)
+        MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB limit per ScrapingBee documentation
+        
         start_time = time.time()
         max_retries = 3
         base_delay = 2  # Start with 2 second delay
@@ -273,14 +327,18 @@ class AdvancedCrawler:
         for attempt in range(max_retries):
             try:
                 # Use optimized parameters for binary file downloads
+                # Following ScrapingBee documentation: render_js=false for file downloads
                 params = {
-                    'render_js': 'False',  # No JS rendering for file downloads
-                    'timeout': '1410',  # Maximum timeout in milliseconds (1.41 seconds)
-                    'block_resources': 'False',  # Don't block resources for binary files
-                    'premium_proxy': 'True',  # Use premium proxy for better reliability
-                    'forward_headers': 'True',  # Forward browser headers
+                    'api_key': self.api_key,
+                    'url': url,
+                    'render_js': 'false',  # Recommended for file downloads per ScrapingBee docs
+                    'timeout': '60000',  # 60 seconds timeout for large PDF files
+                    'block_resources': 'false',  # Don't block resources for binary files
+                    'premium_proxy': 'true',  # Use premium proxy for better reliability
+                    'forward_headers': 'true',  # Forward browser headers
                     'country_code': 'in',  # Use Indian proxy for Indian sites
-                    'stealth_proxy': 'True',  # Use stealth proxy to avoid detection
+                    'stealth_proxy': 'false',  # Disable stealth proxy for file downloads
+                    'block_ads': 'false',  # Don't block ads for file downloads
                 }
                 
                 # Add delay between retries to avoid rate limiting
@@ -289,7 +347,10 @@ class AdvancedCrawler:
                     logger.info(f"Retry attempt {attempt + 1}/{max_retries}, waiting {delay}s...")
                     time.sleep(delay)
                 
-                logger.info(f"Making request with params: {params}")
+                # Log params without exposing API key
+                safe_params = params.copy()
+                safe_params['api_key'] = '***HIDDEN***'
+                logger.info(f"Making request with params: {safe_params}")
                 
                 # Add special headers for binary content
                 headers = {
@@ -301,19 +362,58 @@ class AdvancedCrawler:
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 }
                 
-                logger.info(f"Request headers: {headers}")
+                # Make the request using requests directly instead of scrapingbee_client
+                import requests
+                
+                # Build the ScrapingBee URL
+                scrapingbee_url = "https://app.scrapingbee.com/api/v1/"
+                
+                logger.info(f"Making request to ScrapingBee API for: {url}")
                 
                 # Make the request
-                response = self.scrapingbee_client.get(url, params=params, headers=headers)
+                response = requests.get(scrapingbee_url, params=params, headers=headers, timeout=70)
                 
                 logger.info(f"Response status: {response.status_code}")
-                logger.info(f"Response headers: {dict(response.headers)}")
+                
+                # Log response content for error diagnosis
+                if response.status_code != 200:
+                    try:
+                        error_content = response.text
+                        logger.error(f"ScrapingBee API Error Response: {error_content}")
+                        
+                        # Provide specific error messages based on status code
+                        if response.status_code == 401:
+                            logger.error("❌ API Key Error: Invalid or expired API key. Please check your ScrapingBee API key.")
+                        elif response.status_code == 402:
+                            logger.error("❌ Payment Error: ScrapingBee account needs payment or has insufficient credits.")
+                        elif response.status_code == 429:
+                            logger.error("❌ Rate Limit Error: Too many requests. Please wait and retry.")
+                        elif response.status_code == 500:
+                            logger.error("❌ Server Error: ScrapingBee server error. Please retry later.")
+                        else:
+                            logger.error(f"❌ HTTP {response.status_code}: Unknown error from ScrapingBee API")
+                    except Exception as e:
+                        logger.error(f"Could not read error response: {e}")
+                else:
+                    logger.info(f"Response headers: {dict(response.headers)}")
                 
                 # Check if we got a successful response
                 if response.status_code == 200:
                     content = response.content
                     content_length = len(content)
                     logger.info(f"Content length: {content_length} bytes")
+                    
+                    # Check 2MB file size limit per ScrapingBee documentation
+                    if content_length > MAX_FILE_SIZE:
+                        logger.error(f"File size {content_length} bytes exceeds ScrapingBee 2MB limit")
+                        return {
+                            'success': False,
+                            'error': f'File size {content_length} bytes exceeds ScrapingBee 2MB limit',
+                            'url': url,
+                            'status_code': response.status_code,
+                            'content_length': content_length,
+                            'max_allowed': MAX_FILE_SIZE
+                        }
                     
                     # Log first 100 bytes for debugging
                     preview = content[:100] if content else b''
@@ -323,30 +423,30 @@ class AdvancedCrawler:
                     content_type = response.headers.get('Content-Type', 'unknown')
                     file_type = self._determine_file_type(url, content_type)
                     
-                    # Check if content looks like HTML (error page)
-                    if content_length < 1000 and b'<!DOCTYPE html>' in content[:500]:
-                        logger.warning(f"Received HTML error page instead of file for {url}")
-                        if attempt < max_retries - 1:
-                            continue  # Retry
+                    # Check if content looks like HTML (error page or redirect)
+                    # Increase threshold for large files
+                    if content_length < 50000 and (b'<!DOCTYPE html>' in content[:2000] or b'<html' in content[:2000]):
+                        logger.warning(f"Received HTML page instead of file for {url}")
+                        # Check if it's a redirect page
+                        if b'redirect' in content.lower() or b'location.href' in content.lower():
+                            logger.info(f"Detected redirect page, retrying...")
+                            if attempt < max_retries - 1:
+                                continue  # Retry
                         else:
-                            return {
-                                'success': False,
-                                'error': f'Server returned HTML error page instead of file',
-                                'url': url,
-                                'status_code': response.status_code,
-                                'content_length': content_length
-                            }
-                    # Additional check: If PDF, verify signature
-                    if file_type == 'application/pdf':
-                        if not content.startswith(b'%PDF-'):
-                            logger.error(f"Downloaded file from {url} is not a valid PDF (wrong signature)")
-                            return {
-                                'success': False,
-                                'error': 'Downloaded file is not a valid PDF',
-                                'url': url,
-                                'status_code': response.status_code,
-                                'content_length': content_length
-                            }
+                            logger.error(f"Server returned HTML error page instead of file")
+                            if attempt < max_retries - 1:
+                                continue  # Retry
+                            else:
+                                return {
+                                    'success': False,
+                                    'error': f'Server returned HTML error page instead of file',
+                                    'url': url,
+                                    'status_code': response.status_code,
+                                    'content_length': content_length
+                                }
+                    
+                    # Note: Removed PDF signature verification - we want to download all PDFs
+                    # regardless of their internal structure or validity
                     
                     # Success!
                     download_time = time.time() - start_time
@@ -360,8 +460,28 @@ class AdvancedCrawler:
                         'content_length': content_length,
                         'download_time': download_time,
                         'is_binary': True,
-                        'content_base64': base64.b64encode(content).decode('utf-8')
+                        'content_base64': base64.b64encode(content).decode('utf-8'),
+                        'status_code': response.status_code,
+                        'headers': dict(response.headers),
+                        'file_size_ok': content_length <= MAX_FILE_SIZE
                     }
+                
+                elif response.status_code in [301, 302, 307, 308]:
+                    # Handle redirects
+                    redirect_url = response.headers.get('Location')
+                    if redirect_url:
+                        logger.info(f"Following redirect from {url} to {redirect_url}")
+                        if attempt < max_retries - 1:
+                            url = redirect_url
+                            continue
+                    else:
+                        logger.error(f"Redirect response without Location header")
+                        return {
+                            'success': False,
+                            'error': f'Redirect without Location header',
+                            'url': url,
+                            'status_code': response.status_code
+                        }
                 
                 elif response.status_code == 500:
                     logger.warning(f"HTTP 500 error on attempt {attempt + 1} for {url}")
@@ -376,10 +496,21 @@ class AdvancedCrawler:
                         }
                 
                 else:
-                    logger.error(f"HTTP {response.status_code} for {url}")
+                    # Enhanced error message with specific details
+                    error_msg = f'HTTP {response.status_code}'
+                    if response.status_code == 401:
+                        error_msg = 'Invalid or expired ScrapingBee API key'
+                    elif response.status_code == 402:
+                        error_msg = 'ScrapingBee account needs payment or has insufficient credits'
+                    elif response.status_code == 429:
+                        error_msg = 'ScrapingBee rate limit exceeded'
+                    elif response.status_code == 500:
+                        error_msg = 'ScrapingBee server error'
+                    
+                    logger.error(f"❌ {error_msg} for {url}")
                     return {
                         'success': False,
-                        'error': f'HTTP {response.status_code}',
+                        'error': error_msg,
                         'url': url,
                         'status_code': response.status_code
                     }

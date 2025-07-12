@@ -70,10 +70,18 @@ class EnhancedCrawlerService:
                         link_extractor = LinkExtractor(domain)
                         page_links, document_links = link_extractor.extract_links(soup, base_url, self.visited_urls)
                         logger.info(f"Found {len(page_links)} page links and {len(document_links)} document links on main page")
-                        # Multithreaded document downloads
+                        
+                        # Prioritize PDF documents first
+                        pdf_links = [url for url in document_links if url.lower().endswith('.pdf')]
+                        other_doc_links = [url for url in document_links if not url.lower().endswith('.pdf')]
+                        prioritized_doc_links = pdf_links + other_doc_links
+                        
+                        logger.info(f"Prioritized document links: {len(pdf_links)} PDFs, {len(other_doc_links)} other documents")
+                        
+                        # Multithreaded document downloads with priority
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_threads) as executor:
                             futures = []
-                            for doc_url in document_links:
+                            for doc_url in prioritized_doc_links:
                                 if len(self.documents) >= max_doc_count:
                                     break
                                 futures.append(executor.submit(self._crawl_and_save_file, crawler, doc_url))
@@ -85,19 +93,24 @@ class EnhancedCrawlerService:
                                     self.documents.append(doc)
                                     logger.info(f"Added document: {doc['url']} (total: {len(self.documents)}/{max_doc_count})")
                                     self._update_progress(len(self.documents), max_doc_count, f"Found document: {doc['url']}")
-                        # Multithreaded sub-page crawling (limit to first 10)
-                        sub_pages_to_crawl = page_links[:10]
-                        logger.info(f"Crawling {len(sub_pages_to_crawl)} sub-pages out of {len(page_links)} found")
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_threads) as executor:
-                            futures = []
-                            for page_url in sub_pages_to_crawl:
-                                if len(self.documents) >= max_doc_count:
-                                    break
-                                futures.append(executor.submit(self._crawl_recursive, crawler, page_url, domain, max_doc_count, 1))
-                            for future in concurrent.futures.as_completed(futures):
-                                if len(self.documents) >= max_doc_count:
-                                    break
-                                # No need to collect result, _crawl_recursive updates self.documents
+                        
+                        # Only crawl sub-pages if we still need more documents
+                        if len(self.documents) < max_doc_count:
+                            # Multithreaded sub-page crawling (limit to first 10)
+                            sub_pages_to_crawl = page_links[:10]
+                            logger.info(f"Crawling {len(sub_pages_to_crawl)} sub-pages out of {len(page_links)} found")
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_threads) as executor:
+                                futures = []
+                                for page_url in sub_pages_to_crawl:
+                                    if len(self.documents) >= max_doc_count:
+                                        break
+                                    futures.append(executor.submit(self._crawl_recursive, crawler, page_url, domain, max_doc_count, 1))
+                                for future in concurrent.futures.as_completed(futures):
+                                    if len(self.documents) >= max_doc_count:
+                                        break
+                                    # No need to collect result, _crawl_recursive updates self.documents
+                        else:
+                            logger.info(f"Reached max document count ({max_doc_count}) after downloading documents, skipping sub-page crawl")
                     except Exception as e:
                         logger.error(f"Error in recursive crawl for main page: {e}")
                 else:
@@ -266,7 +279,9 @@ class EnhancedCrawlerService:
         self.visited_urls.add(url)
         
         try:
-            # Download file
+            logger.info(f"Attempting to download file: {url}")
+            
+            # Download file with retry logic
             result = crawler.download_file(url)
             
             if not result.get('success'):
@@ -275,9 +290,11 @@ class EnhancedCrawlerService:
             
             # Extract filename and determine file type
             filename = self._extract_filename(url)
-            file_type = result.get('file_type', 'unknown')
+            file_type = result.get('content_type', 'unknown')
             content_type = result.get('content_type', 'unknown')
             raw_content = result.get('content', b'')
+            
+            logger.info(f"Successfully downloaded {url}: {len(raw_content)} bytes, type: {file_type}")
             
             # Handle different file types appropriately
             if file_type == 'application/pdf' or url.lower().endswith('.pdf'):
@@ -298,7 +315,7 @@ class EnhancedCrawlerService:
                     "file_type": "pdf",
                     "content_length": len(raw_content),
                     "text_length": len(pdf_text),
-                    "crawl_time": result.get('crawl_time', 0),
+                    "crawl_time": result.get('download_time', 0),
                     "status_code": result.get('status_code', 0),
                     "headers": result.get('headers', {}),
                     "extracted_at": datetime.utcnow().isoformat(),
@@ -320,7 +337,7 @@ class EnhancedCrawlerService:
                     "content_type": file_type,
                     "file_type": "image",
                     "content_length": len(raw_content),
-                    "crawl_time": result.get('crawl_time', 0),
+                    "crawl_time": result.get('download_time', 0),
                     "status_code": result.get('status_code', 0),
                     "headers": result.get('headers', {}),
                     "extracted_at": datetime.utcnow().isoformat(),
@@ -342,7 +359,7 @@ class EnhancedCrawlerService:
                     "content_type": file_type,
                     "file_type": "excel",
                     "content_length": len(raw_content),
-                    "crawl_time": result.get('crawl_time', 0),
+                    "crawl_time": result.get('download_time', 0),
                     "status_code": result.get('status_code', 0),
                     "headers": result.get('headers', {}),
                     "extracted_at": datetime.utcnow().isoformat(),
@@ -364,7 +381,7 @@ class EnhancedCrawlerService:
                     "content_type": file_type,
                     "file_type": "word",
                     "content_length": len(raw_content),
-                    "crawl_time": result.get('crawl_time', 0),
+                    "crawl_time": result.get('download_time', 0),
                     "status_code": result.get('status_code', 0),
                     "headers": result.get('headers', {}),
                     "extracted_at": datetime.utcnow().isoformat(),
@@ -391,7 +408,7 @@ class EnhancedCrawlerService:
                     "file_type": "text",
                     "content_length": len(raw_content),
                     "text_length": len(text_content),
-                    "crawl_time": result.get('crawl_time', 0),
+                    "crawl_time": result.get('download_time', 0),
                     "status_code": result.get('status_code', 0),
                     "headers": result.get('headers', {}),
                     "extracted_at": datetime.utcnow().isoformat(),
@@ -413,7 +430,7 @@ class EnhancedCrawlerService:
                     "content_type": file_type,
                     "file_type": "binary",
                     "content_length": len(raw_content),
-                    "crawl_time": result.get('crawl_time', 0),
+                    "crawl_time": result.get('download_time', 0),
                     "status_code": result.get('status_code', 0),
                     "headers": result.get('headers', {}),
                     "extracted_at": datetime.utcnow().isoformat(),
@@ -619,26 +636,30 @@ class EnhancedCrawlerService:
                 return "unknown_file"
     
     def _update_progress(self, current_count: int, max_count: int, message: str = ""):
-        """Update progress in MongoDB for real-time tracking."""
-        if not self.mongodb_helper or not self.task_id:
+        """Update crawl progress in MongoDB."""
+        if not self.mongodb_helper:
             return
-        
+            
         try:
+            # Fix the boolean comparison issue
+            if self.mongodb_helper.db is None:
+                logger.warning("MongoDB not connected, skipping progress update")
+                return
+                
             progress_data = {
-                "documents_found": current_count,
-                "documents_downloaded": current_count,
-                "max_documents": max_count,
-                "progress_percentage": min(100, int((current_count / max_count) * 100)) if max_count > 0 else 0,
-                "status_message": message,
-                "updated_at": datetime.utcnow().isoformat()
+                "current_count": current_count,
+                "max_count": max_count,
+                "percentage": round((current_count / max_count) * 100, 2) if max_count > 0 else 0,
+                "message": message,
+                "timestamp": datetime.utcnow().isoformat()
             }
             
-            # Update task progress in MongoDB
-            self.mongodb_helper.update_task_progress(self.task_id, progress_data)
-            logger.info(f"Progress updated: {current_count}/{max_count} documents - {message}")
-            
+            if self.task_id:
+                self.mongodb_helper.update_task_progress(self.task_id, progress_data)
+                logger.info(f"Progress update: {current_count}/{max_count} ({progress_data['percentage']}%) - {message}")
+                
         except Exception as e:
-            logger.error(f"Failed to update progress: {e}") 
+            logger.error(f"Failed to update progress: {e}")
 
     async def download_files(self, file_urls: List[str], max_threads: int = 3) -> List[Dict[str, Any]]:
         """
