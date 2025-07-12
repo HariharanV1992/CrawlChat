@@ -406,14 +406,34 @@ async def upload_document(
         )
         
         # Create Document object for chat service
-        document = Document(**doc_data)
-        document.file_path = s3_key
-        document.metadata.update({
+        # Map database fields to Document model fields
+        document_data = {
+            "document_id": doc_data.get("document_id"),
+            "user_id": doc_data.get("user_id"),
+            "filename": doc_data.get("filename"),
+            "file_path": s3_key,  # Use the S3 key as file_path
+            "file_size": doc_data.get("file_size", file_size),
+            "document_type": doc_data.get("document_type", "pdf"),
+            "status": doc_data.get("status", "processed"),  # Use processed status
+            "uploaded_at": doc_data.get("uploaded_at", datetime.utcnow()),
+            "processed_at": doc_data.get("processed_at", datetime.utcnow()),
+            "content": doc_data.get("content"),
+            "summary": doc_data.get("summary"),
+            "key_points": doc_data.get("key_points", []),
+            "metadata": doc_data.get("metadata", {}),
+            "task_id": doc_data.get("task_id"),
+            "crawl_task_id": doc_data.get("crawl_task_id")
+        }
+        
+        # Update metadata with additional information
+        document_data["metadata"].update({
             "task_id": task_id,
             "extraction_method": extraction_method,
             "content_length": content_length,
             "vector_store_result": processing_result.get("vector_store_result")
         })
+        
+        document = Document(**document_data)
         
         # Link the uploaded document to the chat session
         await chat_service.link_uploaded_document(
@@ -558,14 +578,33 @@ async def upload_document_base64(
         )
         
         # Create Document object for chat service
-        document = Document(**doc_data)
-        document.file_path = s3_key
-        document.metadata.update({
+        document_data = {
+            "document_id": doc_data.get("document_id"),
+            "user_id": doc_data.get("user_id"),
+            "filename": doc_data.get("filename"),
+            "file_path": s3_key,  # Use the S3 key as file_path
+            "file_size": doc_data.get("file_size", file_size),
+            "document_type": doc_data.get("document_type", "pdf"),
+            "status": doc_data.get("status", "processed"),  # Use processed status
+            "uploaded_at": doc_data.get("uploaded_at", datetime.utcnow()),
+            "processed_at": doc_data.get("processed_at", datetime.utcnow()),
+            "content": doc_data.get("content"),
+            "summary": doc_data.get("summary"),
+            "key_points": doc_data.get("key_points", []),
+            "metadata": doc_data.get("metadata", {}),
+            "task_id": doc_data.get("task_id"),
+            "crawl_task_id": doc_data.get("crawl_task_id")
+        }
+        
+        # Update metadata with additional information
+        document_data["metadata"].update({
             "task_id": task_id,
             "extraction_method": extraction_method,
             "content_length": content_length,
             "vector_store_result": processing_result.get("vector_store_result")
         })
+        
+        document = Document(**document_data)
         
         # Link the uploaded document to the chat session
         await chat_service.link_uploaded_document(
