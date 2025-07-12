@@ -3,6 +3,7 @@ Chat API endpoints for Stock Market Crawler.
 """
 
 import logging
+import uuid
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from typing import List, Optional
 from pydantic import BaseModel
