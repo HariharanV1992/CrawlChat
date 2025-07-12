@@ -840,7 +840,7 @@ class AWSTextractService:
             raise
 
     async def _try_pdfminer_extraction(self, file_content: bytes, filename: str) -> (str, int):
-        """Try PDFMiner extraction."""
+        """Try PDFMiner extraction.."""
         try:
             import asyncio
             from pdfminer.high_level import extract_text_to_fp

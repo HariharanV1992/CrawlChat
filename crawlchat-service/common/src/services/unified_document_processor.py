@@ -255,7 +255,7 @@ class UnifiedDocumentProcessor:
             }
     
     async def _extract_pdf_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """Extract text from PDF using AWS Textract."""
+        """Extract text from PDF using AWS Textract with fallback methods."""
         try:
             logger.info(f"[UNIFIED_PROCESSOR] Extracting text from PDF: {filename}")
             
@@ -290,23 +290,80 @@ class UnifiedDocumentProcessor:
                 return {
                     "status": "success",
                     "text_content": text_content,
-                    "page_count": page_count
+                    "page_count": page_count,
+                    "extraction_method": "aws_textract"
                 }
             else:
-                return {
-                    "status": "error",
-                    "error": "No text content extracted from PDF"
-                }
+                # Try fallback methods
+                logger.info(f"[UNIFIED_PROCESSOR] Textract returned no content, trying fallback methods for {filename}")
+                return await self._try_fallback_pdf_extraction(file_content, filename)
                 
         except Exception as e:
             logger.error(f"[UNIFIED_PROCESSOR] Error extracting PDF content: {e}")
-            return {
-                "status": "error",
-                "error": f"PDF extraction failed: {str(e)}"
-            }
+            # Try fallback methods
+            logger.info(f"[UNIFIED_PROCESSOR] Textract failed, trying fallback methods for {filename}")
+            return await self._try_fallback_pdf_extraction(file_content, filename)
+    
+    async def _try_fallback_pdf_extraction(self, file_content: bytes, filename: str) -> Dict[str, Any]:
+        """Try fallback methods for PDF text extraction."""
+        try:
+            # Try direct Textract processing
+            logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing for {filename}")
+            text_content, page_count = await textract_service.upload_to_s3_and_extract(
+                file_content=file_content,
+                filename=filename,
+                document_type=TextractDocumentType.GENERAL
+            )
+            
+            if text_content and text_content.strip():
+                return {
+                    "status": "success",
+                    "text_content": text_content,
+                    "page_count": page_count,
+                    "extraction_method": "aws_textract_direct"
+                }
+        except Exception as e:
+            logger.warning(f"[UNIFIED_PROCESSOR] Direct Textract processing failed: {e}")
+        
+        try:
+            # Try PyPDF2 extraction (lightweight, works everywhere)
+            logger.info(f"[UNIFIED_PROCESSOR] Trying PyPDF2 extraction for {filename}")
+            text_content, page_count = await textract_service._try_pypdf2_extraction(file_content, filename)
+            
+            if text_content and text_content.strip():
+                return {
+                    "status": "success",
+                    "text_content": text_content,
+                    "page_count": page_count,
+                    "extraction_method": "pypdf2_extraction"
+                }
+        except Exception as e:
+            logger.warning(f"[UNIFIED_PROCESSOR] PyPDF2 extraction failed: {e}")
+        
+        try:
+            # Try aggressive text extraction (regex-based)
+            logger.info(f"[UNIFIED_PROCESSOR] Trying aggressive text extraction for {filename}")
+            text_content = await textract_service._try_aggressive_text_extraction(file_content, filename)
+            
+            if text_content and text_content.strip():
+                return {
+                    "status": "success",
+                    "text_content": text_content,
+                    "page_count": 1,
+                    "extraction_method": "aggressive_text_extraction"
+                }
+        except Exception as e:
+            logger.warning(f"[UNIFIED_PROCESSOR] Aggressive text extraction failed: {e}")
+        
+        # If all methods fail, return error
+        return {
+            "status": "error",
+            "error": "All PDF extraction methods failed",
+            "extraction_method": "all_methods_failed"
+        }
     
     async def _extract_image_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """Extract text from image using AWS Textract."""
+        """Extract text from image using AWS Textract with fallback methods."""
         try:
             logger.info(f"[UNIFIED_PROCESSOR] Extracting text from image: {filename}")
             
@@ -341,20 +398,62 @@ class UnifiedDocumentProcessor:
                 return {
                     "status": "success",
                     "text_content": text_content,
-                    "page_count": page_count
+                    "page_count": page_count,
+                    "extraction_method": "aws_textract"
                 }
             else:
-                return {
-                    "status": "error",
-                    "error": "No text content extracted from image"
-                }
+                # Try fallback methods
+                logger.info(f"[UNIFIED_PROCESSOR] Textract returned no content, trying fallback methods for {filename}")
+                return await self._try_fallback_image_extraction(file_content, filename)
                 
         except Exception as e:
             logger.error(f"[UNIFIED_PROCESSOR] Error extracting image content: {e}")
-            return {
-                "status": "error",
-                "error": f"Image extraction failed: {str(e)}"
-            }
+            # Try fallback methods
+            logger.info(f"[UNIFIED_PROCESSOR] Textract failed, trying fallback methods for {filename}")
+            return await self._try_fallback_image_extraction(file_content, filename)
+    
+    async def _try_fallback_image_extraction(self, file_content: bytes, filename: str) -> Dict[str, Any]:
+        """Try fallback methods for image text extraction."""
+        try:
+            # Try direct Textract processing
+            logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing for {filename}")
+            text_content, page_count = await textract_service.upload_to_s3_and_extract(
+                file_content=file_content,
+                filename=filename,
+                document_type=TextractDocumentType.GENERAL
+            )
+            
+            if text_content and text_content.strip():
+                return {
+                    "status": "success",
+                    "text_content": text_content,
+                    "page_count": page_count,
+                    "extraction_method": "aws_textract_direct"
+                }
+        except Exception as e:
+            logger.warning(f"[UNIFIED_PROCESSOR] Direct Textract processing failed: {e}")
+        
+        try:
+            # Try raw text extraction (encoding-based)
+            logger.info(f"[UNIFIED_PROCESSOR] Trying raw text extraction for {filename}")
+            text_content = await textract_service._try_raw_text_extraction(file_content, filename)
+            
+            if text_content and text_content.strip():
+                return {
+                    "status": "success",
+                    "text_content": text_content,
+                    "page_count": 1,
+                    "extraction_method": "raw_text_extraction"
+                }
+        except Exception as e:
+            logger.warning(f"[UNIFIED_PROCESSOR] Raw text extraction failed: {e}")
+        
+        # If all methods fail, return error
+        return {
+            "status": "error",
+            "error": "All image extraction methods failed",
+            "extraction_method": "all_methods_failed"
+        }
     
     async def _extract_text_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
         """Extract text from text files."""

@@ -783,29 +783,53 @@ class CrawlChatApp {
             return;
         }
         this.hideWelcomeMessage();
+        
         // Show all file names in the status banner
         const fileNames = Array.from(files).map(f => `"${f.name}"`).join(', ');
-        this.showStatusBanner(`📄 Uploading and processing ${fileNames}...`, 'info', 0);
+        this.showStatusBanner(`📄 Uploading and processing ${fileNames} with AWS Textract...`, 'info', 0);
+        
         try {
             const uploadBtn = document.querySelector('.upload-btn');
             if (uploadBtn) {
                 uploadBtn.style.opacity = '0.5';
                 uploadBtn.style.pointerEvents = 'none';
             }
+            
             for (const file of files) {
-                const result = await this.uploadFile(file);
-                this.addMainStatus(`✅ Document "${file.name}" uploaded and processed successfully`, 'success');
+                // Show individual file processing status
+                this.updateLastProcessingStatus(`🔍 Processing "${file.name}" with AWS Textract...`, 'info');
+                
+                try {
+                    const result = await this.uploadFile(file);
+                    
+                    // Show success message with extraction method
+                    const extractionMethod = result.extraction_method || 'AWS Textract';
+                    const contentLength = result.content_length || 0;
+                    
+                    this.addMainStatus(
+                        `✅ Document "${file.name}" processed successfully using ${extractionMethod}` +
+                        (contentLength > 0 ? ` (${contentLength} characters extracted)` : ''),
+                        'success'
+                    );
+                    
+                } catch (fileError) {
+                    console.error(`Failed to process ${file.name}:`, fileError);
+                    this.addMainStatus(`❌ Failed to process "${file.name}": ${fileError.message}`, 'error');
+                }
             }
+            
             if (files.length > 1) {
-                this.addMainStatus(`✅ ${files.length} documents uploaded and processed successfully`, 'success');
+                this.addMainStatus(`✅ ${files.length} documents processed with AWS Textract`, 'success');
             }
+            
             await this.loadAllSessions();
             // Refresh page usage after successful upload
             this.fetchPageUsage();
+            
         } catch (error) {
             console.error('Upload failed:', error);
             this.hideStatusBanner();
-            this.addMainStatus('File upload failed', 'error');
+            this.addMainStatus(`❌ File upload failed: ${error.message}`, 'error');
         } finally {
             const uploadBtn = document.querySelector('.upload-btn');
             if (uploadBtn) {
@@ -827,10 +851,47 @@ class CrawlChatApp {
         });
 
         if (!response.ok) {
-            throw new Error('Upload failed');
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || 'Upload failed');
         }
 
         return await response.json();
+    }
+
+    async uploadFileBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = async () => {
+                try {
+                    const base64Content = reader.result.split(',')[1]; // Remove data URL prefix
+                    const requestData = {
+                        file_content: base64Content,
+                        filename: file.name,
+                        content_type: file.type
+                    };
+
+                    const response = await fetch(`/api/v1/chat/sessions/${this.currentSessionId}/documents/base64`, {
+                        method: 'POST',
+                        headers: {
+                            ...this.getAuthHeaders(),
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(requestData)
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.detail || 'Upload failed');
+                    }
+
+                    resolve(await response.json());
+                } catch (error) {
+                    reject(error);
+                }
+            };
+            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.readAsDataURL(file);
+        });
     }
 
     updateUI() {
@@ -881,13 +942,20 @@ class CrawlChatApp {
         welcomeDiv.innerHTML = `
             <div class="welcome-content">
                 <h2>How can I help you today?</h2>
-                <p>I'm here to help you analyze documents and answer questions. You can:</p>
+                <p>I'm here to help you analyze documents and answer questions using AWS Textract. You can:</p>
                 <div class="welcome-features">
                     <div class="feature">
                         <div class="feature-icon">📄</div>
                         <div class="feature-text">
                             <h4>Upload Documents</h4>
-                            <p>Upload PDF, DOC, DOCX, or TXT files for analysis</p>
+                            <p>Upload PDF, images, DOC, DOCX, or TXT files for AI-powered text extraction</p>
+                        </div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">🔍</div>
+                        <div class="feature-text">
+                            <h4>AWS Textract Processing</h4>
+                            <p>Advanced OCR and document analysis for scanned documents and images</p>
                         </div>
                     </div>
                     <div class="feature">

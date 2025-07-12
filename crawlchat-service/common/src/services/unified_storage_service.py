@@ -68,7 +68,8 @@ class UnifiedStorageService:
         file_content: bytes,
         filename: str,
         user_id: str,
-        content_type: Optional[str] = None
+        content_type: Optional[str] = None,
+        task_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Upload a user document to S3 with consistent naming and organization.
@@ -78,6 +79,7 @@ class UnifiedStorageService:
             filename: Original filename
             user_id: User ID for organization
             content_type: Optional content type
+            task_id: Optional task ID for organization
             
         Returns:
             Upload result with S3 key and metadata
@@ -86,11 +88,16 @@ class UnifiedStorageService:
             if not self.s3_client:
                 raise StorageError("S3 client not available")
             
-            # Generate unique S3 key
+            # Generate unique S3 key with proper structure
             timestamp = int(datetime.utcnow().timestamp())
             unique_id = str(uuid.uuid4())[:8]
             file_extension = Path(filename).suffix
-            s3_key = f"uploaded_documents/{user_id}/{timestamp}_{unique_id}{file_extension}"
+            
+            # Use the specified S3 path structure: s3://crawlchat-data/uploaded_documents/user-id/task_id/
+            if task_id:
+                s3_key = f"uploaded_documents/{user_id}/{task_id}/{timestamp}_{unique_id}{file_extension}"
+            else:
+                s3_key = f"uploaded_documents/{user_id}/{timestamp}_{unique_id}{file_extension}"
             
             # Determine content type if not provided
             if not content_type:
@@ -108,6 +115,7 @@ class UnifiedStorageService:
                 'Metadata': {
                     'original_filename': filename,
                     'user_id': user_id,
+                    'task_id': task_id or 'no_task',
                     'upload_timestamp': str(timestamp),
                     'file_hash': file_hash,
                     'file_size': str(len(file_content))
@@ -125,7 +133,8 @@ class UnifiedStorageService:
                 "file_hash": file_hash,
                 "content_type": content_type,
                 "upload_timestamp": timestamp,
-                "user_id": user_id
+                "user_id": user_id,
+                "task_id": task_id
             }
             
         except Exception as e:

@@ -12,6 +12,12 @@ gridfs>=0.0.0
 boto3>=1.26.0
 botocore>=1.29.0
 
+# Document processing - Enhanced with AWS Textract integration
+PyPDF2>=3.0.0  # Lightweight PDF text extraction (primary fallback)
+pdfminer.six>=20221105  # Advanced PDF text extraction
+pdf2image>=1.16.0  # PDF to image conversion for OCR fallback
+Pillow>=10.0.0  # Image processing (required for pdf2image)
+
 # Email
 # smtplib is part of Python standard library
 

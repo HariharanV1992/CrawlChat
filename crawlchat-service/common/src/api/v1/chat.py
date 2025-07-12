@@ -303,7 +303,7 @@ async def upload_document(
     file: UploadFile = File(...),
     current_user: UserResponse = Depends(get_current_user)
 ):
-    """Upload a document to a chat session."""
+    """Upload a document to a chat session with AWS Textract processing."""
     logger.info(f"[API] Uploading document to session: {session_id}, user: {current_user.user_id}, filename: {file.filename}")
     
     try:
@@ -313,7 +313,7 @@ async def upload_document(
             raise HTTPException(status_code=404, detail="Session not found")
         
         # Validate file type
-        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.html']
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.html', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']
         file_extension = '.' + file.filename.split('.')[-1].lower() if '.' in file.filename else ''
         
         if file_extension not in allowed_extensions:
@@ -330,30 +330,68 @@ async def upload_document(
         if file_size > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB")
         
-        # Upload to S3 using unified storage service
+        # Generate task ID for organization
+        task_id = str(uuid.uuid4())
+        
+        # Upload to S3 using unified storage service with task_id
         result = await unified_storage_service.upload_user_document(
             file_content=file_content,
             filename=file.filename,
             user_id=current_user.user_id,
-            content_type=file.content_type
+            content_type=file.content_type,
+            task_id=task_id
         )
         s3_key = result["s3_key"]
         
-        # Debug logging to see what's being returned
-        logger.info(f"[DEBUG] API received s3_key: {s3_key}")
-        logger.info(f"[DEBUG] s3_key type: {type(s3_key)}")
+        logger.info(f"[API] Document uploaded to S3: {s3_key}")
+        
+        # Process document with AWS Textract using unified document processor
+        from common.src.services.unified_document_processor import unified_document_processor
+        
+        processing_result = await unified_document_processor.process_document(
+            file_content=file_content,
+            filename=file.filename,
+            user_id=current_user.user_id,
+            session_id=session_id,
+            metadata={
+                "task_id": task_id,
+                "upload_source": "chat",
+                "original_filename": file.filename,
+                "file_size": file_size
+            },
+            source="uploaded"
+        )
+        
+        if processing_result.get("status") != "success":
+            logger.error(f"[API] Document processing failed: {processing_result.get('error')}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Document processing failed: {processing_result.get('error', 'Unknown error')}"
+            )
+        
+        document_id = processing_result.get("document_id")
+        content_length = processing_result.get("content_length", 0)
+        extraction_method = processing_result.get("extraction_method", "unknown")
+        
+        logger.info(f"[API] Document processed successfully: {document_id}, content length: {content_length}, method: {extraction_method}")
         
         # Save document record to database
         from common.src.models.documents import Document, DocumentType, DocumentStatus
         
         document = Document(
-            document_id=str(uuid.uuid4()),
+            document_id=document_id,
             filename=file.filename,
             file_path=s3_key,
             file_size=file_size,
-            document_type=DocumentType.PDF,
-            status=DocumentStatus.UPLOADED,
-            user_id=current_user.user_id
+            document_type=DocumentType.PDF if file_extension == '.pdf' else DocumentType.OTHER,
+            status=DocumentStatus.PROCESSED,
+            user_id=current_user.user_id,
+            metadata={
+                "task_id": task_id,
+                "extraction_method": extraction_method,
+                "content_length": content_length,
+                "vector_store_result": processing_result.get("vector_store_result")
+            }
         )
         
         created_document = await document_service.create_document(document)
@@ -365,12 +403,10 @@ async def upload_document(
             created_document
         )
         
-        # Note: System message will be added by link_uploaded_document method
-        
-        logger.info(f"[API] Document uploaded successfully: {created_document.document_id}")
+        logger.info(f"[API] Document uploaded and processed successfully: {created_document.document_id}")
         
         return DocumentUploadResponse(
-            message="Document uploaded successfully",
+            message=f"Document uploaded and processed successfully using {extraction_method}",
             document_id=created_document.document_id,
             filename=file.filename,
             file_size=file_size
@@ -380,6 +416,142 @@ async def upload_document(
         raise
     except Exception as e:
         logger.error(f"[API] Error uploading document: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
+
+@router.post("/sessions/{session_id}/documents/base64")
+async def upload_document_base64(
+    session_id: str,
+    request: dict,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Upload a document via Base64-encoded content to a chat session with AWS Textract processing."""
+    logger.info(f"[API] Uploading Base64 document to session: {session_id}, user: {current_user.user_id}")
+    
+    try:
+        # Verify session exists and belongs to user
+        session = await chat_service.get_session(session_id, current_user.user_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Extract data from request
+        file_content_base64 = request.get("file_content")
+        filename = request.get("filename")
+        content_type = request.get("content_type")
+        
+        if not file_content_base64 or not filename:
+            raise HTTPException(status_code=400, detail="Missing file_content or filename")
+        
+        # Decode Base64 content
+        import base64
+        try:
+            file_content = base64.b64decode(file_content_base64)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid Base64 content: {str(e)}")
+        
+        file_size = len(file_content)
+        
+        # Validate file type
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.html', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']
+        file_extension = '.' + filename.split('.')[-1].lower() if '.' in filename else ''
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Check file size (max 10MB)
+        if file_size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB")
+        
+        # Generate task ID for organization
+        task_id = str(uuid.uuid4())
+        
+        # Upload to S3 using unified storage service with task_id
+        result = await unified_storage_service.upload_user_document(
+            file_content=file_content,
+            filename=filename,
+            user_id=current_user.user_id,
+            content_type=content_type,
+            task_id=task_id
+        )
+        s3_key = result["s3_key"]
+        
+        logger.info(f"[API] Base64 document uploaded to S3: {s3_key}")
+        
+        # Process document with AWS Textract using unified document processor
+        from common.src.services.unified_document_processor import unified_document_processor
+        
+        processing_result = await unified_document_processor.process_document(
+            file_content=file_content,
+            filename=filename,
+            user_id=current_user.user_id,
+            session_id=session_id,
+            metadata={
+                "task_id": task_id,
+                "upload_source": "chat_base64",
+                "original_filename": filename,
+                "file_size": file_size
+            },
+            source="uploaded"
+        )
+        
+        if processing_result.get("status") != "success":
+            logger.error(f"[API] Base64 document processing failed: {processing_result.get('error')}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Document processing failed: {processing_result.get('error', 'Unknown error')}"
+            )
+        
+        document_id = processing_result.get("document_id")
+        content_length = processing_result.get("content_length", 0)
+        extraction_method = processing_result.get("extraction_method", "unknown")
+        
+        logger.info(f"[API] Base64 document processed successfully: {document_id}, content length: {content_length}, method: {extraction_method}")
+        
+        # Save document record to database
+        from common.src.models.documents import Document, DocumentType, DocumentStatus
+        
+        document = Document(
+            document_id=document_id,
+            filename=filename,
+            file_path=s3_key,
+            file_size=file_size,
+            document_type=DocumentType.PDF if file_extension == '.pdf' else DocumentType.OTHER,
+            status=DocumentStatus.PROCESSED,
+            user_id=current_user.user_id,
+            metadata={
+                "task_id": task_id,
+                "extraction_method": extraction_method,
+                "content_length": content_length,
+                "vector_store_result": processing_result.get("vector_store_result")
+            }
+        )
+        
+        created_document = await document_service.create_document(document)
+        
+        # Link the uploaded document to the chat session
+        await chat_service.link_uploaded_document(
+            session_id,
+            current_user.user_id,
+            created_document
+        )
+        
+        logger.info(f"[API] Base64 document uploaded and processed successfully: {created_document.document_id}")
+        
+        return {
+            "message": f"Document uploaded and processed successfully using {extraction_method}",
+            "document_id": created_document.document_id,
+            "filename": filename,
+            "file_size": file_size,
+            "extraction_method": extraction_method,
+            "content_length": content_length
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] Error uploading Base64 document: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
 
 @router.get("/cache/stats")
