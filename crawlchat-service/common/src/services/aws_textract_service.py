@@ -203,11 +203,39 @@ class AWSTextractService:
                 }
             )
             
+            # Log response structure for debugging
+            logger.info(f"Textract response keys: {list(response.keys())}")
+            logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
+            
             # Extract text from blocks
             text_content = self._extract_text_from_blocks(response['Blocks'])
             page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
             
             logger.info(f"DetectDocumentText completed: {len(text_content)} characters, {page_count} pages")
+            
+            # Check if we got meaningful text
+            if not text_content or len(text_content.strip()) < 10:
+                logger.warning(f"Textract returned minimal text for {s3_key}: '{text_content[:100]}...'")
+                # Log some block details for debugging
+                block_types = {}
+                for block in response['Blocks'][:10]:  # First 10 blocks
+                    block_type = block.get('BlockType', 'UNKNOWN')
+                    block_types[block_type] = block_types.get(block_type, 0) + 1
+                logger.info(f"First 10 block types: {block_types}")
+                
+                # Try to get any text from blocks
+                all_text = []
+                for block in response['Blocks']:
+                    if 'Text' in block and block['Text'].strip():
+                        all_text.append(block['Text'])
+                
+                if all_text:
+                    fallback_text = ' '.join(all_text)
+                    logger.info(f"Fallback text extraction: {len(fallback_text)} characters")
+                    return fallback_text, page_count
+                else:
+                    raise TextractError("Textract returned empty or minimal text")
+            
             return text_content, page_count
             
         except ClientError as e:
@@ -224,6 +252,66 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"Unexpected error in DetectDocumentText: {e}")
             raise TextractError(f"Unexpected error: {e}")
+
+    async def _detect_document_text_with_enhanced_params(self, s3_bucket: str, s3_key: str) -> (str, int):
+        """
+        Call AWS Textract DetectDocumentText API with enhanced parameters for better image processing.
+        """
+        try:
+            logger.info(f"Calling DetectDocumentText with enhanced params for s3://{s3_bucket}/{s3_key}")
+            
+            # Try with different parameters for better image processing
+            response = self.textract_client.detect_document_text(
+                Document={
+                    'S3Object': {
+                        'Bucket': s3_bucket,
+                        'Name': s3_key
+                    }
+                },
+                # Add parameters for better image processing
+                FeatureTypes=['TABLES', 'FORMS']  # This might help with complex images
+            )
+            
+            # Log response structure for debugging
+            logger.info(f"Enhanced Textract response keys: {list(response.keys())}")
+            logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
+            
+            # Extract text from blocks
+            text_content = self._extract_text_from_blocks(response['Blocks'])
+            page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
+            
+            logger.info(f"Enhanced DetectDocumentText completed: {len(text_content)} characters, {page_count} pages")
+            
+            return text_content, page_count
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+            logger.error(f"Enhanced Textract DetectDocumentText failed: {error_code} - {error_message}")
+            raise TextractError(f"Enhanced Textract error: {error_code} - {error_message}")
+        except Exception as e:
+            logger.error(f"Unexpected error in enhanced DetectDocumentText: {e}")
+            raise TextractError(f"Unexpected error: {e}")
+
+    async def _try_enhanced_image_extraction(self, s3_bucket: str, s3_key: str) -> (str, int):
+        """
+        Try enhanced image extraction with different Textract parameters.
+        """
+        try:
+            # First try the standard method
+            text_content, page_count = await self._detect_document_text(s3_bucket, s3_key)
+            
+            # If we got meaningful text, return it
+            if text_content and len(text_content.strip()) > 10:
+                return text_content, page_count
+            
+            # If standard method failed, try enhanced parameters
+            logger.info(f"Standard Textract failed, trying enhanced parameters for {s3_key}")
+            return await self._detect_document_text_with_enhanced_params(s3_bucket, s3_key)
+            
+        except Exception as e:
+            logger.warning(f"Enhanced image extraction failed: {e}")
+            raise
 
     async def _analyze_document(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
@@ -268,11 +356,73 @@ class AWSTextractService:
         """
         Extract plain text from Textract blocks.
         """
-        text_lines = []
-        for block in blocks:
-            if block['BlockType'] == 'LINE':
-                text_lines.append(block['Text'])
-        return '\n'.join(text_lines)
+        try:
+            # Log block types for debugging
+            block_types = {}
+            for block in blocks:
+                block_type = block.get('BlockType', 'UNKNOWN')
+                block_types[block_type] = block_types.get(block_type, 0) + 1
+            
+            logger.info(f"Textract returned blocks: {block_types}")
+            
+            text_lines = []
+            current_line = []
+            current_line_id = None
+            
+            # Sort blocks by page, then by geometry (top to bottom, left to right)
+            sorted_blocks = sorted(blocks, key=lambda b: (
+                b.get('Page', 0),
+                b.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
+                b.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
+            ))
+            
+            for block in sorted_blocks:
+                if block['BlockType'] == 'LINE':
+                    # Extract all words in this line
+                    line_text = block.get('Text', '')
+                    if 'Relationships' in block:
+                        for relationship in block['Relationships']:
+                            if relationship['Type'] == 'CHILD':
+                                for child_id in relationship['Ids']:
+                                    child_block = next((b for b in blocks if b['Id'] == child_id), None)
+                                    if child_block and child_block['BlockType'] == 'WORD':
+                                        line_text += ' ' + child_block.get('Text', '')
+                    
+                    if line_text.strip():
+                        text_lines.append(line_text.strip())
+                        
+                elif block['BlockType'] == 'WORD':
+                    # If we're getting individual words, group them by line
+                    word_text = block.get('Text', '')
+                    if word_text.strip():
+                        current_line.append(word_text)
+                        
+                        # Check if this word belongs to a different line
+                        line_id = block.get('LineId', None)
+                        if line_id != current_line_id:
+                            if current_line:
+                                text_lines.append(' '.join(current_line))
+                                current_line = []
+                            current_line_id = line_id
+                            current_line.append(word_text)
+            
+            # Add the last line if there are remaining words
+            if current_line:
+                text_lines.append(' '.join(current_line))
+            
+            extracted_text = '\n'.join(text_lines)
+            logger.info(f"Extracted {len(extracted_text)} characters from {len(text_lines)} lines")
+            
+            return extracted_text
+            
+        except Exception as e:
+            logger.error(f"Error extracting text from blocks: {e}")
+            # Fallback: try to extract any text from blocks
+            fallback_text = []
+            for block in blocks:
+                if 'Text' in block:
+                    fallback_text.append(block['Text'])
+            return ' '.join(fallback_text)
 
     def _extract_structured_text_from_blocks(self, blocks: List[Dict[str, Any]]) -> str:
         """
@@ -1111,13 +1261,23 @@ class AWSTextractService:
         for idx, image_key in enumerate(image_keys):
             try:
                 logger.info(f"Processing image page {idx+1}/{len(image_keys)}: s3://{s3_bucket}/{image_key}")
-                text_content, page_count = await self.extract_text_from_s3_pdf(s3_bucket, image_key, document_type)
-                all_text.append(f"--- Page {idx+1} ---\n{text_content}")
-                total_pages += page_count
+                
+                # Use enhanced image extraction for better results
+                text_content, page_count = await self._try_enhanced_image_extraction(s3_bucket, image_key)
+                
+                if text_content and text_content.strip():
+                    all_text.append(f"--- Page {idx+1} ---\n{text_content}")
+                    total_pages += page_count
+                else:
+                    logger.warning(f"No text extracted from page {idx+1} ({image_key})")
+                    all_text.append(f"--- Page {idx+1} ---\n[No text detected]")
+                    
             except Exception as e:
                 logger.warning(f"Textract failed for page {idx+1} ({image_key}): {e}")
                 all_text.append(f"--- Page {idx+1} ---\n[Textract failed: {e}]")
+        
         combined_text = "\n\n".join(all_text)
+        logger.info(f"Image manifest processing completed: {len(combined_text)} total characters from {total_pages} pages")
         return combined_text, total_pages
 
 # Global instance

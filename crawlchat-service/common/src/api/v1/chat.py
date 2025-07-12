@@ -376,39 +376,57 @@ async def upload_document(
         
         logger.info(f"[API] Document processed successfully: {document_id}, content length: {content_length}, method: {extraction_method}")
         
-        # Save document record to database
+        # Get the document record that was already created by unified document processor
         from common.src.models.documents import Document, DocumentType, DocumentStatus
         
-        document = Document(
-            document_id=document_id,
-            filename=file.filename,
-            file_path=s3_key,
-            file_size=file_size,
-            document_type=DocumentType.PDF if file_extension == '.pdf' else DocumentType.OTHER,
-            status=DocumentStatus.PROCESSED,
-            user_id=current_user.user_id,
-            metadata={
-                "task_id": task_id,
-                "extraction_method": extraction_method,
-                "content_length": content_length,
-                "vector_store_result": processing_result.get("vector_store_result")
-            }
+        # Fetch the existing document record from database
+        from common.src.core.database import mongodb
+        from datetime import datetime
+        
+        await mongodb.connect()
+        doc_data = await mongodb.get_collection("documents").find_one({"document_id": document_id})
+        
+        if not doc_data:
+            logger.error(f"[API] Document record not found after processing: {document_id}")
+            raise HTTPException(status_code=500, detail="Document record not found after processing")
+        
+        # Update the document record with additional metadata
+        update_data = {
+            "file_path": s3_key,
+            "metadata.task_id": task_id,
+            "metadata.extraction_method": extraction_method,
+            "metadata.content_length": content_length,
+            "metadata.vector_store_result": processing_result.get("vector_store_result"),
+            "updated_at": datetime.utcnow()
+        }
+        
+        await mongodb.get_collection("documents").update_one(
+            {"document_id": document_id},
+            {"$set": update_data}
         )
         
-        created_document = await document_service.create_document(document)
+        # Create Document object for chat service
+        document = Document(**doc_data)
+        document.file_path = s3_key
+        document.metadata.update({
+            "task_id": task_id,
+            "extraction_method": extraction_method,
+            "content_length": content_length,
+            "vector_store_result": processing_result.get("vector_store_result")
+        })
         
         # Link the uploaded document to the chat session
         await chat_service.link_uploaded_document(
             session_id,
             current_user.user_id,
-            created_document
+            document
         )
         
-        logger.info(f"[API] Document uploaded and processed successfully: {created_document.document_id}")
+        logger.info(f"[API] Document uploaded and processed successfully: {document.document_id}")
         
         return DocumentUploadResponse(
             message=f"Document uploaded and processed successfully using {extraction_method}",
-            document_id=created_document.document_id,
+            document_id=document.document_id,
             filename=file.filename,
             file_size=file_size
         )
@@ -510,39 +528,57 @@ async def upload_document_base64(
         
         logger.info(f"[API] Base64 document processed successfully: {document_id}, content length: {content_length}, method: {extraction_method}")
         
-        # Save document record to database
+        # Get the document record that was already created by unified document processor
         from common.src.models.documents import Document, DocumentType, DocumentStatus
         
-        document = Document(
-            document_id=document_id,
-            filename=filename,
-            file_path=s3_key,
-            file_size=file_size,
-            document_type=DocumentType.PDF if file_extension == '.pdf' else DocumentType.OTHER,
-            status=DocumentStatus.PROCESSED,
-            user_id=current_user.user_id,
-            metadata={
-                "task_id": task_id,
-                "extraction_method": extraction_method,
-                "content_length": content_length,
-                "vector_store_result": processing_result.get("vector_store_result")
-            }
+        # Fetch the existing document record from database
+        from common.src.core.database import mongodb
+        from datetime import datetime
+        
+        await mongodb.connect()
+        doc_data = await mongodb.get_collection("documents").find_one({"document_id": document_id})
+        
+        if not doc_data:
+            logger.error(f"[API] Base64 document record not found after processing: {document_id}")
+            raise HTTPException(status_code=500, detail="Document record not found after processing")
+        
+        # Update the document record with additional metadata
+        update_data = {
+            "file_path": s3_key,
+            "metadata.task_id": task_id,
+            "metadata.extraction_method": extraction_method,
+            "metadata.content_length": content_length,
+            "metadata.vector_store_result": processing_result.get("vector_store_result"),
+            "updated_at": datetime.utcnow()
+        }
+        
+        await mongodb.get_collection("documents").update_one(
+            {"document_id": document_id},
+            {"$set": update_data}
         )
         
-        created_document = await document_service.create_document(document)
+        # Create Document object for chat service
+        document = Document(**doc_data)
+        document.file_path = s3_key
+        document.metadata.update({
+            "task_id": task_id,
+            "extraction_method": extraction_method,
+            "content_length": content_length,
+            "vector_store_result": processing_result.get("vector_store_result")
+        })
         
         # Link the uploaded document to the chat session
         await chat_service.link_uploaded_document(
             session_id,
             current_user.user_id,
-            created_document
+            document
         )
         
-        logger.info(f"[API] Base64 document uploaded and processed successfully: {created_document.document_id}")
+        logger.info(f"[API] Base64 document uploaded and processed successfully: {document.document_id}")
         
         return {
             "message": f"Document uploaded and processed successfully using {extraction_method}",
-            "document_id": created_document.document_id,
+            "document_id": document.document_id,
             "filename": filename,
             "file_size": file_size,
             "extraction_method": extraction_method,
