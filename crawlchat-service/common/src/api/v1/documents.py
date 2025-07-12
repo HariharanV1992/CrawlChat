@@ -181,6 +181,20 @@ async def list_documents(
         logger.error(f"Error listing documents: {e}")
         raise HTTPException(status_code=500, detail="Failed to list documents")
 
+@router.get("/page-usage")
+async def get_user_page_usage(current_user: UserResponse = Depends(get_current_user)):
+    """Get the user's current total processed pages and the page limit."""
+    try:
+        total_pages = await document_service.get_total_pages_for_user(current_user.user_id)
+        return {
+            "user_id": current_user.user_id,
+            "total_pages": total_pages,
+            "page_limit": 100
+        }
+    except Exception as e:
+        logger.error(f"Error getting user page usage: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user page usage")
+
 @router.get("/{document_id}", response_model=Document)
 async def get_document(
     document_id: str,
@@ -306,20 +320,6 @@ async def batch_process_documents(
     except Exception as e:
         logger.error(f"Error batch processing documents: {e}")
         raise HTTPException(status_code=500, detail="Failed to batch process documents")
-
-@router.get("/page-usage")
-async def get_user_page_usage(current_user: UserResponse = Depends(get_current_user)):
-    """Get the user's current total processed pages and the page limit."""
-    try:
-        total_pages = await document_service.get_total_pages_for_user(current_user.user_id)
-        return {
-            "user_id": current_user.user_id,
-            "total_pages": total_pages,
-            "page_limit": 100
-        }
-    except Exception as e:
-        logger.error(f"Error getting user page usage: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get user page usage") 
 
 @router.get("/download/{filename}")
 async def download_document(
