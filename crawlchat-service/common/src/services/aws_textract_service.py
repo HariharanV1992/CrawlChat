@@ -267,9 +267,9 @@ class AWSTextractService:
                         'Bucket': s3_bucket,
                         'Name': s3_key
                     }
-                },
-                # Add parameters for better image processing
-                FeatureTypes=['TABLES', 'FORMS']  # This might help with complex images
+                }
+                # Note: FeatureTypes is not supported in detect_document_text
+                # It's only available in analyze_document
             )
             
             # Log response structure for debugging
@@ -354,7 +354,7 @@ class AWSTextractService:
 
     def _extract_text_from_blocks(self, blocks: List[Dict[str, Any]]) -> str:
         """
-        Extract plain text from Textract blocks.
+        Extract plain text from Textract blocks with improved LINE and WORD handling.
         """
         try:
             # Log block types for debugging
@@ -365,53 +365,81 @@ class AWSTextractService:
             
             logger.info(f"Textract returned blocks: {block_types}")
             
-            text_lines = []
-            current_line = []
-            current_line_id = None
+            # Group blocks by page
+            pages = {}
+            for block in blocks:
+                page_num = block.get('Page', 1)
+                if page_num not in pages:
+                    pages[page_num] = []
+                pages[page_num].append(block)
             
-            # Sort blocks by page, then by geometry (top to bottom, left to right)
-            sorted_blocks = sorted(blocks, key=lambda b: (
-                b.get('Page', 0),
-                b.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
-                b.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
-            ))
+            all_text_lines = []
             
-            for block in sorted_blocks:
-                if block['BlockType'] == 'LINE':
-                    # Extract all words in this line
-                    line_text = block.get('Text', '')
-                    if 'Relationships' in block:
-                        for relationship in block['Relationships']:
-                            if relationship['Type'] == 'CHILD':
-                                for child_id in relationship['Ids']:
-                                    child_block = next((b for b in blocks if b['Id'] == child_id), None)
-                                    if child_block and child_block['BlockType'] == 'WORD':
-                                        line_text += ' ' + child_block.get('Text', '')
-                    
-                    if line_text.strip():
-                        text_lines.append(line_text.strip())
+            for page_num in sorted(pages.keys()):
+                page_blocks = pages[page_num]
+                logger.info(f"Processing page {page_num} with {len(page_blocks)} blocks")
+                
+                # Extract LINE blocks first (they contain complete lines)
+                line_blocks = [b for b in page_blocks if b['BlockType'] == 'LINE']
+                if line_blocks:
+                    logger.info(f"Found {len(line_blocks)} LINE blocks on page {page_num}")
+                    for line_block in line_blocks:
+                        line_text = line_block.get('Text', '').strip()
+                        if line_text:
+                            all_text_lines.append(line_text)
+                            logger.debug(f"LINE block text: '{line_text}'")
+                
+                # If no LINE blocks, try to reconstruct from WORD blocks
+                if not line_blocks:
+                    word_blocks = [b for b in page_blocks if b['BlockType'] == 'WORD']
+                    if word_blocks:
+                        logger.info(f"No LINE blocks found, reconstructing from {len(word_blocks)} WORD blocks")
                         
-                elif block['BlockType'] == 'WORD':
-                    # If we're getting individual words, group them by line
-                    word_text = block.get('Text', '')
-                    if word_text.strip():
-                        current_line.append(word_text)
+                        # Sort words by position (top to bottom, left to right)
+                        sorted_words = sorted(word_blocks, key=lambda w: (
+                            w.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
+                            w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
+                        ))
                         
-                        # Check if this word belongs to a different line
-                        line_id = block.get('LineId', None)
-                        if line_id != current_line_id:
-                            if current_line:
-                                text_lines.append(' '.join(current_line))
-                                current_line = []
-                            current_line_id = line_id
-                            current_line.append(word_text)
+                        current_line = []
+                        current_y = None
+                        y_tolerance = 0.05  # Tolerance for same line detection
+                        
+                        for word_block in sorted_words:
+                            word_text = word_block.get('Text', '').strip()
+                            if not word_text:
+                                continue
+                            
+                            # Get Y position
+                            y_pos = word_block.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0)
+                            
+                            # Check if this word is on the same line
+                            if current_y is None or abs(y_pos - current_y) <= y_tolerance:
+                                current_line.append(word_text)
+                                current_y = y_pos
+                            else:
+                                # New line
+                                if current_line:
+                                    line_text = ' '.join(current_line)
+                                    all_text_lines.append(line_text)
+                                    logger.debug(f"Reconstructed line: '{line_text}'")
+                                current_line = [word_text]
+                                current_y = y_pos
+                        
+                        # Add the last line
+                        if current_line:
+                            line_text = ' '.join(current_line)
+                            all_text_lines.append(line_text)
+                            logger.debug(f"Reconstructed line: '{line_text}'")
             
-            # Add the last line if there are remaining words
-            if current_line:
-                text_lines.append(' '.join(current_line))
+            extracted_text = '\n'.join(all_text_lines)
+            logger.info(f"Extracted {len(extracted_text)} characters from {len(all_text_lines)} lines across {len(pages)} pages")
             
-            extracted_text = '\n'.join(text_lines)
-            logger.info(f"Extracted {len(extracted_text)} characters from {len(text_lines)} lines")
+            if not extracted_text.strip():
+                logger.warning("No text extracted from blocks - this may indicate low-quality images")
+                # Log some block details for debugging
+                for i, block in enumerate(blocks[:5]):  # Log first 5 blocks
+                    logger.debug(f"Block {i}: {block.get('BlockType', 'UNKNOWN')} - Text: '{block.get('Text', 'N/A')}'")
             
             return extracted_text
             
@@ -686,17 +714,18 @@ class AWSTextractService:
         filename: str
     ) -> List[Tuple[bytes, str]]:
         """
-        Convert PDF to images locally using pdf2image.
+        Convert PDF to images locally using pdf2image with high DPI for Textract compatibility.
         """
         try:
             import pdf2image
             from PIL import Image
             import io
             
-            # Convert PDF to images
+            # Convert PDF to images with high DPI for better Textract OCR
+            logger.info(f"Converting PDF to images with 300 DPI for optimal Textract compatibility")
             images = pdf2image.convert_from_bytes(
                 pdf_content,
-                dpi=200,  # Good balance between quality and size
+                dpi=300,  # High DPI for better Textract OCR results
                 fmt='PNG',
                 thread_count=1  # Single thread for Lambda compatibility
             )
@@ -711,7 +740,16 @@ class AWSTextractService:
                 image_filename = f"{os.path.splitext(filename)[0]}_page_{i+1}.png"
                 image_files.append((img_bytes, image_filename))
                 
-                logger.info(f"Converted page {i+1} to image: {len(img_bytes)} bytes")
+                logger.info(f"Converted page {i+1} to image: {len(img_bytes)} bytes (300 DPI)")
+                
+                # Debug: Save image locally for inspection (only in development)
+                if os.getenv('DEBUG_SAVE_IMAGES', 'false').lower() == 'true':
+                    try:
+                        debug_path = f"/tmp/debug_page_{i+1}.png"
+                        image.save(debug_path)
+                        logger.info(f"DEBUG: Saved image to {debug_path} for inspection")
+                    except Exception as debug_e:
+                        logger.warning(f"DEBUG: Failed to save debug image: {debug_e}")
             
             return image_files
             
