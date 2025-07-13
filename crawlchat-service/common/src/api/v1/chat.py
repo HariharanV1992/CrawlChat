@@ -445,7 +445,8 @@ async def upload_document(
         logger.info(f"[API] Document uploaded and processed successfully: {document.document_id}")
         
         # Determine response message based on vector store status
-        vector_status = vector_result.get("status", "unknown")
+        vector_store_result = processing_result.get("vector_store_result", {})
+        vector_status = vector_store_result.get("status", "unknown")
         if vector_status == "uploaded":
             response_message = f"Document uploaded and processed successfully using {extraction_method}. Vector processing is in progress."
         elif vector_status == "error":
