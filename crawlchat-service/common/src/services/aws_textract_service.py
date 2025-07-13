@@ -291,10 +291,10 @@ class AWSTextractService:
             except Exception as e:
                 logger.warning(f"AnalyzeDocument failed: {e}, trying PDF repair...")
             
-            # Strategy 3: Try PDF repair and re-extraction
+            # Strategy 3: Try PDF repair and re-extraction (only once to prevent infinite loops)
             logger.info("Strategy 3: Trying PDF repair and re-extraction...")
             try:
-                text_content, page_count = await self._try_pdf_repair_and_extract(s3_bucket, s3_key)
+                text_content, page_count = await self._try_pdf_repair_and_extract(s3_bucket, s3_key, repair_attempt=1)
                 if text_content and len(text_content.strip()) > 10:
                     logger.info(f"✅ PDF repair succeeded: {len(text_content)} characters extracted")
                     return text_content, page_count
@@ -302,7 +302,19 @@ class AWSTextractService:
                     raise TextractError("PDF repair returned minimal text")
             except Exception as e:
                 logger.error(f"PDF repair failed: {e}")
-                raise TextractError(f"All Textract strategies failed: {e}")
+                
+                # Strategy 4: Convert PDF to images and extract (final fallback)
+                logger.info("Strategy 4: Converting PDF to images and extracting...")
+                try:
+                    text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
+                    if text_content and len(text_content.strip()) > 10:
+                        logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
+                        return text_content, page_count
+                    else:
+                        raise TextractError("PDF-to-image extraction returned minimal text")
+                except Exception as img_error:
+                    logger.error(f"PDF-to-image extraction failed: {img_error}")
+                    raise TextractError(f"All Textract strategies failed: {e}")
                 
         except Exception as e:
             logger.error(f"All sync Textract strategies failed: {e}")
@@ -347,13 +359,18 @@ class AWSTextractService:
             logger.error(f"Error validating document: {e}")
             raise TextractError(f"Document validation failed: {e}")
 
-    async def _try_pdf_repair_and_extract(self, s3_bucket: str, s3_key: str) -> (str, int):
+    async def _try_pdf_repair_and_extract(self, s3_bucket: str, s3_key: str, repair_attempt: int = 0) -> (str, int):
         """
         Try to repair problematic PDFs and extract text using Textract.
         This method attempts to fix common PDF issues that cause UnsupportedDocumentException.
         """
         try:
-            logger.info(f"Attempting PDF repair and extraction for s3://{s3_bucket}/{s3_key}")
+            logger.info(f"Attempting PDF repair and extraction for s3://{s3_bucket}/{s3_key} (attempt {repair_attempt})")
+            
+            # Prevent infinite loops - only allow one repair attempt
+            if repair_attempt > 0:
+                logger.warning(f"Already attempted PDF repair {repair_attempt} times, stopping to prevent infinite loop")
+                raise TextractError("Document format not supported by Textract after repair attempt")
             
             # Check if this is already a repaired PDF to prevent infinite loops
             if "_repaired.pdf" in s3_key:
@@ -388,8 +405,8 @@ class AWSTextractService:
                 
                 logger.info(f"PDF repair attempted, new size: {len(repaired_content)} bytes")
                 
-                # Upload the repaired PDF to S3
-                repair_key = f"{s3_key}_repaired.pdf"
+                # Upload the repaired PDF to S3 with a simple name to avoid long filenames
+                repair_key = f"{s3_key.replace('.pdf', '')}_repaired.pdf"
                 self.s3_client.put_object(
                     Bucket=s3_bucket,
                     Key=repair_key,
@@ -2216,6 +2233,116 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"Async Textract extraction failed: {e}")
             raise TextractError(f"Async extraction failed: {e}")
+
+    async def _convert_pdf_to_images_and_extract(self, s3_bucket: str, s3_key: str) -> (str, int):
+        """
+        Convert PDF to images and extract text using Textract.
+        This is a fallback method when direct PDF processing fails.
+        """
+        try:
+            logger.info(f"Converting PDF to images for Textract processing: s3://{s3_bucket}/{s3_key}")
+            
+            # Download the PDF from S3
+            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            pdf_content = response['Body'].read()
+            
+            # Convert PDF to images using PyMuPDF
+            try:
+                import fitz  # PyMuPDF
+                from io import BytesIO
+                
+                # Open PDF with PyMuPDF
+                pdf_file = BytesIO(pdf_content)
+                doc = fitz.open(stream=pdf_file, filetype="pdf")
+                
+                image_keys = []
+                all_text_content = []
+                total_pages = len(doc)
+                
+                logger.info(f"Converting {total_pages} pages to images...")
+                
+                for page_num in range(total_pages):
+                    page = doc[page_num]
+                    
+                    # Render page to image with good quality
+                    # Use 2x zoom for better text recognition
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                    img_data = pix.tobytes("png")
+                    
+                    # Upload image to S3
+                    image_key = f"{s3_key.replace('.pdf', '')}_page_{page_num + 1}.png"
+                    self.s3_client.put_object(
+                        Bucket=s3_bucket,
+                        Key=image_key,
+                        Body=img_data,
+                        ContentType='image/png'
+                    )
+                    image_keys.append(image_key)
+                    
+                    logger.info(f"Uploaded page {page_num + 1} as image: {image_key}")
+                
+                doc.close()
+                
+                # Process each image with Textract
+                logger.info(f"Processing {len(image_keys)} images with Textract...")
+                
+                for i, image_key in enumerate(image_keys):
+                    try:
+                        logger.info(f"Processing image {i + 1}/{len(image_keys)}: {image_key}")
+                        
+                        response = self.textract_client.detect_document_text(
+                            Document={
+                                'S3Object': {
+                                    'Bucket': s3_bucket,
+                                    'Name': image_key
+                                }
+                            }
+                        )
+                        
+                        # Extract text from blocks
+                        blocks = response.get('Blocks', [])
+                        page_text = ""
+                        for block in blocks:
+                            if block['BlockType'] == 'LINE':
+                                page_text += block.get('Text', '') + '\n'
+                        
+                        if page_text.strip():
+                            all_text_content.append(page_text.strip())
+                            logger.info(f"✅ Page {i + 1} extracted: {len(page_text)} characters")
+                        else:
+                            logger.warning(f"⚠️ Page {i + 1} returned no text")
+                        
+                    except Exception as e:
+                        logger.warning(f"Failed to process image {i + 1}: {e}")
+                        continue
+                
+                # Combine all text
+                combined_text = '\n\n'.join(all_text_content)
+                
+                # Clean up image files
+                logger.info("Cleaning up image files...")
+                for image_key in image_keys:
+                    try:
+                        self.s3_client.delete_object(Bucket=s3_bucket, Key=image_key)
+                    except:
+                        pass
+                
+                if combined_text.strip():
+                    logger.info(f"✅ PDF-to-image extraction successful: {len(combined_text)} characters from {total_pages} pages")
+                    return combined_text, total_pages
+                else:
+                    raise TextractError("No text extracted from images")
+                
+            except ImportError:
+                logger.error("PyMuPDF not available for PDF-to-image conversion")
+                raise TextractError("PDF-to-image conversion requires PyMuPDF")
+            except Exception as e:
+                logger.error(f"PDF-to-image conversion failed: {e}")
+                raise
+                
+        except Exception as e:
+            logger.error(f"PDF-to-image extraction failed: {e}")
+            raise TextractError(f"PDF-to-image extraction failed: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 
