@@ -103,8 +103,15 @@ class AWSTextractService:
         document_type: DocumentType = DocumentType.GENERAL
     ) -> Tuple[str, int]:
         """
-        Extract text from PDF stored in S3 using AWS Textract.
-        Returns (text_content, page_count)
+        Extract text from a PDF stored in S3 using AWS Textract.
+        
+        Args:
+            s3_bucket: S3 bucket name
+            s3_key: S3 object key
+            document_type: Type of document for processing strategy
+            
+        Returns:
+            Tuple of (extracted_text, page_count)
         """
         try:
             # Ensure clients are initialized
@@ -112,30 +119,59 @@ class AWSTextractService:
             
             if not self.textract_client:
                 raise TextractError("AWS Textract client not available")
-            if not self.s3_client:
-                raise TextractError("AWS S3 client not available")
             
-            # Get document size to decide on sync vs async
+            # Get document size
             try:
                 response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
-                document_size = response.get('ContentLength', 0)
+                document_size = response['ContentLength']
                 logger.info(f"Document size: {document_size} bytes")
-                
-                # Use sync API for documents up to 5MB
-                if document_size <= 5 * 1024 * 1024:
-                    logger.info(f"Using sync Textract API for document ({document_size} bytes)")
-                    return await self._extract_text_sync(s3_bucket, s3_key, document_type)
-                else:
-                    logger.warning(f"Document too large for sync API ({document_size} bytes)")
-                    raise TextractError("Document too large for synchronous processing (max 5MB)")
-                    
-            except Exception as size_e:
-                logger.warning(f"Could not determine document size: {size_e}, using sync API")
+            except Exception as e:
+                logger.warning(f"Could not determine document size: {e}")
+                document_size = 0
+            
+            # Choose processing strategy based on document size
+            if document_size > 5 * 1024 * 1024:  # 5MB
+                logger.info(f"Using async Textract API for large document ({document_size} bytes)")
+                return await self._extract_text_async(s3_bucket, s3_key, document_type)
+            else:
+                logger.info(f"Using sync Textract API for document ({document_size} bytes)")
                 return await self._extract_text_sync(s3_bucket, s3_key, document_type)
-                    
+                
         except Exception as e:
-            logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
-            raise TextractError(f"Textract extraction failed: {e}")
+            logger.error(f"Text extraction failed: {e}")
+            
+            # Final fallback: Try PyMuPDF extraction
+            try:
+                logger.info("Attempting PyMuPDF extraction as final fallback...")
+                response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+                pdf_content = response['Body'].read()
+                
+                pymupdf_text = await self._extract_text_with_pymupdf(pdf_content)
+                if pymupdf_text.strip():
+                    # Estimate page count from PDF content
+                    import fitz
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_pdf:
+                        temp_pdf.write(pdf_content)
+                        temp_pdf_path = temp_pdf.name
+                    
+                    try:
+                        doc = fitz.open(temp_pdf_path)
+                        page_count = len(doc)
+                        doc.close()
+                    finally:
+                        import os
+                        if os.path.exists(temp_pdf_path):
+                            os.unlink(temp_pdf_path)
+                    
+                    logger.info(f"✅ PyMuPDF fallback successful: {len(pymupdf_text)} characters from {page_count} pages")
+                    return pymupdf_text, page_count
+                else:
+                    raise TextractError("All extraction methods failed")
+                    
+            except Exception as fallback_error:
+                logger.error(f"PyMuPDF fallback also failed: {fallback_error}")
+                raise TextractError(f"All text extraction methods failed: {e}")
 
     async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> Tuple[str, int]:
         """
@@ -386,6 +422,19 @@ class AWSTextractService:
                         except Exception as analyze_error:
                             logger.warning(f"AnalyzeDocument fallback failed: {analyze_error}")
                     
+                    # If still no text, try Tesseract OCR as final fallback
+                    if not page_text.strip():
+                        logger.info(f"Trying Tesseract OCR as final fallback for image {i + 1}")
+                        try:
+                            tesseract_text = await self._extract_text_with_tesseract(s3_bucket, image_key)
+                            if tesseract_text.strip():
+                                page_text = tesseract_text
+                                logger.info(f"Tesseract OCR extracted: {len(tesseract_text)} characters")
+                            else:
+                                logger.warning(f"Tesseract OCR also found no text")
+                        except Exception as tesseract_error:
+                            logger.warning(f"Tesseract OCR failed: {tesseract_error}")
+                    
                     if page_text.strip():
                         all_text_content.append(f"--- Page {i + 1} ---\n{page_text.strip()}")
                         logger.info(f"✅ Page {i + 1} extracted: {len(page_text)} characters")
@@ -414,6 +463,100 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"PDF-to-image extraction failed: {e}")
             raise TextractError(f"PDF-to-image extraction failed: {e}")
+
+    async def _extract_text_with_tesseract(self, s3_bucket: str, s3_key: str) -> str:
+        """
+        Extract text from image using Tesseract OCR as final fallback.
+        """
+        try:
+            # Download image from S3
+            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            image_content = response['Body'].read()
+            
+            # Convert to PIL Image
+            image = Image.open(BytesIO(image_content))
+            
+            # Try to import pytesseract
+            try:
+                import pytesseract
+                
+                # Configure Tesseract for better OCR
+                custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?@#$%&*()_+-=[]{}|;:,.<>?/ '
+                
+                # Extract text
+                text = pytesseract.image_to_string(image, config=custom_config)
+                
+                return text.strip()
+                
+            except ImportError:
+                logger.warning("pytesseract not available, skipping Tesseract OCR")
+                return ""
+            except Exception as e:
+                logger.warning(f"Tesseract OCR error: {e}")
+                return ""
+                
+        except Exception as e:
+            logger.warning(f"Failed to extract text with Tesseract: {e}")
+            return ""
+
+    async def _extract_text_with_pymupdf(self, pdf_content: bytes) -> str:
+        """
+        Extract text from PDF using PyMuPDF (fitz) as comprehensive fallback.
+        This handles difficult PDFs that AWS Textract cannot process.
+        """
+        try:
+            import fitz
+            import tempfile
+            import os
+            
+            # Create temporary PDF file
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_pdf:
+                temp_pdf.write(pdf_content)
+                temp_pdf_path = temp_pdf.name
+            
+            try:
+                # Open PDF with PyMuPDF
+                doc = fitz.open(temp_pdf_path)
+                extracted_text = []
+                
+                for page_num in range(len(doc)):
+                    page = doc[page_num]
+                    
+                    # Try to extract text directly first
+                    text = page.get_text()
+                    
+                    if text.strip():
+                        extracted_text.append(f"--- Page {page_num + 1} ---\n{text.strip()}")
+                        logger.info(f"PyMuPDF extracted {len(text)} characters from page {page_num + 1}")
+                    else:
+                        # If no text found, try to get words with bounding boxes
+                        words = page.get_text("words")
+                        if words:
+                            page_text = ""
+                            for word in words:
+                                page_text += word[4] + " "  # word[4] contains the text
+                            extracted_text.append(f"--- Page {page_num + 1} ---\n{page_text.strip()}")
+                            logger.info(f"PyMuPDF extracted {len(page_text)} characters from page {page_num + 1} using word extraction")
+                        else:
+                            extracted_text.append(f"--- Page {page_num + 1} ---\n[No text detected]")
+                            logger.warning(f"PyMuPDF found no text on page {page_num + 1}")
+                
+                doc.close()
+                
+                combined_text = '\n\n'.join(extracted_text)
+                return combined_text
+                
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_pdf_path):
+                    os.unlink(temp_pdf_path)
+                    
+        except ImportError:
+            logger.warning("PyMuPDF (fitz) not available, skipping PDF extraction fallback")
+            return ""
+        except Exception as e:
+            logger.warning(f"PyMuPDF extraction failed: {e}")
+            return ""
 
     async def _convert_pdf_to_images_and_upload(self, pdf_content: bytes, s3_bucket: str, s3_key: str) -> List[str]:
         """
@@ -1076,10 +1219,23 @@ class AWSTextractService:
             grayscale_image = image.convert('L')
             
             # Apply contrast enhancement
-            enhanced_image = ImageOps.autocontrast(grayscale_image)
+            enhanced_image = ImageOps.autocontrast(grayscale_image, cutoff=1)
             
-            # Apply slight blur for noise reduction
-            enhanced_image = enhanced_image.filter(ImageFilter.GaussianBlur(radius=0.5))
+            # Apply sharpening filter
+            from PIL import ImageEnhance
+            sharpener = ImageEnhance.Sharpness(enhanced_image)
+            enhanced_image = sharpener.enhance(2.0)  # Increase sharpness
+            
+            # Apply contrast enhancement again
+            contrast_enhancer = ImageEnhance.Contrast(enhanced_image)
+            enhanced_image = contrast_enhancer.enhance(1.5)  # Increase contrast
+            
+            # Apply brightness adjustment
+            brightness_enhancer = ImageEnhance.Brightness(enhanced_image)
+            enhanced_image = brightness_enhancer.enhance(1.2)  # Slightly increase brightness
+            
+            # Apply slight blur to reduce noise
+            enhanced_image = enhanced_image.filter(ImageFilter.GaussianBlur(radius=0.3))
             
             return enhanced_image
         except Exception as e:
