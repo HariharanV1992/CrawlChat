@@ -78,7 +78,7 @@ class AWSTextractService:
                 logger.info("Textract client initialized successfully")
             else:
                 logger.error("Textract client initialization failed")
-                
+                    
             if self.s3_client:
                 logger.info("S3 client initialized successfully")
             else:
@@ -133,10 +133,10 @@ class AWSTextractService:
             if document_size > 5 * 1024 * 1024:  # 5MB
                 logger.info(f"Using async Textract API for large document ({document_size} bytes)")
                 return await self._extract_text_async(s3_bucket, s3_key, document_type)
-            else:
-                logger.info(f"Using sync Textract API for document ({document_size} bytes)")
+                else:
+                    logger.info(f"Using sync Textract API for document ({document_size} bytes)")
                 return await self._extract_text_sync(s3_bucket, s3_key, document_type)
-                
+                    
         except Exception as e:
             logger.error(f"Text extraction failed: {e}")
             
@@ -166,7 +166,7 @@ class AWSTextractService:
                     
                     logger.info(f"✅ PyMuPDF fallback successful: {len(pymupdf_text)} characters from {page_count} pages")
                     return pymupdf_text, page_count
-                else:
+            else:
                     raise TextractError("All extraction methods failed")
                     
             except Exception as fallback_error:
@@ -184,10 +184,10 @@ class AWSTextractService:
             logger.info("Strategy 1: Trying DetectDocumentText...")
             try:
                 text_content, page_count = await self._detect_document_text(s3_bucket, s3_key)
-                if text_content and len(text_content.strip()) > 10:
+            if text_content and len(text_content.strip()) > 10:
                     logger.info(f"✅ DetectDocumentText succeeded: {len(text_content)} characters extracted")
-                    return text_content, page_count
-                else:
+                return text_content, page_count
+            else:
                     logger.warning("DetectDocumentText returned minimal text, trying AnalyzeDocument...")
             except Exception as e:
                 logger.warning(f"DetectDocumentText failed: {e}, trying AnalyzeDocument...")
@@ -201,17 +201,17 @@ class AWSTextractService:
                     return text_content, page_count
                 else:
                     logger.warning("AnalyzeDocument returned minimal text")
-            except Exception as e:
+        except Exception as e:
                 logger.warning(f"AnalyzeDocument failed: {e}")
-            
+                
             # Strategy 3: Convert PDF to images and extract
             logger.info("Strategy 3: Converting PDF to images and extracting...")
-            try:
-                text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
-                if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
-                    return text_content, page_count
-                else:
+                try:
+                    text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
+                    if text_content and len(text_content.strip()) > 10:
+                        logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
+                        return text_content, page_count
+                    else:
                     logger.warning("PDF-to-image extraction returned minimal text")
             except Exception as e:
                 logger.warning(f"PDF-to-image extraction failed: {e}")
@@ -346,7 +346,7 @@ class AWSTextractService:
                     
                     # Debug: Log what types of blocks we got
                     block_types = {}
-                    for block in blocks:
+            for block in blocks:
                         block_type = block.get('BlockType', 'UNKNOWN')
                         block_types[block_type] = block_types.get(block_type, 0) + 1
                     
@@ -361,7 +361,7 @@ class AWSTextractService:
                         for block in line_blocks:
                             page_text += block.get('Text', '') + '\n'
                         logger.info(f"Extracted from {len(line_blocks)} LINE blocks")
-                    else:
+                else:
                         # Fallback to WORD blocks if no LINE blocks found
                         word_blocks = [b for b in blocks if b['BlockType'] == 'WORD']
                         if word_blocks:
@@ -438,11 +438,11 @@ class AWSTextractService:
                     if page_text.strip():
                         all_text_content.append(f"--- Page {i + 1} ---\n{page_text.strip()}")
                         logger.info(f"✅ Page {i + 1} extracted: {len(page_text)} characters")
-                    else:
+                else:
                         logger.warning(f"⚠️ Page {i + 1} returned no text")
                         all_text_content.append(f"--- Page {i + 1} ---\n[No text detected]")
-                    
-                except Exception as e:
+            
+        except Exception as e:
                     logger.warning(f"Failed to process image {i + 1}: {e}")
                     all_text_content.append(f"--- Page {i + 1} ---\n[Processing failed: {e}]")
                     continue
@@ -459,7 +459,7 @@ class AWSTextractService:
                 return combined_text, total_pages
             else:
                 raise TextractError("No text extracted from images")
-                
+            
         except Exception as e:
             logger.error(f"PDF-to-image extraction failed: {e}")
             raise TextractError(f"PDF-to-image extraction failed: {e}")
@@ -491,7 +491,7 @@ class AWSTextractService:
             except ImportError:
                 logger.warning("pytesseract not available, skipping Tesseract OCR")
                 return ""
-            except Exception as e:
+        except Exception as e:
                 logger.warning(f"Tesseract OCR error: {e}")
                 return ""
                 
@@ -695,7 +695,7 @@ class AWSTextractService:
                         continue
                 
                 return image_keys
-                
+                    
             except Exception as e:
                 logger.error(f"Alternative PDF processing failed: {e}")
                 return []
@@ -939,8 +939,8 @@ class AWSTextractService:
             
             lines_text = []
             for line_block in sorted_lines:
-                line_text = line_block.get('Text', '').strip()
-                if line_text:
+                        line_text = line_block.get('Text', '').strip()
+                        if line_text:
                     # Add positioning info
                     geometry = line_block.get('Geometry', {}).get('BoundingBox', {})
                     top = geometry.get('Top', 0)
@@ -963,39 +963,39 @@ class AWSTextractService:
         Extract words with spatial positioning and reconstruct text flow.
         """
         try:
-            # Sort words by position (top to bottom, left to right)
-            sorted_words = sorted(word_blocks, key=lambda w: (
-                w.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
-                w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
-            ))
-            
+                        # Sort words by position (top to bottom, left to right)
+                        sorted_words = sorted(word_blocks, key=lambda w: (
+                            w.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
+                            w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
+                        ))
+                        
             # Group words into lines based on Y position
             lines = []
-            current_line = []
-            current_y = None
+                        current_line = []
+                        current_y = None
             y_tolerance = 0.02  # Tighter tolerance for better line detection
-            
-            for word_block in sorted_words:
-                word_text = word_block.get('Text', '').strip()
-                if not word_text:
-                    continue
-                
-                # Get Y position
-                y_pos = word_block.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0)
-                
-                # Check if this word is on the same line
-                if current_y is None or abs(y_pos - current_y) <= y_tolerance:
+                        
+                        for word_block in sorted_words:
+                            word_text = word_block.get('Text', '').strip()
+                            if not word_text:
+                                continue
+                            
+                            # Get Y position
+                            y_pos = word_block.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0)
+                            
+                            # Check if this word is on the same line
+                            if current_y is None or abs(y_pos - current_y) <= y_tolerance:
                     current_line.append(word_block)
-                    current_y = y_pos
-                else:
-                    # New line
-                    if current_line:
+                                current_y = y_pos
+                            else:
+                                # New line
+                                if current_line:
                         lines.append(current_line)
                     current_line = [word_block]
-                    current_y = y_pos
-            
-            # Add the last line
-            if current_line:
+                                current_y = y_pos
+                        
+                        # Add the last line
+                        if current_line:
                 lines.append(current_line)
             
             # Process each line
@@ -1043,21 +1043,21 @@ class AWSTextractService:
             
             # Upload file to S3
             s3_key = f"temp-documents/{user_id}/{filename}"
-            self.s3_client.put_object(
-                Bucket=bucket_name,
-                Key=s3_key,
-                Body=file_content,
-                ContentType=self._get_content_type(filename)
-            )
+                self.s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=self._get_content_type(filename)
+                )
             logger.info(f"Uploaded {filename} to S3: s3://{bucket_name}/{s3_key}")
-            
-            # Extract text using Textract
-            text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
-            
-            # Clean up S3 object
-            await self._cleanup_s3_objects(bucket_name, [s3_key])
-            
-            return text_content, page_count
+                
+                # Extract text using Textract
+                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
+                
+                # Clean up S3 object
+                await self._cleanup_s3_objects(bucket_name, [s3_key])
+                
+                return text_content, page_count
             
         except Exception as e:
             logger.error(f"Upload and extraction failed: {e}")
@@ -1100,10 +1100,10 @@ class AWSTextractService:
                 result = '\n\n'.join(text_content)
                 logger.info(f"PyPDF2 extraction successful: {filename} ({page_count} pages)")
                 return result, page_count
-            else:
+                            else:
                 logger.warning(f"PyPDF2 extracted no text from {filename}")
                 return "", page_count
-                
+            
         except Exception as e:
             logger.warning(f"PyPDF2 extraction failed for {filename}: {e}")
             return "", 0
@@ -1240,7 +1240,221 @@ class AWSTextractService:
             return enhanced_image
         except Exception as e:
             logger.warning(f"Failed to enhance image for OCR: {e}")
-            return image # Return original if enhancement fails
+            return image  # Return original if enhancement fails
+
+    async def detect_document_text_lambda_style(self, s3_bucket: str, s3_key: str) -> Tuple[List[str], int]:
+        """
+        Extract text from document using Lambda-style DetectDocumentText approach.
+        Returns list of text lines and page count.
+        """
+        try:
+            self._ensure_clients_initialized()
+            
+            if not self.textract_client:
+                raise TextractError("AWS Textract client not available")
+            
+            logger.info(f"Calling DetectDocumentText Lambda-style for s3://{s3_bucket}/{s3_key}")
+            
+            response = self.textract_client.detect_document_text(
+                Document={
+                    'S3Object': {
+                        'Bucket': s3_bucket,
+                        'Name': s3_key
+                    }
+                }
+            )
+            
+            # Extract text using LINE blocks (Lambda-style)
+            line_text = self._extract_text_lambda_style(response, extract_by="LINE")
+            page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
+            
+            logger.info(f"Lambda-style DetectDocumentText completed: {len(line_text)} lines, {page_count} pages")
+            
+            return line_text, page_count
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+            logger.error(f"Lambda-style DetectDocumentText failed: {error_code} - {error_message}")
+            raise TextractError(f"Textract error: {error_code} - {error_message}")
+        except Exception as e:
+            logger.error(f"Unexpected error in Lambda-style DetectDocumentText: {e}")
+            raise TextractError(f"Unexpected error: {e}")
+
+    def _extract_text_lambda_style(self, response: Dict[str, Any], extract_by: str = "LINE") -> List[str]:
+        """
+        Extract text from Textract response using Lambda-style approach.
+        """
+        try:
+            line_text = []
+            for block in response["Blocks"]:
+                if block["BlockType"] == extract_by:
+                    line_text.append(block["Text"])
+            return line_text
+        except Exception as e:
+            logger.error(f"Error extracting text Lambda-style: {e}")
+            return []
+
+    async def analyze_document_forms_lambda_style(self, s3_bucket: str, s3_key: str) -> Dict[str, List[str]]:
+        """
+        Analyze document for forms using Lambda-style approach.
+        Returns key-value pairs extracted from forms.
+        """
+        try:
+            self._ensure_clients_initialized()
+            
+            if not self.textract_client:
+                raise TextractError("AWS Textract client not available")
+            
+            logger.info(f"Calling AnalyzeDocument Lambda-style for forms: s3://{s3_bucket}/{s3_key}")
+            
+            # Get key-value maps using Lambda-style approach
+            key_map, value_map, block_map = await self._get_kv_map_lambda_style(s3_bucket, s3_key)
+            
+            # Get key-value relationships
+            kvs = self._get_kv_relationship_lambda_style(key_map, value_map, block_map)
+            
+            logger.info(f"Lambda-style form analysis completed: {len(kvs)} key-value pairs found")
+            
+            return kvs
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_message = e.response['Error']['Message']
+            logger.error(f"Lambda-style form analysis failed: {error_code} - {error_message}")
+            raise TextractError(f"Textract error: {error_code} - {error_message}")
+        except Exception as e:
+            logger.error(f"Unexpected error in Lambda-style form analysis: {e}")
+            raise TextractError(f"Unexpected error: {e}")
+
+    async def _get_kv_map_lambda_style(self, bucket: str, key: str) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        """
+        Get key-value maps using Lambda-style approach.
+        """
+        try:
+            # Process using image bytes
+            response = self.textract_client.analyze_document(
+                Document={'S3Object': {'Bucket': bucket, "Name": key}}, 
+                FeatureTypes=['FORMS']
+            )
+
+            # Get the text blocks
+            blocks = response['Blocks']
+            logger.info(f'Lambda-style form analysis returned {len(blocks)} blocks')
+
+            # Get key and value maps
+            key_map = {}
+            value_map = {}
+            block_map = {}
+            
+            for block in blocks:
+                block_id = block['Id']
+                block_map[block_id] = block
+                if block['BlockType'] == "KEY_VALUE_SET":
+                    if 'KEY' in block['EntityTypes']:
+                        key_map[block_id] = block
+                    else:
+                        value_map[block_id] = block
+
+            return key_map, value_map, block_map
+            
+        except Exception as e:
+            logger.error(f"Error getting KV maps Lambda-style: {e}")
+            return {}, {}, {}
+
+    def _get_kv_relationship_lambda_style(self, key_map: Dict[str, Any], value_map: Dict[str, Any], block_map: Dict[str, Any]) -> Dict[str, List[str]]:
+        """
+        Get key-value relationships using Lambda-style approach.
+        """
+        try:
+            from collections import defaultdict
+            kvs = defaultdict(list)
+            
+            for block_id, key_block in key_map.items():
+                value_block = self._find_value_block_lambda_style(key_block, value_map)
+                key = self._get_text_lambda_style(key_block, block_map)
+                val = self._get_text_lambda_style(value_block, block_map)
+                kvs[key].append(val)
+            
+            return dict(kvs)
+            
+        except Exception as e:
+            logger.error(f"Error getting KV relationships Lambda-style: {e}")
+            return {}
+
+    def _find_value_block_lambda_style(self, key_block: Dict[str, Any], value_map: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Find value block for a key block using Lambda-style approach.
+        """
+        try:
+            for relationship in key_block['Relationships']:
+                if relationship['Type'] == 'VALUE':
+                    for value_id in relationship['Ids']:
+                        if value_id in value_map:
+                            return value_map[value_id]
+            return {}
+        except Exception as e:
+            logger.error(f"Error finding value block Lambda-style: {e}")
+            return {}
+
+    def _get_text_lambda_style(self, result: Dict[str, Any], blocks_map: Dict[str, Any]) -> str:
+        """
+        Get text from a block using Lambda-style approach.
+        """
+        try:
+            text = ''
+            if 'Relationships' in result:
+                for relationship in result['Relationships']:
+                    if relationship['Type'] == 'CHILD':
+                        for child_id in relationship['Ids']:
+                            if child_id in blocks_map:
+                                word = blocks_map[child_id]
+                                if word['BlockType'] == 'WORD':
+                                    text += word['Text'] + ' '
+                                if word['BlockType'] == 'SELECTION_ELEMENT':
+                                    if word['SelectionStatus'] == 'SELECTED':
+                                        text += 'X'
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Error getting text Lambda-style: {e}")
+            return ""
+
+    async def process_document_lambda_style(self, s3_bucket: str, s3_key: str) -> Dict[str, Any]:
+        """
+        Process document using Lambda-style approach combining text detection and form analysis.
+        """
+        try:
+            logger.info(f"Processing document Lambda-style: s3://{s3_bucket}/{s3_key}")
+            
+            results = {
+                "text_lines": [],
+                "form_data": {},
+                "page_count": 0,
+                "processing_method": "lambda_style"
+            }
+            
+            # Try text detection first
+            try:
+                text_lines, page_count = await self.detect_document_text_lambda_style(s3_bucket, s3_key)
+                results["text_lines"] = text_lines
+                results["page_count"] = page_count
+                logger.info(f"Lambda-style text detection successful: {len(text_lines)} lines")
+            except Exception as e:
+                logger.warning(f"Lambda-style text detection failed: {e}")
+            
+            # Try form analysis
+            try:
+                form_data = await self.analyze_document_forms_lambda_style(s3_bucket, s3_key)
+                results["form_data"] = form_data
+                logger.info(f"Lambda-style form analysis successful: {len(form_data)} key-value pairs")
+            except Exception as e:
+                logger.warning(f"Lambda-style form analysis failed: {e}")
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Lambda-style document processing failed: {e}")
+            raise TextractError(f"Lambda-style processing failed: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 
