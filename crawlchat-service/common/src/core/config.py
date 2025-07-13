@@ -35,13 +35,13 @@ class Settings(BaseSettings):
     s3_access_key: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID", description="S3 access key")
     s3_secret_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY", description="S3 secret key")
     s3_bucket: Optional[str] = Field(default=None, alias="S3_BUCKET", description="S3 bucket name")
-    s3_region: str = Field(default="us-east-1", alias="AWS_REGION", description="S3 region")
+    s3_region: str = Field(default="ap-south-1", alias="AWS_REGION", description="S3 region")
     
     # AWS S3 Configuration (for compatibility with existing code)
     AWS_S3_ACCESS_KEY: Optional[str] = Field(default=None, description="AWS S3 access key")
     AWS_S3_SECRET_KEY: Optional[str] = Field(default=None, description="AWS S3 secret key")
     AWS_S3_BUCKET: Optional[str] = Field(default=None, description="AWS S3 bucket name")
-    AWS_S3_REGION: str = Field(default="us-east-1", description="AWS S3 region")
+    AWS_S3_REGION: str = Field(default="ap-south-1", description="AWS S3 region")
     
     # AI Configuration
     openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key")
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     # AWS settings
     aws_access_key_id: str = Field(default="", description="AWS access key ID")
     aws_secret_access_key: str = Field(default="", description="AWS secret access key")
-    aws_region: str = Field(default="us-east-1", description="AWS region")
+    aws_region: str = Field(default="ap-south-1", description="AWS region")
     aws_account_id: str = Field(default="", description="AWS account ID")
     
     # Lambda settings

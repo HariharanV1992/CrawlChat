@@ -65,8 +65,18 @@ class AWSTextractService:
             region = os.getenv('AWS_REGION', 'ap-south-1')
             logger.info(f"Initializing AWS clients in region: {region}")
             
+            # Check if running in Lambda environment
+            is_lambda = (
+                os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
+                os.getenv('AWS_EXECUTION_ENV') or 
+                os.getenv('LAMBDA_TASK_ROOT') or
+                os.getenv('AWS_LAMBDA_LOG_GROUP_NAME')
+            )
+            
+            logger.info(f"Environment check - Lambda: {is_lambda}, AWS_REGION: {region}")
+            
             # Initialize Textract client
-            if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+            if is_lambda:
                 # Running in Lambda - use IAM role
                 logger.info("Running in Lambda environment, using IAM role for AWS clients")
                 try:
@@ -75,9 +85,9 @@ class AWSTextractService:
                         region_name=region,
                         config=config
                     )
-                    logger.info("Textract client created successfully")
+                    logger.info("Textract client created successfully in Lambda")
                 except Exception as e:
-                    logger.error(f"Failed to create Textract client: {e}")
+                    logger.error(f"Failed to create Textract client in Lambda: {e}")
                     self.textract_client = None
                 
                 try:
@@ -86,9 +96,9 @@ class AWSTextractService:
                         region_name=region,
                         config=config
                     )
-                    logger.info("S3 client created successfully")
+                    logger.info("S3 client created successfully in Lambda")
                 except Exception as e:
-                    logger.error(f"Failed to create S3 client: {e}")
+                    logger.error(f"Failed to create S3 client in Lambda: {e}")
                     self.s3_client = None
                 
                 try:
@@ -97,9 +107,9 @@ class AWSTextractService:
                         region_name=region,
                         config=config
                     )
-                    logger.info("SQS client created successfully")
+                    logger.info("SQS client created successfully in Lambda")
                 except Exception as e:
-                    logger.error(f"Failed to create SQS client: {e}")
+                    logger.error(f"Failed to create SQS client in Lambda: {e}")
                     self.sqs_client = None
                 
                 try:
@@ -108,9 +118,9 @@ class AWSTextractService:
                         region_name=region,
                         config=config
                     )
-                    logger.info("SNS client created successfully")
+                    logger.info("SNS client created successfully in Lambda")
                 except Exception as e:
-                    logger.error(f"Failed to create SNS client: {e}")
+                    logger.error(f"Failed to create SNS client in Lambda: {e}")
                     self.sns_client = None
             else:
                 # Running locally - use credentials if available
@@ -151,6 +161,7 @@ class AWSTextractService:
                     self.sqs_client = None
                     self.sns_client = None
             
+            # Log client status
             if self.textract_client:
                 logger.info(f"Textract client initialized successfully in region: {region}")
                 # Test client connectivity
@@ -160,13 +171,23 @@ class AWSTextractService:
                     logger.info("Textract client connectivity test passed")
                 except Exception as test_e:
                     logger.warning(f"Textract client connectivity test failed: {test_e}")
+            else:
+                logger.error("Textract client initialization failed")
                     
             if self.s3_client:
                 logger.info(f"S3 client initialized successfully in region: {region}")
+            else:
+                logger.error("S3 client initialization failed")
+                
             if self.sqs_client:
                 logger.info(f"SQS client initialized successfully in region: {region}")
+            else:
+                logger.warning("SQS client initialization failed")
+                
             if self.sns_client:
                 logger.info(f"SNS client initialized successfully in region: {region}")
+            else:
+                logger.warning("SNS client initialization failed")
                 
         except Exception as e:
             logger.error(f"Failed to initialize AWS clients: {e}")
