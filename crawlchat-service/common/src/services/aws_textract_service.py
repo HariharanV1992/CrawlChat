@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import asyncio
 from io import BytesIO
+from PIL import Image, ImageOps, ImageFilter
 
 from ..core.aws_config import aws_config
 from ..core.exceptions import TextractError
@@ -306,10 +307,84 @@ class AWSTextractService:
                     
                     # Extract text from blocks
                     blocks = response.get('Blocks', [])
-                    page_text = ""
+                    
+                    # Debug: Log what types of blocks we got
+                    block_types = {}
                     for block in blocks:
-                        if block['BlockType'] == 'LINE':
+                        block_type = block.get('BlockType', 'UNKNOWN')
+                        block_types[block_type] = block_types.get(block_type, 0) + 1
+                    
+                    logger.info(f"Textract returned blocks: {block_types}")
+                    
+                    # Extract text from both LINE and WORD blocks
+                    page_text = ""
+                    
+                    # First try to extract from LINE blocks (preferred)
+                    line_blocks = [b for b in blocks if b['BlockType'] == 'LINE']
+                    if line_blocks:
+                        for block in line_blocks:
                             page_text += block.get('Text', '') + '\n'
+                        logger.info(f"Extracted from {len(line_blocks)} LINE blocks")
+                    else:
+                        # Fallback to WORD blocks if no LINE blocks found
+                        word_blocks = [b for b in blocks if b['BlockType'] == 'WORD']
+                        if word_blocks:
+                            # Group words by line using bounding box
+                            words_by_line = {}
+                            for word in word_blocks:
+                                geometry = word.get('Geometry', {})
+                                bounding_box = geometry.get('BoundingBox', {})
+                                top = bounding_box.get('Top', 0)
+                                # Group words within 5% of vertical position
+                                line_key = int(top * 20)  # 20 lines per page
+                                if line_key not in words_by_line:
+                                    words_by_line[line_key] = []
+                                words_by_line[line_key].append(word)
+                            
+                            # Sort words within each line by horizontal position
+                            for line_key in words_by_line:
+                                words_by_line[line_key].sort(key=lambda w: w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0))
+                            
+                            # Combine words into lines
+                            for line_key in sorted(words_by_line.keys()):
+                                line_text = ' '.join([word.get('Text', '') for word in words_by_line[line_key]])
+                                page_text += line_text + '\n'
+                            
+                            logger.info(f"Extracted from {len(word_blocks)} WORD blocks grouped into {len(words_by_line)} lines")
+                        else:
+                            logger.warning(f"No LINE or WORD blocks found in response")
+                    
+                    # If no text found, try AnalyzeDocument as fallback
+                    if not page_text.strip():
+                        logger.info(f"Trying AnalyzeDocument as fallback for image {i + 1}")
+                        try:
+                            analyze_response = self.textract_client.analyze_document(
+                                Document={
+                                    'S3Object': {
+                                        'Bucket': s3_bucket,
+                                        'Name': image_key
+                                    }
+                                },
+                                FeatureTypes=['TABLES', 'FORMS']
+                            )
+                            
+                            analyze_blocks = analyze_response.get('Blocks', [])
+                            analyze_block_types = {}
+                            for block in analyze_blocks:
+                                block_type = block.get('BlockType', 'UNKNOWN')
+                                analyze_block_types[block_type] = analyze_block_types.get(block_type, 0) + 1
+                            
+                            logger.info(f"AnalyzeDocument returned blocks: {analyze_block_types}")
+                            
+                            # Extract text from analyze response
+                            analyze_line_blocks = [b for b in analyze_blocks if b['BlockType'] == 'LINE']
+                            if analyze_line_blocks:
+                                for block in analyze_line_blocks:
+                                    page_text += block.get('Text', '') + '\n'
+                                logger.info(f"AnalyzeDocument extracted from {len(analyze_line_blocks)} LINE blocks")
+                            
+                        except Exception as analyze_error:
+                            logger.warning(f"AnalyzeDocument fallback failed: {analyze_error}")
                     
                     if page_text.strip():
                         all_text_content.append(f"--- Page {i + 1} ---\n{page_text.strip()}")
@@ -352,19 +427,25 @@ class AWSTextractService:
                 logger.info(f"Converting PDF to images with pdf2image...")
                 images = pdf2image.convert_from_bytes(
                     pdf_content,
-                    dpi=200,  # Good balance between quality and size
+                    dpi=300,  # Increased DPI for better text recognition
                     fmt='PNG',
                     thread_count=1,  # Single thread for Lambda compatibility
                     transparent=False,
-                    grayscale=False
+                    grayscale=False,
+                    size=(None, None),  # Maintain aspect ratio
+                    first_page=None,
+                    last_page=None
                 )
                 
                 image_keys = []
                 
                 for page_num, image in enumerate(images):
+                    # Enhance image for better OCR
+                    enhanced_image = self._enhance_image_for_ocr(image)
+                    
                     # Convert PIL image to bytes
                     img_buffer = BytesIO()
-                    image.save(img_buffer, format='PNG', optimize=True)
+                    enhanced_image.save(img_buffer, format='PNG', optimize=True)
                     img_data = img_buffer.getvalue()
                     
                     # Upload image to S3
@@ -985,6 +1066,25 @@ class AWSTextractService:
             "estimated_cost": estimated_cost,
             "currency": "USD"
         }
+
+    def _enhance_image_for_ocr(self, image) -> Image:
+        """
+        Enhance an image for better OCR text recognition.
+        """
+        try:
+            # Convert to grayscale
+            grayscale_image = image.convert('L')
+            
+            # Apply contrast enhancement
+            enhanced_image = ImageOps.autocontrast(grayscale_image)
+            
+            # Apply slight blur for noise reduction
+            enhanced_image = enhanced_image.filter(ImageFilter.GaussianBlur(radius=0.5))
+            
+            return enhanced_image
+        except Exception as e:
+            logger.warning(f"Failed to enhance image for OCR: {e}")
+            return image # Return original if enhancement fails
 
 # Global instance
 textract_service = AWSTextractService() 
