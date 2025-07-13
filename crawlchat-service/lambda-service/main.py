@@ -207,11 +207,12 @@ app.add_middleware(
 )
 
 # Add trusted host middleware for production
-if config.is_production:
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=["*"]  # Configure with actual allowed hosts
-    )
+# Temporarily disabled to fix 403 issues
+# if config.is_production:
+#     app.add_middleware(
+#         TrustedHostMiddleware,
+#         allowed_hosts=["*"]  # Configure with actual allowed hosts
+#     )
 
 
 
