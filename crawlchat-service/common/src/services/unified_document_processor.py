@@ -283,10 +283,14 @@ class UnifiedDocumentProcessor:
             
             s3_key = result["s3_key"]
             
-            # Process with Textract
+            # Determine document type for AWS pattern processing
+            document_type = self._determine_document_type_for_textract(filename, file_content)
+            logger.info(f"[UNIFIED_PROCESSOR] Detected document type: {document_type.value}")
+            
+            # Process with Textract using the full AWS pattern
             bucket_name = config.s3_bucket
-            text_content, page_count = await textract_service.process_preprocessed_document(
-                bucket_name, s3_key, DocumentType.GENERAL
+            text_content, page_count = await textract_service.extract_text_from_s3_pdf(
+                bucket_name, s3_key, document_type
             )
             
             # Clean up temporary file
@@ -300,7 +304,8 @@ class UnifiedDocumentProcessor:
                     "status": "success",
                     "text_content": text_content,
                     "page_count": page_count,
-                    "extraction_method": "aws_textract"
+                    "extraction_method": "aws_textract_pattern",
+                    "document_type": document_type.value
                 }
             else:
                 # Try fallback methods
@@ -310,18 +315,49 @@ class UnifiedDocumentProcessor:
         except Exception as e:
             logger.error(f"[UNIFIED_PROCESSOR] Error extracting PDF content: {e}")
             # Try fallback methods
-            logger.info(f"[UNIFIED_PROCESSOR] Textract failed, trying fallback methods for {filename}")
             return await self._try_fallback_pdf_extraction(file_content, filename)
-    
-    async def _try_fallback_pdf_extraction(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """Try fallback methods for PDF text extraction."""
+
+    def _determine_document_type_for_textract(self, filename: str, file_content: bytes) -> DocumentType:
+        """
+        Determine the appropriate document type for AWS Textract pattern processing.
+        """
         try:
-            # Try direct Textract processing
-            logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing for {filename}")
+            from common.src.services.aws_textract_service import DocumentType
+            
+            filename_lower = filename.lower()
+            
+            # Check for form/invoice documents
+            form_keywords = ['form', 'invoice', 'receipt', 'tax', 'w2', '1099', 'bill', 'statement']
+            if any(keyword in filename_lower for keyword in form_keywords):
+                return DocumentType.FORM
+            
+            # Check for table-heavy documents
+            table_keywords = ['report', 'table', 'spreadsheet', 'data', 'analysis', 'summary']
+            if any(keyword in filename_lower for keyword in table_keywords):
+                return DocumentType.TABLE_HEAVY
+            
+            # Check for invoice-specific documents
+            invoice_keywords = ['invoice', 'bill', 'receipt', 'payment']
+            if any(keyword in filename_lower for keyword in invoice_keywords):
+                return DocumentType.INVOICE
+            
+            # Default to general
+            return DocumentType.GENERAL
+            
+        except Exception as e:
+            logger.warning(f"Error determining document type: {e}")
+            return DocumentType.GENERAL
+
+    async def _try_fallback_pdf_extraction(self, file_content: bytes, filename: str) -> Dict[str, Any]:
+        """Try fallback methods for PDF text extraction using AWS pattern."""
+        try:
+            # Try direct Textract processing with AWS pattern
+            logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing with AWS pattern for {filename}")
+            document_type = self._determine_document_type_for_textract(filename, file_content)
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
                 file_content=file_content,
                 filename=filename,
-                document_type=DocumentType.GENERAL
+                document_type=document_type
             )
             
             if text_content and text_content.strip():
@@ -329,7 +365,8 @@ class UnifiedDocumentProcessor:
                     "status": "success",
                     "text_content": text_content,
                     "page_count": page_count,
-                    "extraction_method": "aws_textract_direct"
+                    "extraction_method": "aws_textract_pattern_direct",
+                    "document_type": document_type.value
                 }
         except Exception as e:
             logger.warning(f"[UNIFIED_PROCESSOR] Direct Textract processing failed: {e}")
@@ -370,66 +407,17 @@ class UnifiedDocumentProcessor:
             "error": "All PDF extraction methods failed",
             "extraction_method": "all_methods_failed"
         }
-    
-    async def _extract_image_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """Extract text from image using AWS Textract with fallback methods."""
-        try:
-            logger.info(f"[UNIFIED_PROCESSOR] Extracting text from image: {filename}")
-            
-            # Upload image to S3 for Textract processing using unified storage
-            result = await unified_storage_service.upload_temp_file(
-                file_content=file_content,
-                filename=filename,
-                purpose="textract_image"
-            )
-            
-            if not result:
-                return {
-                    "status": "error",
-                    "error": "Failed to upload image to S3"
-                }
-            
-            s3_key = result["s3_key"]
-            
-            # Process with Textract
-            bucket_name = config.s3_bucket
-            text_content, page_count = await textract_service.process_preprocessed_document(
-                bucket_name, s3_key, DocumentType.GENERAL
-            )
-            
-            # Clean up temporary file
-            try:
-                await unified_storage_service.delete_file(s3_key)
-            except:
-                pass
-            
-            if text_content and text_content.strip():
-                return {
-                    "status": "success",
-                    "text_content": text_content,
-                    "page_count": page_count,
-                    "extraction_method": "aws_textract"
-                }
-            else:
-                # Try fallback methods
-                logger.info(f"[UNIFIED_PROCESSOR] Textract returned no content, trying fallback methods for {filename}")
-                return await self._try_fallback_image_extraction(file_content, filename)
-                
-        except Exception as e:
-            logger.error(f"[UNIFIED_PROCESSOR] Error extracting image content: {e}")
-            # Try fallback methods
-            logger.info(f"[UNIFIED_PROCESSOR] Textract failed, trying fallback methods for {filename}")
-            return await self._try_fallback_image_extraction(file_content, filename)
-    
+
     async def _try_fallback_image_extraction(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """Try fallback methods for image text extraction."""
+        """Try fallback methods for image text extraction using AWS pattern."""
         try:
-            # Try direct Textract processing
-            logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing for {filename}")
+            # Try direct Textract processing with AWS pattern
+            logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing with AWS pattern for {filename}")
+            document_type = self._determine_document_type_for_textract(filename, file_content)
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
                 file_content=file_content,
                 filename=filename,
-                document_type=DocumentType.GENERAL
+                document_type=document_type
             )
             
             if text_content and text_content.strip():
@@ -437,7 +425,8 @@ class UnifiedDocumentProcessor:
                     "status": "success",
                     "text_content": text_content,
                     "page_count": page_count,
-                    "extraction_method": "aws_textract_direct"
+                    "extraction_method": "aws_textract_pattern_direct",
+                    "document_type": document_type.value
                 }
         except Exception as e:
             logger.warning(f"[UNIFIED_PROCESSOR] Direct Textract processing failed: {e}")
@@ -463,6 +452,60 @@ class UnifiedDocumentProcessor:
             "error": "All image extraction methods failed",
             "extraction_method": "all_methods_failed"
         }
+    
+    async def _extract_image_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
+        """Extract text from image using AWS Textract with fallback methods."""
+        try:
+            logger.info(f"[UNIFIED_PROCESSOR] Extracting text from image: {filename}")
+            
+            # Upload image to S3 for Textract processing using unified storage
+            result = await unified_storage_service.upload_temp_file(
+                file_content=file_content,
+                filename=filename,
+                purpose="textract_image"
+            )
+            
+            if not result:
+                return {
+                    "status": "error",
+                    "error": "Failed to upload image to S3"
+                }
+            
+            s3_key = result["s3_key"]
+            
+            # Determine document type for AWS pattern processing
+            document_type = self._determine_document_type_for_textract(filename, file_content)
+            logger.info(f"[UNIFIED_PROCESSOR] Detected document type: {document_type.value}")
+            
+            # Process with Textract using the full AWS pattern
+            bucket_name = config.s3_bucket
+            text_content, page_count = await textract_service.extract_text_from_s3_pdf(
+                bucket_name, s3_key, document_type
+            )
+            
+            # Clean up temporary file
+            try:
+                await unified_storage_service.delete_file(s3_key)
+            except:
+                pass
+            
+            if text_content and text_content.strip():
+                return {
+                    "status": "success",
+                    "text_content": text_content,
+                    "page_count": page_count,
+                    "extraction_method": "aws_textract_pattern",
+                    "document_type": document_type.value
+                }
+            else:
+                # Try fallback methods
+                logger.info(f"[UNIFIED_PROCESSOR] Textract returned no content, trying fallback methods for {filename}")
+                return await self._try_fallback_image_extraction(file_content, filename)
+                
+        except Exception as e:
+            logger.error(f"[UNIFIED_PROCESSOR] Error extracting image content: {e}")
+            # Try fallback methods
+            return await self._try_fallback_image_extraction(file_content, filename)
     
     async def _extract_text_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
         """Extract text from text files."""

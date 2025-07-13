@@ -262,34 +262,35 @@ class AWSTextractService:
 
     async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
         """
-        Extract text using synchronous Textract API with comprehensive fallback strategy.
+        Extract text using AWS Textract pattern with comprehensive template-based processing.
+        This follows the official AWS pattern for robust PDF processing.
         """
         try:
-            logger.info(f"Processing document {s3_key} with sync Textract")
+            logger.info(f"Processing document {s3_key} with AWS Textract pattern")
             
-            # Strategy 1: Try DetectDocumentText first (most reliable for basic text)
-            logger.info("Strategy 1: Trying DetectDocumentText...")
+            # Strategy 1: Try AWS Pattern approach (TABLES, FORMS)
+            logger.info("Strategy 1: Trying AWS Pattern approach with TABLES and FORMS...")
             try:
-                text_content, page_count = await self._detect_document_text_with_retry(s3_bucket, s3_key)
+                text_content, page_count = await self._aws_pattern_extraction(s3_bucket, s3_key, document_type)
                 if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ DetectDocumentText succeeded: {len(text_content)} characters extracted")
+                    logger.info(f"✅ AWS Pattern approach succeeded: {len(text_content)} characters extracted")
                     return text_content, page_count
                 else:
-                    logger.warning("DetectDocumentText returned minimal text, trying AnalyzeDocument...")
+                    logger.warning("AWS Pattern approach returned minimal text, trying simple extraction...")
             except Exception as e:
-                logger.warning(f"DetectDocumentText failed: {e}, trying AnalyzeDocument...")
+                logger.warning(f"AWS Pattern approach failed: {e}, trying simple extraction...")
             
-            # Strategy 2: Try AnalyzeDocument with different FeatureTypes
-            logger.info("Strategy 2: Trying AnalyzeDocument with different FeatureTypes...")
+            # Strategy 2: Try simple DetectDocumentText (fallback)
+            logger.info("Strategy 2: Trying simple DetectDocumentText...")
             try:
-                text_content, page_count = await self._analyze_document_with_retry(s3_bucket, s3_key)
+                text_content, page_count = await self._detect_document_text(s3_bucket, s3_key)
                 if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ AnalyzeDocument succeeded: {len(text_content)} characters extracted")
+                    logger.info(f"✅ Simple extraction succeeded: {len(text_content)} characters extracted")
                     return text_content, page_count
                 else:
-                    logger.warning("AnalyzeDocument returned minimal text, trying PDF repair...")
+                    logger.warning("Simple extraction returned minimal text, trying PDF repair...")
             except Exception as e:
-                logger.warning(f"AnalyzeDocument failed: {e}, trying PDF repair...")
+                logger.warning(f"Simple extraction failed: {e}, trying PDF repair...")
             
             # Strategy 3: Try PDF repair and re-extraction (only once to prevent infinite loops)
             logger.info("Strategy 3: Trying PDF repair and re-extraction...")
@@ -319,6 +320,457 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"All sync Textract strategies failed: {e}")
             raise TextractError(f"Textract extraction failed: {e}")
+
+    async def _aws_pattern_extraction(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
+        """
+        Implement the full AWS Textract pattern with template-based processing.
+        This follows the official AWS pattern for robust document processing.
+        """
+        try:
+            logger.info(f"Starting AWS Pattern extraction for s3://{s3_bucket}/{s3_key}")
+            
+            # Step 1: Call Amazon Textract API with TABLES and FORMS
+            logger.info("Step 1: Calling Textract API with TABLES and FORMS...")
+            response = self.textract_client.analyze_document(
+                Document={
+                    'S3Object': {
+                        'Bucket': s3_bucket,
+                        'Name': s3_key
+                    }
+                },
+                FeatureTypes=["TABLES", "FORMS"]
+            )
+            
+            logger.info(f"Textract response received with {len(response.get('Blocks', []))} blocks")
+            
+            # Step 2: Parse the response into forms and tables
+            logger.info("Step 2: Parsing response into forms and tables...")
+            form_kv_data = self._form_kv_from_JSON(response)
+            table_data = self._get_tables_fromJSON(response)
+            
+            logger.info(f"Parsed {len(form_kv_data)} form key-value pairs and {len(table_data)} tables")
+            
+            # Step 3: Create or load template for this document type
+            logger.info("Step 3: Processing with template...")
+            template_json = self._get_template_for_document_type(document_type, s3_key)
+            
+            # Step 4: Match parsed data with template
+            logger.info("Step 4: Matching data with template...")
+            form_kv_corrected = self._form_kv_correction(form_kv_data, template_json)
+            table_corrected = self._form_Table_correction(table_data, template_json)
+            
+            # Step 5: Combine form and table data
+            combined_data = {**form_kv_corrected, **table_corrected}
+            
+            # Step 6: Apply post-processing corrections
+            logger.info("Step 5: Applying post-processing corrections...")
+            final_json = self._postprocessing_correction(combined_data, template_json)
+            
+            # Step 7: Convert to text format
+            logger.info("Step 6: Converting to text format...")
+            text_content = self._convert_json_to_text(final_json)
+            page_count = response.get('DocumentMetadata', {}).get('Pages', 1)
+            
+            logger.info(f"AWS Pattern extraction completed: {len(text_content)} characters, {page_count} pages")
+            return text_content, page_count
+            
+        except Exception as e:
+            logger.error(f"AWS Pattern extraction failed: {e}")
+            raise TextractError(f"AWS Pattern extraction failed: {e}")
+
+    def _form_kv_from_JSON(self, response: dict) -> dict:
+        """
+        Extract key-value pairs from Textract response.
+        Based on AWS pattern for form processing.
+        """
+        try:
+            blocks = response.get('Blocks', [])
+            key_map = {}
+            value_map = {}
+            block_map = {}
+            
+            # Create block map and separate key-value pairs
+            for block in blocks:
+                block_id = block['Id']
+                block_map[block_id] = block
+                
+                if block['BlockType'] == "KEY_VALUE_SET":
+                    if 'KEY' in block.get('EntityTypes', []):
+                        key_map[block_id] = block
+                    else:
+                        value_map[block_id] = block
+            
+            # Extract key-value pairs
+            key_value_pairs = {}
+            for block_id, key_block in key_map.items():
+                value_block = self._find_value_block(key_block, value_map, block_map)
+                key = self._get_text(key_block, block_map)
+                val = self._get_text(value_block, block_map) if value_block else ""
+                
+                if key and val:
+                    key_value_pairs[key] = val
+            
+            logger.info(f"Extracted {len(key_value_pairs)} key-value pairs")
+            return key_value_pairs
+            
+        except Exception as e:
+            logger.error(f"Error extracting key-value pairs: {e}")
+            return {}
+
+    def _get_tables_fromJSON(self, response: dict) -> list:
+        """
+        Extract tables from Textract response.
+        Based on AWS pattern for table processing.
+        """
+        try:
+            blocks = response.get('Blocks', [])
+            tables = []
+            
+            # Find table blocks
+            table_blocks = [block for block in blocks if block['BlockType'] == 'TABLE']
+            
+            for table_block in table_blocks:
+                table_data = self._process_table_block(table_block, blocks)
+                if table_data:
+                    tables.append(table_data)
+            
+            logger.info(f"Extracted {len(tables)} tables")
+            return tables
+            
+        except Exception as e:
+            logger.error(f"Error extracting tables: {e}")
+            return []
+
+    def _process_table_block(self, table_block: dict, blocks: list) -> dict:
+        """
+        Process a single table block and extract its data.
+        """
+        try:
+            table_id = table_block['Id']
+            table_data = {
+                'table_id': table_id,
+                'rows': [],
+                'headers': []
+            }
+            
+            # Find cells in this table
+            cell_blocks = []
+            for block in blocks:
+                if (block['BlockType'] == 'CELL' and 
+                    'Relationships' in block and 
+                    any(rel['Type'] == 'CHILD' and table_id in rel.get('Ids', []) 
+                        for rel in block['Relationships'])):
+                    cell_blocks.append(block)
+            
+            # Sort cells by row and column
+            cell_blocks.sort(key=lambda x: (
+                x.get('RowIndex', 0),
+                x.get('ColumnIndex', 0)
+            ))
+            
+            # Extract table data
+            current_row = []
+            current_row_index = 0
+            
+            for cell in cell_blocks:
+                row_index = cell.get('RowIndex', 0)
+                cell_text = self._get_text(cell, {block['Id']: block for block in blocks})
+                
+                if row_index != current_row_index:
+                    if current_row:
+                        table_data['rows'].append(current_row)
+                    current_row = [cell_text]
+                    current_row_index = row_index
+                else:
+                    current_row.append(cell_text)
+            
+            # Add the last row
+            if current_row:
+                table_data['rows'].append(current_row)
+            
+            # Set headers (first row)
+            if table_data['rows']:
+                table_data['headers'] = table_data['rows'][0]
+                table_data['rows'] = table_data['rows'][1:]  # Remove header row
+            
+            return table_data
+            
+        except Exception as e:
+            logger.error(f"Error processing table block: {e}")
+            return {}
+
+    def _find_value_block(self, key_block: dict, value_map: dict, block_map: dict) -> dict:
+        """
+        Find the value block associated with a key block.
+        """
+        try:
+            for value_id, value_block in value_map.items():
+                if 'Relationships' in value_block:
+                    for relationship in value_block['Relationships']:
+                        if relationship['Type'] == 'VALUE':
+                            for value_id_in_relationship in relationship['Ids']:
+                                if value_id_in_relationship == key_block['Id']:
+                                    return value_block
+            return None
+        except Exception as e:
+            logger.error(f"Error finding value block: {e}")
+            return None
+
+    def _get_text(self, block: dict, block_map: dict) -> str:
+        """
+        Extract text from a block by following relationships.
+        """
+        try:
+            text = ""
+            if 'Relationships' in block:
+                for relationship in block['Relationships']:
+                    if relationship['Type'] == 'CHILD':
+                        for child_id in relationship['Ids']:
+                            child = block_map.get(child_id)
+                            if child and child['BlockType'] == 'WORD':
+                                text += child.get('Text', '') + ' '
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Error getting text from block: {e}")
+            return ""
+
+    def _get_template_for_document_type(self, document_type: DocumentType, filename: str) -> dict:
+        """
+        Get or create template for document type.
+        This is a simplified template system - in production, you'd load from database/files.
+        """
+        try:
+            # Basic template structure
+            template = {
+                "document_type": document_type.value,
+                "filename_pattern": filename,
+                "key_value_pairs": {},
+                "tables": {},
+                "data_types": {
+                    "amount": "float",
+                    "date": "date",
+                    "quantity": "integer",
+                    "text": "string"
+                }
+            }
+            
+            # Add specific templates based on document type
+            if document_type == DocumentType.FORM:
+                template["key_value_pairs"] = {
+                    "invoice_number": "string",
+                    "total_amount": "float",
+                    "date": "date",
+                    "vendor": "string"
+                }
+            elif document_type == DocumentType.INVOICE:
+                template["key_value_pairs"] = {
+                    "invoice_number": "string",
+                    "total_amount": "float",
+                    "date": "date",
+                    "vendor": "string",
+                    "tax_amount": "float"
+                }
+            
+            logger.info(f"Created template for document type: {document_type.value}")
+            return template
+            
+        except Exception as e:
+            logger.error(f"Error creating template: {e}")
+            return {}
+
+    def _form_kv_correction(self, form_kv_data: dict, template: dict) -> dict:
+        """
+        Correct form key-value pairs using template.
+        """
+        try:
+            corrected_data = {}
+            template_keys = template.get("key_value_pairs", {})
+            
+            for key, value in form_kv_data.items():
+                # Find best matching template key
+                best_match = self._find_best_key_match(key, template_keys.keys())
+                if best_match:
+                    corrected_data[best_match] = value
+                else:
+                    corrected_data[key] = value
+            
+            logger.info(f"Corrected {len(corrected_data)} key-value pairs")
+            return corrected_data
+            
+        except Exception as e:
+            logger.error(f"Error correcting form key-value pairs: {e}")
+            return form_kv_data
+
+    def _form_Table_correction(self, table_data: list, template: dict) -> dict:
+        """
+        Correct table data using template.
+        """
+        try:
+            corrected_tables = {}
+            
+            for i, table in enumerate(table_data):
+                table_key = f"table_{i+1}"
+                corrected_tables[table_key] = {
+                    "headers": table.get("headers", []),
+                    "rows": table.get("rows", [])
+                }
+            
+            logger.info(f"Corrected {len(corrected_tables)} tables")
+            return corrected_tables
+            
+        except Exception as e:
+            logger.error(f"Error correcting table data: {e}")
+            return {}
+
+    def _find_best_key_match(self, key: str, template_keys: list) -> str:
+        """
+        Find the best matching template key for a given key.
+        """
+        try:
+            key_lower = key.lower().replace(" ", "_")
+            
+            for template_key in template_keys:
+                template_key_lower = template_key.lower().replace(" ", "_")
+                if key_lower == template_key_lower:
+                    return template_key
+                elif key_lower in template_key_lower or template_key_lower in key_lower:
+                    return template_key
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding key match: {e}")
+            return None
+
+    def _postprocessing_correction(self, data: dict, template: dict) -> dict:
+        """
+        Apply post-processing corrections based on data types.
+        """
+        try:
+            corrected_data = {}
+            data_types = template.get("data_types", {})
+            
+            for key, value in data.items():
+                # Determine data type
+                data_type = self._determine_data_type(key, value, data_types)
+                
+                # Apply correction based on data type
+                corrected_value = self._apply_data_type_correction(value, data_type)
+                corrected_data[key] = corrected_value
+            
+            logger.info(f"Applied post-processing corrections to {len(corrected_data)} fields")
+            return corrected_data
+            
+        except Exception as e:
+            logger.error(f"Error applying post-processing corrections: {e}")
+            return data
+
+    def _determine_data_type(self, key: str, value: str, data_types: dict) -> str:
+        """
+        Determine the data type for a field.
+        """
+        try:
+            key_lower = key.lower()
+            
+            # Check for specific data type indicators
+            if any(word in key_lower for word in ["amount", "price", "total", "cost"]):
+                return "float"
+            elif any(word in key_lower for word in ["date", "time"]):
+                return "date"
+            elif any(word in key_lower for word in ["quantity", "count", "number"]):
+                return "integer"
+            else:
+                return "string"
+                
+        except Exception as e:
+            logger.error(f"Error determining data type: {e}")
+            return "string"
+
+    def _apply_data_type_correction(self, value: str, data_type: str) -> any:
+        """
+        Apply data type correction to a value.
+        """
+        try:
+            if not value or not value.strip():
+                return value
+            
+            value = value.strip()
+            
+            if data_type == "float":
+                # Remove currency symbols and convert to float
+                import re
+                cleaned_value = re.sub(r'[^\d.,]', '', value)
+                cleaned_value = cleaned_value.replace(',', '')
+                try:
+                    return float(cleaned_value)
+                except:
+                    return value
+            
+            elif data_type == "integer":
+                # Remove non-numeric characters
+                import re
+                cleaned_value = re.sub(r'[^\d]', '', value)
+                try:
+                    return int(cleaned_value)
+                except:
+                    return value
+            
+            elif data_type == "date":
+                # Try to parse common date formats
+                from datetime import datetime
+                date_formats = [
+                    "%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d",
+                    "%m-%d-%Y", "%d-%m-%Y", "%Y/%m/%d"
+                ]
+                
+                for fmt in date_formats:
+                    try:
+                        return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
+                    except:
+                        continue
+                
+                return value
+            
+            else:
+                return value
+                
+        except Exception as e:
+            logger.error(f"Error applying data type correction: {e}")
+            return value
+
+    def _convert_json_to_text(self, json_data: dict) -> str:
+        """
+        Convert processed JSON data to readable text format.
+        """
+        try:
+            text_lines = []
+            
+            # Add key-value pairs
+            for key, value in json_data.items():
+                if not key.startswith("table_"):
+                    text_lines.append(f"{key}: {value}")
+            
+            # Add tables
+            for key, table_data in json_data.items():
+                if key.startswith("table_"):
+                    text_lines.append(f"\n{key.upper()}:")
+                    
+                    # Add headers
+                    headers = table_data.get("headers", [])
+                    if headers:
+                        text_lines.append(" | ".join(headers))
+                        text_lines.append("-" * len(" | ".join(headers)))
+                    
+                    # Add rows
+                    rows = table_data.get("rows", [])
+                    for row in rows:
+                        text_lines.append(" | ".join(str(cell) for cell in row))
+            
+            return "\n".join(text_lines)
+            
+        except Exception as e:
+            logger.error(f"Error converting JSON to text: {e}")
+            return str(json_data)
 
     async def _validate_document_for_textract(self, s3_bucket: str, s3_key: str):
         """
