@@ -78,7 +78,7 @@ def load_settings_from_file(settings_file="stock_market_settings.json"):
         # Try multiple possible locations for the settings file
         possible_paths = [
             Path(settings_file),  # Current directory
-            Path(__file__).parent.parent / settings_file,  # stock_market_crawler directory
+            Path(__file__).parent.parent / settings_file,  # crawlchat directory
             Path.cwd() / settings_file,  # Current working directory
         ]
         

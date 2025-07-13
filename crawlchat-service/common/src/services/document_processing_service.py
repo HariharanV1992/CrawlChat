@@ -64,7 +64,7 @@ class DocumentProcessingService:
                             "filename": filename,
                             "processed_at": int(datetime.utcnow().timestamp()),
                             "content_type": "crawled_data",
-                            "source": "stock_market_crawler",
+                            "source": "crawlchat",
                             "is_duplicate": True
                         },
                         "content_length": len(content),

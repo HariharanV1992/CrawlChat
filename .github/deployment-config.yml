@@ -23,7 +23,7 @@ lambda:
       ENVIRONMENT: production
       S3_BUCKET: crawlchat-data
       MONGODB_URI: "{{resolve:secretsmanager:crawlchat/mongodb-uri:SecretString:uri}}"
-      DB_NAME: stock_market_crawler
+      DB_NAME: crawlchat
       COLLECTION_PREFIX: crawler
       SCRAPINGBEE_API_KEY: "{{resolve:secretsmanager:crawlchat/scrapingbee-api-key:SecretString:api_key}}"
       OPENAI_API_KEY: "{{resolve:secretsmanager:crawlchat/openai-api-key:SecretString:api_key}}"
@@ -59,7 +59,7 @@ lambda:
       ENVIRONMENT: production
       S3_BUCKET: crawlchat-data
       MONGODB_URI: "{{resolve:secretsmanager:crawlchat/mongodb-uri:SecretString:uri}}"
-      DB_NAME: stock_market_crawler
+      DB_NAME: crawlchat
       COLLECTION_PREFIX: crawler
       SCRAPINGBEE_API_KEY: "{{resolve:secretsmanager:crawlchat/scrapingbee-api-key:SecretString:api_key}}"
       CRAWLER_MAX_WORKERS: "10"

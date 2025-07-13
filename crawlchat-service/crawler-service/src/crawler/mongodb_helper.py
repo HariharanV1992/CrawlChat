@@ -25,7 +25,7 @@ class MongoDBHelper:
             
             # Get MongoDB connection string from environment
             mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-            db_name = os.getenv('MONGODB_DB', 'stock_market_crawler')
+            db_name = os.getenv('MONGODB_DB', 'crawlchat')
             
             self.client = MongoClient(mongo_uri)
             self.db = self.client[db_name]

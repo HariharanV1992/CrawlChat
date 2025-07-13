@@ -39,7 +39,7 @@ sys.stderr.flush()
 # AWS Configuration
 AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
-MONGODB_DB = os.getenv("DB_NAME", "stock_market_crawler")
+MONGODB_DB = os.getenv("DB_NAME", "crawlchat")
 SCRAPINGBEE_API_KEY = os.getenv("SCRAPINGBEE_API_KEY", "")
 
 # Import enhanced crawler service
