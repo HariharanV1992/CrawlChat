@@ -355,6 +355,11 @@ class AWSTextractService:
         try:
             logger.info(f"Attempting PDF repair and extraction for s3://{s3_bucket}/{s3_key}")
             
+            # Check if this is already a repaired PDF to prevent infinite loops
+            if "_repaired.pdf" in s3_key:
+                logger.warning(f"Already attempting to repair a repaired PDF: {s3_key}")
+                raise TextractError("Cannot repair already repaired PDF - document format not supported by Textract")
+            
             # Download the PDF from S3
             response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
             pdf_content = response['Body'].read()
@@ -394,10 +399,11 @@ class AWSTextractService:
                 
                 logger.info(f"Repaired PDF uploaded to s3://{s3_bucket}/{repair_key}")
                 
-                # Try Textract on the repaired PDF
+                # Try DetectDocumentText first (most reliable for basic text extraction)
                 try:
-                    text_content, page_count = await self._analyze_document(s3_bucket, repair_key)
-                    logger.info(f"✅ Textract succeeded on repaired PDF: {len(text_content)} characters")
+                    logger.info(f"Trying DetectDocumentText on repaired PDF...")
+                    text_content, page_count = await self._detect_document_text(s3_bucket, repair_key)
+                    logger.info(f"✅ DetectDocumentText succeeded on repaired PDF: {len(text_content)} characters")
                     
                     # Clean up the repaired PDF
                     try:
@@ -407,14 +413,31 @@ class AWSTextractService:
                     
                     return text_content, page_count
                     
-                except Exception as e:
-                    logger.warning(f"Textract failed on repaired PDF: {e}")
-                    # Clean up the repaired PDF
+                except Exception as detect_error:
+                    logger.warning(f"DetectDocumentText failed on repaired PDF: {detect_error}")
+                    
+                    # Try AnalyzeDocument as fallback (without allowing further repair to prevent infinite loop)
                     try:
-                        self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
-                    except:
-                        pass
-                    raise
+                        logger.info(f"Trying AnalyzeDocument on repaired PDF...")
+                        text_content, page_count = await self._analyze_document(s3_bucket, repair_key, allow_repair=False)
+                        logger.info(f"✅ AnalyzeDocument succeeded on repaired PDF: {len(text_content)} characters")
+                        
+                        # Clean up the repaired PDF
+                        try:
+                            self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
+                        except:
+                            pass
+                        
+                        return text_content, page_count
+                        
+                    except Exception as analyze_error:
+                        logger.warning(f"AnalyzeDocument failed on repaired PDF: {analyze_error}")
+                        # Clean up the repaired PDF
+                        try:
+                            self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
+                        except:
+                            pass
+                        raise TextractError(f"Both DetectDocumentText and AnalyzeDocument failed on repaired PDF")
                     
             except Exception as e:
                 logger.warning(f"PDF repair failed: {e}")
@@ -615,7 +638,7 @@ class AWSTextractService:
             logger.warning(f"Enhanced image extraction failed: {e}")
             raise
 
-    async def _analyze_document(self, s3_bucket: str, s3_key: str) -> (str, int):
+    async def _analyze_document(self, s3_bucket: str, s3_key: str, allow_repair: bool = True) -> (str, int):
         """
         Call AWS Textract AnalyzeDocument API with proper FeatureTypes.
         According to AWS docs, FeatureTypes is REQUIRED for AnalyzeDocument.
@@ -713,64 +736,17 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"DetectDocumentText fallback also failed: {e}")
             
-            # Try PDF repair as final attempt
-            logger.info("Attempting PDF repair as final Textract attempt...")
-            try:
-                return await self._try_pdf_repair_and_extract(s3_bucket, s3_key)
-            except Exception as repair_error:
-                logger.error(f"PDF repair also failed: {repair_error}")
-                raise TextractError("All Textract approaches failed for this document")
-            
-            # Log response structure for debugging
-            logger.info(f"AnalyzeDocument response keys: {list(response.keys())}")
-            logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
-            
-            # Extract text from blocks using the same method as DetectDocumentText
-            # This ensures we get all text, not just structured data
-            text_content = self._extract_text_from_blocks(response['Blocks'])
-            page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
-            
-            logger.info(f"AnalyzeDocument completed: {len(text_content)} characters, {page_count} pages")
-            
-            # Check if we got meaningful text
-            if not text_content or len(text_content.strip()) < 10:
-                logger.warning(f"AnalyzeDocument returned minimal text for {s3_key}: '{text_content[:100]}...'")
-                # Log some block details for debugging
-                block_types = {}
-                for block in response['Blocks'][:10]:  # First 10 blocks
-                    block_type = block.get('BlockType', 'UNKNOWN')
-                    block_types[block_type] = block_types.get(block_type, 0) + 1
-                logger.info(f"First 10 block types: {block_types}")
-                
-                # Try to get any text from blocks
-                all_text = []
-                for block in response['Blocks']:
-                    if 'Text' in block and block['Text'].strip():
-                        all_text.append(block['Text'])
-                
-                if all_text:
-                    fallback_text = ' '.join(all_text)
-                    logger.info(f"Fallback text extraction: {len(fallback_text)} characters")
-                    return fallback_text, page_count
-                else:
-                    raise TextractError("AnalyzeDocument returned empty or minimal text")
-            
-            return text_content, page_count
-            
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_message = e.response['Error']['Message']
-            logger.error(f"Textract AnalyzeDocument failed: {error_code} - {error_message}")
-            
-            if error_code == 'UnsupportedDocumentException':
-                raise TextractError(f"Unsupported document type: {error_message}")
-            elif error_code == 'InvalidS3ObjectException':
-                raise TextractError(f"Invalid S3 object: {error_message}")
+            # Try PDF repair as final attempt (only if allowed)
+            if allow_repair:
+                logger.info("Attempting PDF repair as final Textract attempt...")
+                try:
+                    return await self._try_pdf_repair_and_extract(s3_bucket, s3_key)
+                except Exception as repair_error:
+                    logger.error(f"PDF repair also failed: {repair_error}")
+                    raise TextractError("All Textract approaches failed for this document")
             else:
-                raise TextractError(f"Textract error: {error_code} - {error_message}")
-        except Exception as e:
-            logger.error(f"Unexpected error in AnalyzeDocument: {e}")
-            raise TextractError(f"Unexpected error: {e}")
+                logger.warning("PDF repair not allowed, failing with UnsupportedDocumentException")
+                raise TextractError("Document format not supported by Textract")
 
     def _extract_text_from_blocks(self, blocks: List[Dict[str, Any]]) -> str:
         """
