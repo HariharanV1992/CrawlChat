@@ -262,29 +262,51 @@ class AWSTextractService:
 
     async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
         """
-        Extract text using synchronous Textract API.
+        Extract text using synchronous Textract API with comprehensive fallback strategy.
         """
         try:
-            # Process with Textract
             logger.info(f"Processing document {s3_key} with sync Textract")
-            api_type = self._select_api_type(document_type)
-            logger.info(f"Using API: {api_type.value}")
             
-            if api_type == TextractAPI.DETECT_DOCUMENT_TEXT:
+            # Strategy 1: Try DetectDocumentText first (most reliable for basic text)
+            logger.info("Strategy 1: Trying DetectDocumentText...")
+            try:
                 text_content, page_count = await self._detect_document_text_with_retry(s3_bucket, s3_key)
-            else:
-                text_content, page_count = await self._analyze_document_with_retry(s3_bucket, s3_key)
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ DetectDocumentText succeeded: {len(text_content)} characters extracted")
+                    return text_content, page_count
+                else:
+                    logger.warning("DetectDocumentText returned minimal text, trying AnalyzeDocument...")
+            except Exception as e:
+                logger.warning(f"DetectDocumentText failed: {e}, trying AnalyzeDocument...")
             
-            # Check if we got meaningful text
-            if text_content and len(text_content.strip()) > 10:
-                logger.info(f"✅ Sync Textract succeeded: {len(text_content)} characters extracted")
-                return text_content, page_count
-            else:
-                raise TextractError("Sync Textract returned empty or minimal text")
+            # Strategy 2: Try AnalyzeDocument with different FeatureTypes
+            logger.info("Strategy 2: Trying AnalyzeDocument with different FeatureTypes...")
+            try:
+                text_content, page_count = await self._analyze_document_with_retry(s3_bucket, s3_key)
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ AnalyzeDocument succeeded: {len(text_content)} characters extracted")
+                    return text_content, page_count
+                else:
+                    logger.warning("AnalyzeDocument returned minimal text, trying PDF repair...")
+            except Exception as e:
+                logger.warning(f"AnalyzeDocument failed: {e}, trying PDF repair...")
+            
+            # Strategy 3: Try PDF repair and re-extraction
+            logger.info("Strategy 3: Trying PDF repair and re-extraction...")
+            try:
+                text_content, page_count = await self._try_pdf_repair_and_extract(s3_bucket, s3_key)
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ PDF repair succeeded: {len(text_content)} characters extracted")
+                    return text_content, page_count
+                else:
+                    raise TextractError("PDF repair returned minimal text")
+            except Exception as e:
+                logger.error(f"PDF repair failed: {e}")
+                raise TextractError(f"All Textract strategies failed: {e}")
                 
         except Exception as e:
-            logger.error(f"Sync Textract extraction failed: {e}")
-            raise TextractError(f"Sync extraction failed: {e}")
+            logger.error(f"All sync Textract strategies failed: {e}")
+            raise TextractError(f"Textract extraction failed: {e}")
 
     async def _validate_document_for_textract(self, s3_bucket: str, s3_key: str):
         """
@@ -324,6 +346,83 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"Error validating document: {e}")
             raise TextractError(f"Document validation failed: {e}")
+
+    async def _try_pdf_repair_and_extract(self, s3_bucket: str, s3_key: str) -> (str, int):
+        """
+        Try to repair problematic PDFs and extract text using Textract.
+        This method attempts to fix common PDF issues that cause UnsupportedDocumentException.
+        """
+        try:
+            logger.info(f"Attempting PDF repair and extraction for s3://{s3_bucket}/{s3_key}")
+            
+            # Download the PDF from S3
+            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            pdf_content = response['Body'].read()
+            
+            # Try to repair the PDF using PyPDF2
+            try:
+                import PyPDF2
+                from io import BytesIO
+                
+                # Try to read and rewrite the PDF to fix format issues
+                pdf_file = BytesIO(pdf_content)
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                
+                # Create a new PDF writer
+                pdf_writer = PyPDF2.PdfWriter()
+                
+                # Add all pages to the new PDF
+                for page in pdf_reader.pages:
+                    pdf_writer.add_page(page)
+                
+                # Write the repaired PDF to a new BytesIO object
+                repaired_pdf = BytesIO()
+                pdf_writer.write(repaired_pdf)
+                repaired_pdf.seek(0)
+                repaired_content = repaired_pdf.read()
+                
+                logger.info(f"PDF repair attempted, new size: {len(repaired_content)} bytes")
+                
+                # Upload the repaired PDF to S3
+                repair_key = f"{s3_key}_repaired.pdf"
+                self.s3_client.put_object(
+                    Bucket=s3_bucket,
+                    Key=repair_key,
+                    Body=repaired_content,
+                    ContentType='application/pdf'
+                )
+                
+                logger.info(f"Repaired PDF uploaded to s3://{s3_bucket}/{repair_key}")
+                
+                # Try Textract on the repaired PDF
+                try:
+                    text_content, page_count = await self._analyze_document(s3_bucket, repair_key)
+                    logger.info(f"✅ Textract succeeded on repaired PDF: {len(text_content)} characters")
+                    
+                    # Clean up the repaired PDF
+                    try:
+                        self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
+                    except:
+                        pass
+                    
+                    return text_content, page_count
+                    
+                except Exception as e:
+                    logger.warning(f"Textract failed on repaired PDF: {e}")
+                    # Clean up the repaired PDF
+                    try:
+                        self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
+                    except:
+                        pass
+                    raise
+                    
+            except Exception as e:
+                logger.warning(f"PDF repair failed: {e}")
+                raise
+                
+        except Exception as e:
+            logger.error(f"PDF repair and extraction failed: {e}")
+            raise TextractError(f"PDF repair failed: {e}")
 
     async def _wait_for_s3_object(self, s3_bucket: str, s3_key: str, max_wait: int = 10) -> bool:
         """
@@ -381,20 +480,22 @@ class AWSTextractService:
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
         Select the appropriate Textract API based on document type.
-        Use AnalyzeDocument for better PDF compatibility (like AWS Console).
+        Use DetectDocumentText for basic text extraction (like AWS Console).
         """
-        # Use AnalyzeDocument for all document types for better compatibility
-        # This matches AWS Console behavior which handles PDF format issues better
-        return TextractAPI.ANALYZE_DOCUMENT
+        # Use DetectDocumentText for basic text extraction (like AWS Console)
+        # AnalyzeDocument requires FeatureTypes and is more for forms/tables
+        return TextractAPI.DETECT_DOCUMENT_TEXT
 
     async def _detect_document_text(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
         Call AWS Textract DetectDocumentText API with optimized parameters.
+        This is the most reliable method for basic text extraction from PDFs.
         """
         try:
             logger.info(f"Calling DetectDocumentText for s3://{s3_bucket}/{s3_key}")
             
-            # Enhanced Textract call with optimized parameters
+            # DetectDocumentText is the most reliable for basic text extraction
+            # It doesn't require FeatureTypes and works well with most PDFs
             response = self.textract_client.detect_document_text(
                 Document={
                     'S3Object': {
@@ -516,22 +617,109 @@ class AWSTextractService:
 
     async def _analyze_document(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
-        Call AWS Textract AnalyzeDocument API with parameters that match AWS Console behavior.
+        Call AWS Textract AnalyzeDocument API with proper FeatureTypes.
+        According to AWS docs, FeatureTypes is REQUIRED for AnalyzeDocument.
         """
+        # According to AWS documentation, AnalyzeDocument REQUIRES FeatureTypes
+        # Try different FeatureTypes combinations for better compatibility
+        approaches = [
+            # Approach 1: TABLES only (most basic)
+            {
+                'name': 'AnalyzeDocument (TABLES)',
+                'params': {
+                    'Document': {
+                        'S3Object': {
+                            'Bucket': s3_bucket,
+                            'Name': s3_key
+                        }
+                    },
+                    'FeatureTypes': ['TABLES']
+                }
+            },
+            # Approach 2: FORMS only
+            {
+                'name': 'AnalyzeDocument (FORMS)',
+                'params': {
+                    'Document': {
+                        'S3Object': {
+                            'Bucket': s3_bucket,
+                            'Name': s3_key
+                        }
+                    },
+                    'FeatureTypes': ['FORMS']
+                }
+            },
+            # Approach 3: TABLES and FORMS (most comprehensive)
+            {
+                'name': 'AnalyzeDocument (TABLES, FORMS)',
+                'params': {
+                    'Document': {
+                        'S3Object': {
+                            'Bucket': s3_bucket,
+                            'Name': s3_key
+                        }
+                    },
+                    'FeatureTypes': ['TABLES', 'FORMS']
+                }
+            }
+        ]
+        
+        for approach in approaches:
+            try:
+                logger.info(f"Trying {approach['name']} for s3://{s3_bucket}/{s3_key}")
+                
+                response = self.textract_client.analyze_document(**approach['params'])
+                
+                # Log response structure for debugging
+                logger.info(f"{approach['name']} response keys: {list(response.keys())}")
+                logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
+                
+                # Extract text from blocks using the same method as DetectDocumentText
+                # This ensures we get all text, not just structured data
+                text_content = self._extract_text_from_blocks(response['Blocks'])
+                page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
+                
+                logger.info(f"{approach['name']} completed: {len(text_content)} characters, {page_count} pages")
+                
+                # Check if we got meaningful text
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ {approach['name']} succeeded with {len(text_content)} characters")
+                    return text_content, page_count
+                else:
+                    logger.warning(f"{approach['name']} returned minimal text: '{text_content[:100]}...'")
+                    continue
+                    
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                error_message = e.response['Error']['Message']
+                logger.warning(f"{approach['name']} failed: {error_code} - {error_message}")
+                
+                if error_code == 'UnsupportedDocumentException':
+                    logger.info(f"PDF format not supported by {approach['name']}, trying next approach...")
+                    continue
+                elif error_code == 'InvalidS3ObjectException':
+                    raise TextractError(f"Invalid S3 object: {error_message}")
+                else:
+                    logger.warning(f"Unexpected error with {approach['name']}: {error_code} - {error_message}")
+                    continue
+            except Exception as e:
+                logger.warning(f"Unexpected error with {approach['name']}: {e}")
+                continue
+        
+        # If all AnalyzeDocument approaches failed, try DetectDocumentText as last resort
+        logger.info("All AnalyzeDocument approaches failed, trying DetectDocumentText as fallback...")
         try:
-            logger.info(f"Calling AnalyzeDocument for s3://{s3_bucket}/{s3_key}")
+            return await self._detect_document_text(s3_bucket, s3_key)
+        except Exception as e:
+            logger.error(f"DetectDocumentText fallback also failed: {e}")
             
-            # Use parameters that match AWS Console behavior
-            # AWS Console uses AnalyzeDocument with TABLES and FORMS features
-            response = self.textract_client.analyze_document(
-                Document={
-                    'S3Object': {
-                        'Bucket': s3_bucket,
-                        'Name': s3_key
-                    }
-                },
-                FeatureTypes=['TABLES', 'FORMS']
-            )
+            # Try PDF repair as final attempt
+            logger.info("Attempting PDF repair as final Textract attempt...")
+            try:
+                return await self._try_pdf_repair_and_extract(s3_bucket, s3_key)
+            except Exception as repair_error:
+                logger.error(f"PDF repair also failed: {repair_error}")
+                raise TextractError("All Textract approaches failed for this document")
             
             # Log response structure for debugging
             logger.info(f"AnalyzeDocument response keys: {list(response.keys())}")
@@ -1841,11 +2029,11 @@ class AWSTextractService:
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
         Select the appropriate Textract API based on document type and size.
-        Use AnalyzeDocument for better PDF compatibility (like AWS Console).
+        Use DetectDocumentText for basic text extraction (like AWS Console).
         """
-        # Use AnalyzeDocument for all document types for better compatibility
-        # This matches AWS Console behavior which handles PDF format issues better
-        return TextractAPI.ANALYZE_DOCUMENT
+        # Use DetectDocumentText for basic text extraction (like AWS Console)
+        # AnalyzeDocument requires FeatureTypes and is more for forms/tables
+        return TextractAPI.DETECT_DOCUMENT_TEXT
 
     async def _start_async_text_detection_job(self, s3_bucket: str, s3_key: str) -> str:
         """
