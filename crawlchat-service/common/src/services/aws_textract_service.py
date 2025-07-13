@@ -238,11 +238,12 @@ class AWSTextractService:
                 document_size = response.get('ContentLength', 0)
                 logger.info(f"Document size: {document_size} bytes")
                 
-                # Use async for documents larger than 1MB or if explicitly configured
+                # Use async for documents larger than 5MB or if explicitly configured
                 use_async = (
-                    document_size > 1024 * 1024 or  # > 1MB
+                    document_size > 5 * 1024 * 1024 or  # > 5MB (increased threshold)
                     os.getenv('TEXTRACT_FORCE_ASYNC', 'false').lower() == 'true' or
-                    os.getenv('TEXTRACT_SNS_TOPIC_ARN') is not None  # Async configured
+                    (os.getenv('TEXTRACT_SNS_TOPIC_ARN') is not None and 
+                     os.getenv('TEXTRACT_ROLE_ARN') is not None)  # Both required for async
                 )
                 
                 if use_async:
@@ -2698,28 +2699,33 @@ class AWSTextractService:
             response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
             pdf_content = response['Body'].read()
             
-            # Convert PDF to images using PyMuPDF
+            # Try pdf2image first (if available)
             try:
-                import fitz  # PyMuPDF
+                import pdf2image
                 from io import BytesIO
                 
-                # Open PDF with PyMuPDF
-                pdf_file = BytesIO(pdf_content)
-                doc = fitz.open(stream=pdf_file, filetype="pdf")
+                # Convert PDF to images with good quality for Textract
+                logger.info(f"Converting PDF to images with pdf2image...")
+                images = pdf2image.convert_from_bytes(
+                    pdf_content,
+                    dpi=200,  # Good balance between quality and size
+                    fmt='PNG',
+                    thread_count=1,  # Single thread for Lambda compatibility
+                    transparent=False,
+                    grayscale=False
+                )
                 
                 image_keys = []
                 all_text_content = []
-                total_pages = len(doc)
+                total_pages = len(images)
                 
-                logger.info(f"Converting {total_pages} pages to images...")
+                logger.info(f"Converted {total_pages} pages to images...")
                 
-                for page_num in range(total_pages):
-                    page = doc[page_num]
-                    
-                    # Render page to image with good quality
-                    # Use 2x zoom for better text recognition
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                    img_data = pix.tobytes("png")
+                for page_num, image in enumerate(images):
+                    # Convert PIL image to bytes
+                    img_buffer = BytesIO()
+                    image.save(img_buffer, format='PNG', optimize=True)
+                    img_data = img_buffer.getvalue()
                     
                     # Upload image to S3
                     image_key = f"{s3_key.replace('.pdf', '')}_page_{page_num + 1}.png"
@@ -2732,8 +2738,6 @@ class AWSTextractService:
                     image_keys.append(image_key)
                     
                     logger.info(f"Uploaded page {page_num + 1} as image: {image_key}")
-                
-                doc.close()
                 
                 # Process each image with Textract
                 logger.info(f"Processing {len(image_keys)} images with Textract...")
@@ -2786,15 +2790,78 @@ class AWSTextractService:
                     raise TextractError("No text extracted from images")
                 
             except ImportError:
-                logger.error("PyMuPDF not available for PDF-to-image conversion")
-                raise TextractError("PDF-to-image conversion requires PyMuPDF")
+                logger.warning("pdf2image not available, trying alternative PDF processing...")
+                # Fallback to alternative methods when pdf2image is not available
+                return await self._try_alternative_pdf_processing(pdf_content, s3_bucket, s3_key)
             except Exception as e:
                 logger.error(f"PDF-to-image conversion failed: {e}")
-                raise
+                # Fallback to alternative methods
+                return await self._try_alternative_pdf_processing(pdf_content, s3_bucket, s3_key)
                 
         except Exception as e:
             logger.error(f"PDF-to-image extraction failed: {e}")
             raise TextractError(f"PDF-to-image extraction failed: {e}")
+
+    async def _try_alternative_pdf_processing(self, pdf_content: bytes, s3_bucket: str, s3_key: str) -> (str, int):
+        """
+        Try alternative PDF processing methods when pdf2image is not available.
+        """
+        try:
+            logger.info("Trying alternative PDF processing methods...")
+            
+            # Method 1: Try PyPDF2 extraction
+            try:
+                logger.info("Method 1: Trying PyPDF2 extraction...")
+                text_content, page_count = await self._try_pypdf2_extraction(pdf_content, "alternative_processing.pdf")
+                if text_content and len(text_content.strip()) > 50:
+                    logger.info(f"✅ PyPDF2 extraction successful: {len(text_content)} characters")
+                    return text_content, page_count
+            except Exception as e:
+                logger.warning(f"PyPDF2 extraction failed: {e}")
+            
+            # Method 2: Try PDFMiner extraction
+            try:
+                logger.info("Method 2: Trying PDFMiner extraction...")
+                text_content, page_count = await self._try_pdfminer_extraction(pdf_content, "alternative_processing.pdf")
+                if text_content and len(text_content.strip()) > 50:
+                    logger.info(f"✅ PDFMiner extraction successful: {len(text_content)} characters")
+                    return text_content, page_count
+            except Exception as e:
+                logger.warning(f"PDFMiner extraction failed: {e}")
+            
+            # Method 3: Try aggressive text extraction
+            try:
+                logger.info("Method 3: Trying aggressive text extraction...")
+                text_content = await self._try_aggressive_text_extraction(pdf_content, "alternative_processing.pdf")
+                if text_content and len(text_content.strip()) > 50:
+                    logger.info(f"✅ Aggressive extraction successful: {len(text_content)} characters")
+                    return text_content, 1
+            except Exception as e:
+                logger.warning(f"Aggressive extraction failed: {e}")
+            
+            # Method 4: Try raw text extraction
+            try:
+                logger.info("Method 4: Trying raw text extraction...")
+                text_content = await self._try_raw_text_extraction(pdf_content, "alternative_processing.pdf")
+                if text_content and len(text_content.strip()) > 50:
+                    logger.info(f"✅ Raw text extraction successful: {len(text_content)} characters")
+                    return text_content, 1
+            except Exception as e:
+                logger.warning(f"Raw text extraction failed: {e}")
+            
+            # If all methods fail, return a helpful error message
+            raise TextractError(
+                "All PDF processing methods failed. This PDF may be:\n"
+                "1. Corrupted or damaged\n"
+                "2. Password-protected\n"
+                "3. Image-based (scanned document)\n"
+                "4. In an unsupported format\n\n"
+                "Please try uploading a different PDF or the original source file."
+            )
+            
+        except Exception as e:
+            logger.error(f"Alternative PDF processing failed: {e}")
+            raise TextractError(f"Alternative PDF processing failed: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 
