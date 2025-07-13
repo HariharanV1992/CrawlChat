@@ -401,9 +401,7 @@ class AWSTextractService:
                         'Bucket': s3_bucket,
                         'Name': s3_key
                     }
-                },
-                # Add client configuration for better performance
-                ClientRequestToken=str(uuid.uuid4())  # Unique request token for idempotency
+                }
             )
             
             # Log response structure for debugging
