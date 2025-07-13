@@ -17,7 +17,7 @@ import io
 from common.src.models.documents import Document, DocumentType, DocumentStatus
 from common.src.services.unified_storage_service import unified_storage_service
 from common.src.services.vector_store_service import vector_store_service
-from common.src.services.aws_textract_service import textract_service, TextractDocumentType
+from common.src.services.aws_textract_service import textract_service, DocumentType
 from common.src.core.database import mongodb
 from common.src.core.config import config
 
@@ -286,7 +286,7 @@ class UnifiedDocumentProcessor:
             # Process with Textract
             bucket_name = config.s3_bucket
             text_content, page_count = await textract_service.process_preprocessed_document(
-                bucket_name, s3_key, TextractDocumentType.GENERAL
+                bucket_name, s3_key, DocumentType.GENERAL
             )
             
             # Clean up temporary file
@@ -321,7 +321,7 @@ class UnifiedDocumentProcessor:
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
                 file_content=file_content,
                 filename=filename,
-                document_type=TextractDocumentType.GENERAL
+                document_type=DocumentType.GENERAL
             )
             
             if text_content and text_content.strip():
@@ -394,7 +394,7 @@ class UnifiedDocumentProcessor:
             # Process with Textract
             bucket_name = config.s3_bucket
             text_content, page_count = await textract_service.process_preprocessed_document(
-                bucket_name, s3_key, TextractDocumentType.GENERAL
+                bucket_name, s3_key, DocumentType.GENERAL
             )
             
             # Clean up temporary file
@@ -429,7 +429,7 @@ class UnifiedDocumentProcessor:
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
                 file_content=file_content,
                 filename=filename,
-                document_type=TextractDocumentType.GENERAL
+                document_type=DocumentType.GENERAL
             )
             
             if text_content and text_content.strip():
