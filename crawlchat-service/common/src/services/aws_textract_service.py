@@ -1841,13 +1841,11 @@ class AWSTextractService:
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
         Select the appropriate Textract API based on document type and size.
+        Use AnalyzeDocument for better PDF compatibility (like AWS Console).
         """
-        # For now, use synchronous APIs for simplicity
-        # TODO: Implement size-based decision making
-        if document_type in [DocumentType.FORM, DocumentType.INVOICE, DocumentType.TABLE_HEAVY]:
-            return TextractAPI.ANALYZE_DOCUMENT
-        else:
-            return TextractAPI.DETECT_DOCUMENT_TEXT
+        # Use AnalyzeDocument for all document types for better compatibility
+        # This matches AWS Console behavior which handles PDF format issues better
+        return TextractAPI.ANALYZE_DOCUMENT
 
     async def _start_async_text_detection_job(self, s3_bucket: str, s3_key: str) -> str:
         """
