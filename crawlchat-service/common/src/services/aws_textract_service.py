@@ -61,30 +61,57 @@ class AWSTextractService:
                 connect_timeout=30
             )
             
+            # Get region from environment or config
+            region = os.getenv('AWS_REGION', 'ap-south-1')
+            logger.info(f"Initializing AWS clients in region: {region}")
+            
             # Initialize Textract client
             if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
                 # Running in Lambda - use IAM role
                 logger.info("Running in Lambda environment, using IAM role for AWS clients")
-                self.textract_client = boto3.client(
-                    'textract', 
-                    region_name=aws_config.textract_region,
-                    config=config
-                )
-                self.s3_client = boto3.client(
-                    's3', 
-                    region_name=aws_config.region,
-                    config=config
-                )
-                self.sqs_client = boto3.client(
-                    'sqs',
-                    region_name=aws_config.region,
-                    config=config
-                )
-                self.sns_client = boto3.client(
-                    'sns',
-                    region_name=aws_config.region,
-                    config=config
-                )
+                try:
+                    self.textract_client = boto3.client(
+                        'textract', 
+                        region_name=region,
+                        config=config
+                    )
+                    logger.info("Textract client created successfully")
+                except Exception as e:
+                    logger.error(f"Failed to create Textract client: {e}")
+                    self.textract_client = None
+                
+                try:
+                    self.s3_client = boto3.client(
+                        's3', 
+                        region_name=region,
+                        config=config
+                    )
+                    logger.info("S3 client created successfully")
+                except Exception as e:
+                    logger.error(f"Failed to create S3 client: {e}")
+                    self.s3_client = None
+                
+                try:
+                    self.sqs_client = boto3.client(
+                        'sqs',
+                        region_name=region,
+                        config=config
+                    )
+                    logger.info("SQS client created successfully")
+                except Exception as e:
+                    logger.error(f"Failed to create SQS client: {e}")
+                    self.sqs_client = None
+                
+                try:
+                    self.sns_client = boto3.client(
+                        'sns',
+                        region_name=region,
+                        config=config
+                    )
+                    logger.info("SNS client created successfully")
+                except Exception as e:
+                    logger.error(f"Failed to create SNS client: {e}")
+                    self.sns_client = None
             else:
                 # Running locally - use credentials if available
                 if aws_config.access_key_id and aws_config.secret_access_key:
@@ -93,28 +120,28 @@ class AWSTextractService:
                         'textract',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=aws_config.textract_region,
+                        region_name=region,
                         config=config
                     )
                     self.s3_client = boto3.client(
                         's3',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=aws_config.region,
+                        region_name=region,
                         config=config
                     )
                     self.sqs_client = boto3.client(
                         'sqs',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=aws_config.region,
+                        region_name=region,
                         config=config
                     )
                     self.sns_client = boto3.client(
                         'sns',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=aws_config.region,
+                        region_name=region,
                         config=config
                     )
                 else:
@@ -125,7 +152,7 @@ class AWSTextractService:
                     self.sns_client = None
             
             if self.textract_client:
-                logger.info(f"Textract client initialized successfully in region: {aws_config.textract_region}")
+                logger.info(f"Textract client initialized successfully in region: {region}")
                 # Test client connectivity
                 try:
                     # Simple test call to verify client works
@@ -135,11 +162,11 @@ class AWSTextractService:
                     logger.warning(f"Textract client connectivity test failed: {test_e}")
                     
             if self.s3_client:
-                logger.info(f"S3 client initialized successfully in region: {aws_config.region}")
+                logger.info(f"S3 client initialized successfully in region: {region}")
             if self.sqs_client:
-                logger.info(f"SQS client initialized successfully in region: {aws_config.region}")
+                logger.info(f"SQS client initialized successfully in region: {region}")
             if self.sns_client:
-                logger.info(f"SNS client initialized successfully in region: {aws_config.region}")
+                logger.info(f"SNS client initialized successfully in region: {region}")
                 
         except Exception as e:
             logger.error(f"Failed to initialize AWS clients: {e}")

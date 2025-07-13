@@ -34,14 +34,14 @@ class AWSConfig:
                         "function_name": os.getenv("LAMBDA_FUNCTION_NAME", "crawlchat-api-function")
                     },
                     "s3": {
-                        "bucket_name": os.getenv("S3_BUCKET_NAME") or os.getenv("S3_BUCKET", "crawlchat-documents"),
+                        "bucket_name": os.getenv("S3_BUCKET_NAME") or os.getenv("S3_BUCKET", "crawlchat-data"),
                         "documents_prefix": "documents/",
                         "crawled_data_prefix": "crawled_data/",
                         "uploaded_documents_prefix": "uploaded_documents/",
                         "temp_prefix": "temp/"
                     },
                     "textract": {
-                        "region": os.getenv("TEXTRACT_REGION", "us-east-1")
+                        "region": os.getenv("TEXTRACT_REGION", "ap-south-1")
                     }
                 }
         except Exception as e:
@@ -96,7 +96,7 @@ class AWSConfig:
     def region(self) -> str:
         """Get AWS region from environment, config, or boto3 session."""
         # First try environment variables
-        env_region = self.config.get("aws", {}).get("region")
+        env_region = os.getenv("AWS_REGION") or self.config.get("aws", {}).get("region")
         if env_region:
             return env_region
         
@@ -111,12 +111,12 @@ class AWSConfig:
     @property
     def lambda_function_name(self) -> str:
         """Get Lambda function name."""
-        return self.config.get("lambda", {}).get("function_name", "stock-market-crawler-background-processor")
+        return self.config.get("lambda", {}).get("function_name", "crawlchat-api-function")
     
     @property
     def s3_bucket_name(self) -> str:
         """Get S3 bucket name."""
-        return self.config.get("s3", {}).get("bucket_name", "stock-market-crawler-data")
+        return self.config.get("s3", {}).get("bucket_name", "crawlchat-data")
     
     @property
     def s3_bucket(self) -> str:
