@@ -46,7 +46,8 @@ class AWSTextractService:
         self.s3_client = None
         self.sqs_client = None
         self.sns_client = None
-        self._init_clients()
+        self._clients_initialized = False
+        # Don't initialize clients immediately - use lazy initialization
     
     def _init_clients(self):
         """Initialize AWS clients with optimized configuration."""
@@ -196,6 +197,13 @@ class AWSTextractService:
             self.sqs_client = None
             self.sns_client = None
     
+    def _ensure_clients_initialized(self):
+        """Ensure AWS clients are initialized (lazy initialization)."""
+        if not self._clients_initialized:
+            logger.info("Initializing AWS clients (lazy initialization)...")
+            self._init_clients()
+            self._clients_initialized = True
+
     async def extract_text_from_s3_pdf(
         self, 
         s3_bucket: str, 
@@ -208,6 +216,9 @@ class AWSTextractService:
         Returns (text_content, page_count)
         """
         try:
+            # Ensure clients are initialized
+            self._ensure_clients_initialized()
+            
             if not self.textract_client:
                 raise TextractError("AWS Textract client not available")
             if not self.s3_client:
@@ -817,6 +828,9 @@ class AWSTextractService:
         For images: Process directly with Textract.
         """
         try:
+            # Ensure clients are initialized
+            self._ensure_clients_initialized()
+            
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
             
