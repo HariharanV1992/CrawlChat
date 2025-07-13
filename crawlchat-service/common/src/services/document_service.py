@@ -170,7 +170,7 @@ class DocumentService:
                 logger.info(f"Detected form/invoice document: {filename}")
             
             # Process with Textract
-            bucket_name = aws_config.s3_bucket
+            bucket_name = aws_config.s3_bucket_name
             text_content, page_count = await textract_service.process_preprocessed_document(
                 bucket_name, s3_key, document_type
             )
@@ -884,7 +884,7 @@ class DocumentService:
                 logger.info(f"Detected form/invoice document: {filename}")
             
             # Process with Textract
-            bucket_name = aws_config.s3_bucket
+            bucket_name = aws_config.s3_bucket_name
             text_content, page_count = await textract_service.process_preprocessed_document(
                 bucket_name, s3_key, document_type
             )

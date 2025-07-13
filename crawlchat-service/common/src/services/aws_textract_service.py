@@ -1,68 +1,41 @@
 """
 AWS Textract Service for document text extraction
-Implements the recommended architecture with S3-based processing
+Simple implementation based on AWS documentation
 """
 
 import logging
 import os
-import io
-import asyncio
-import time
-import uuid
-import hashlib
-import json
+import boto3
+from botocore.exceptions import ClientError
 from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
-from botocore.config import Config
+import asyncio
+from io import BytesIO
 
 from ..core.aws_config import aws_config
 from ..core.exceptions import TextractError
-from .storage_service import get_storage_service
-
 
 logger = logging.getLogger(__name__)
 
-class TextractAPI(Enum):
-    """Textract API types for different use cases."""
-    DETECT_DOCUMENT_TEXT = "detect_document_text"  # Synchronous, for small documents
-    ANALYZE_DOCUMENT = "analyze_document"  # Synchronous, for forms/tables
-    START_DOCUMENT_TEXT_DETECTION = "start_document_text_detection"  # Asynchronous, for large documents
-    START_DOCUMENT_ANALYSIS = "start_document_analysis"  # Asynchronous, for large forms/tables
-
 class DocumentType(Enum):
     """Document types for API selection."""
-    GENERAL = "general"  # Use DetectDocumentText or StartDocumentTextDetection
-    FORM = "form"  # Use AnalyzeDocument or StartDocumentAnalysis
-    INVOICE = "invoice"  # Use AnalyzeDocument or StartDocumentAnalysis
-    TABLE_HEAVY = "table_heavy"  # Use AnalyzeDocument or StartDocumentAnalysis
+    GENERAL = "general"
+    FORM = "form"
+    INVOICE = "invoice"
+    TABLE_HEAVY = "table_heavy"
 
 class AWSTextractService:
-    """AWS Textract service for document text extraction with async support."""
+    """AWS Textract service for document text extraction."""
     
     def __init__(self):
         """Initialize the Textract service."""
         self.textract_client = None
         self.s3_client = None
-        self.sqs_client = None
-        self.sns_client = None
         self._clients_initialized = False
-        # Don't initialize clients immediately - use lazy initialization
     
     def _init_clients(self):
-        """Initialize AWS clients with optimized configuration."""
+        """Initialize AWS clients."""
         try:
-            # Configure boto3 with optimized settings
-            config = Config(
-                retries=dict(
-                    max_attempts=3,
-                    mode='adaptive'
-                ),
-                read_timeout=60,
-                connect_timeout=30
-            )
-            
             # Get region from environment or config
             region = os.getenv('AWS_REGION', 'ap-south-1')
             logger.info(f"Initializing AWS clients in region: {region}")
@@ -71,59 +44,14 @@ class AWSTextractService:
             is_lambda = (
                 os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
                 os.getenv('AWS_EXECUTION_ENV') or 
-                os.getenv('LAMBDA_TASK_ROOT') or
-                os.getenv('AWS_LAMBDA_LOG_GROUP_NAME')
+                os.getenv('LAMBDA_TASK_ROOT')
             )
             
-            logger.info(f"Environment check - Lambda: {is_lambda}, AWS_REGION: {region}")
-            
-            # Initialize Textract client
             if is_lambda:
                 # Running in Lambda - use IAM role
-                logger.info("Running in Lambda environment, using IAM role for AWS clients")
-                try:
-                    self.textract_client = boto3.client(
-                        'textract', 
-                        region_name=region,
-                        config=config
-                    )
-                    logger.info("Textract client created successfully in Lambda")
-                except Exception as e:
-                    logger.error(f"Failed to create Textract client in Lambda: {e}")
-                    self.textract_client = None
-                
-                try:
-                    self.s3_client = boto3.client(
-                        's3', 
-                        region_name=region,
-                        config=config
-                    )
-                    logger.info("S3 client created successfully in Lambda")
-                except Exception as e:
-                    logger.error(f"Failed to create S3 client in Lambda: {e}")
-                    self.s3_client = None
-                
-                try:
-                    self.sqs_client = boto3.client(
-                        'sqs',
-                        region_name=region,
-                        config=config
-                    )
-                    logger.info("SQS client created successfully in Lambda")
-                except Exception as e:
-                    logger.error(f"Failed to create SQS client in Lambda: {e}")
-                    self.sqs_client = None
-                
-                try:
-                    self.sns_client = boto3.client(
-                        'sns',
-                        region_name=region,
-                        config=config
-                    )
-                    logger.info("SNS client created successfully in Lambda")
-                except Exception as e:
-                    logger.error(f"Failed to create SNS client in Lambda: {e}")
-                    self.sns_client = None
+                logger.info("Running in Lambda environment, using IAM role")
+                self.textract_client = boto3.client('textract', region_name=region)
+                self.s3_client = boto3.client('s3', region_name=region)
             else:
                 # Running locally - use credentials if available
                 if aws_config.access_key_id and aws_config.secret_access_key:
@@ -132,71 +60,33 @@ class AWSTextractService:
                         'textract',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=region,
-                        config=config
+                        region_name=region
                     )
                     self.s3_client = boto3.client(
                         's3',
                         aws_access_key_id=aws_config.access_key_id,
                         aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=region,
-                        config=config
-                    )
-                    self.sqs_client = boto3.client(
-                        'sqs',
-                        aws_access_key_id=aws_config.access_key_id,
-                        aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=region,
-                        config=config
-                    )
-                    self.sns_client = boto3.client(
-                        'sns',
-                        aws_access_key_id=aws_config.access_key_id,
-                        aws_secret_access_key=aws_config.secret_access_key,
-                        region_name=region,
-                        config=config
+                        region_name=region
                     )
                 else:
                     logger.warning("AWS credentials not available for local environment")
                     self.textract_client = None
                     self.s3_client = None
-                    self.sqs_client = None
-                    self.sns_client = None
             
-            # Log client status
             if self.textract_client:
-                logger.info(f"Textract client initialized successfully in region: {region}")
-                # Test client connectivity
-                try:
-                    # Simple test call to verify client works
-                    self.textract_client.list_document_analysis_jobs(MaxResults=1)
-                    logger.info("Textract client connectivity test passed")
-                except Exception as test_e:
-                    logger.warning(f"Textract client connectivity test failed: {test_e}")
+                logger.info("Textract client initialized successfully")
             else:
                 logger.error("Textract client initialization failed")
-                    
+                
             if self.s3_client:
-                logger.info(f"S3 client initialized successfully in region: {region}")
+                logger.info("S3 client initialized successfully")
             else:
                 logger.error("S3 client initialization failed")
-                
-            if self.sqs_client:
-                logger.info(f"SQS client initialized successfully in region: {region}")
-            else:
-                logger.warning("SQS client initialization failed")
-                
-            if self.sns_client:
-                logger.info(f"SNS client initialized successfully in region: {region}")
-            else:
-                logger.warning("SNS client initialization failed")
                 
         except Exception as e:
             logger.error(f"Failed to initialize AWS clients: {e}")
             self.textract_client = None
             self.s3_client = None
-            self.sqs_client = None
-            self.sns_client = None
     
     def _ensure_clients_initialized(self):
         """Ensure AWS clients are initialized (lazy initialization)."""
@@ -210,10 +100,9 @@ class AWSTextractService:
         s3_bucket: str, 
         s3_key: str, 
         document_type: DocumentType = DocumentType.GENERAL
-    ) -> (str, int):
+    ) -> Tuple[str, int]:
         """
         Extract text from PDF stored in S3 using AWS Textract.
-        Intelligently chooses between sync and async APIs based on document size.
         Returns (text_content, page_count)
         """
         try:
@@ -225,33 +114,19 @@ class AWSTextractService:
             if not self.s3_client:
                 raise TextractError("AWS S3 client not available")
             
-            # Validate document before processing
-            await self._validate_document_for_textract(s3_bucket, s3_key)
-            
-            # Wait for S3 object to be available
-            if not await self._wait_for_s3_object(s3_bucket, s3_key):
-                raise TextractError(f"S3 object {s3_key} not available after waiting")
-            
             # Get document size to decide on sync vs async
             try:
                 response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
                 document_size = response.get('ContentLength', 0)
                 logger.info(f"Document size: {document_size} bytes")
                 
-                # Use async for documents larger than 5MB or if explicitly configured
-                use_async = (
-                    document_size > 5 * 1024 * 1024 or  # > 5MB (increased threshold)
-                    os.getenv('TEXTRACT_FORCE_ASYNC', 'false').lower() == 'true' or
-                    (os.getenv('TEXTRACT_SNS_TOPIC_ARN') is not None and 
-                     os.getenv('TEXTRACT_ROLE_ARN') is not None)  # Both required for async
-                )
-                
-                if use_async:
-                    logger.info(f"Using async Textract API for document ({document_size} bytes)")
-                    return await self._extract_text_async(s3_bucket, s3_key)
-                else:
+                # Use sync API for documents up to 5MB
+                if document_size <= 5 * 1024 * 1024:
                     logger.info(f"Using sync Textract API for document ({document_size} bytes)")
                     return await self._extract_text_sync(s3_bucket, s3_key, document_type)
+                else:
+                    logger.warning(f"Document too large for sync API ({document_size} bytes)")
+                    raise TextractError("Document too large for synchronous processing (max 5MB)")
                     
             except Exception as size_e:
                 logger.warning(f"Could not determine document size: {size_e}, using sync API")
@@ -261,734 +136,64 @@ class AWSTextractService:
             logger.error(f"Error extracting text from S3 PDF {s3_key}: {e}")
             raise TextractError(f"Textract extraction failed: {e}")
 
-    async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
+    async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> Tuple[str, int]:
         """
-        Extract text using AWS Textract pattern with comprehensive template-based processing.
-        This follows the official AWS pattern for robust PDF processing.
+        Extract text using AWS Textract synchronous API.
         """
         try:
-            logger.info(f"Processing document {s3_key} with AWS Textract pattern")
+            logger.info(f"Processing document {s3_key} with AWS Textract")
             
-            # Strategy 1: Try AWS Pattern approach (TABLES, FORMS)
-            logger.info("Strategy 1: Trying AWS Pattern approach with TABLES and FORMS...")
-            try:
-                text_content, page_count = await self._aws_pattern_extraction(s3_bucket, s3_key, document_type)
-                if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ AWS Pattern approach succeeded: {len(text_content)} characters extracted")
-                    return text_content, page_count
-                else:
-                    logger.warning("AWS Pattern approach returned minimal text, trying simple extraction...")
-            except Exception as e:
-                logger.warning(f"AWS Pattern approach failed: {e}, trying simple extraction...")
-            
-            # Strategy 2: Try simple DetectDocumentText (fallback)
-            logger.info("Strategy 2: Trying simple DetectDocumentText...")
+            # Strategy 1: Try DetectDocumentText (most reliable for basic text extraction)
+            logger.info("Strategy 1: Trying DetectDocumentText...")
             try:
                 text_content, page_count = await self._detect_document_text(s3_bucket, s3_key)
                 if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ Simple extraction succeeded: {len(text_content)} characters extracted")
+                    logger.info(f"✅ DetectDocumentText succeeded: {len(text_content)} characters extracted")
                     return text_content, page_count
                 else:
-                    logger.warning("Simple extraction returned minimal text, trying PDF repair...")
+                    logger.warning("DetectDocumentText returned minimal text, trying AnalyzeDocument...")
             except Exception as e:
-                logger.warning(f"Simple extraction failed: {e}, trying PDF repair...")
+                logger.warning(f"DetectDocumentText failed: {e}, trying AnalyzeDocument...")
             
-            # Strategy 3: Try PDF repair and re-extraction (only once to prevent infinite loops)
-            logger.info("Strategy 3: Trying PDF repair and re-extraction...")
+            # Strategy 2: Try AnalyzeDocument with TABLES and FORMS
+            logger.info("Strategy 2: Trying AnalyzeDocument with TABLES and FORMS...")
             try:
-                text_content, page_count = await self._try_pdf_repair_and_extract(s3_bucket, s3_key, repair_attempt=1)
+                text_content, page_count = await self._analyze_document(s3_bucket, s3_key)
                 if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ PDF repair succeeded: {len(text_content)} characters extracted")
+                    logger.info(f"✅ AnalyzeDocument succeeded: {len(text_content)} characters extracted")
                     return text_content, page_count
                 else:
-                    raise TextractError("PDF repair returned minimal text")
+                    logger.warning("AnalyzeDocument returned minimal text")
             except Exception as e:
-                logger.error(f"PDF repair failed: {e}")
-                
-                # Strategy 4: Convert PDF to images and extract (final fallback)
-                logger.info("Strategy 4: Converting PDF to images and extracting...")
-                try:
-                    text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
-                    if text_content and len(text_content.strip()) > 10:
-                        logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
-                        return text_content, page_count
-                    else:
-                        raise TextractError("PDF-to-image extraction returned minimal text")
-                except Exception as img_error:
-                    logger.error(f"PDF-to-image extraction failed: {img_error}")
-                    raise TextractError(f"All Textract strategies failed: {e}")
+                logger.warning(f"AnalyzeDocument failed: {e}")
+            
+            # Strategy 3: Convert PDF to images and extract
+            logger.info("Strategy 3: Converting PDF to images and extracting...")
+            try:
+                text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
+                    return text_content, page_count
+                else:
+                    logger.warning("PDF-to-image extraction returned minimal text")
+            except Exception as e:
+                logger.warning(f"PDF-to-image extraction failed: {e}")
+            
+            # If all strategies failed, raise error
+            raise TextractError("All Textract strategies failed for this document")
                 
         except Exception as e:
-            logger.error(f"All sync Textract strategies failed: {e}")
+            logger.error(f"Sync Textract extraction failed: {e}")
             raise TextractError(f"Textract extraction failed: {e}")
 
-    async def _aws_pattern_extraction(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> (str, int):
+    async def _detect_document_text(self, s3_bucket: str, s3_key: str) -> Tuple[str, int]:
         """
-        Implement the full AWS Textract pattern with template-based processing.
-        This follows the official AWS pattern for robust document processing.
-        """
-        try:
-            logger.info(f"Starting AWS Pattern extraction for s3://{s3_bucket}/{s3_key}")
-            
-            # Step 1: Call Amazon Textract API with TABLES and FORMS
-            logger.info("Step 1: Calling Textract API with TABLES and FORMS...")
-            response = self.textract_client.analyze_document(
-                Document={
-                    'S3Object': {
-                        'Bucket': s3_bucket,
-                        'Name': s3_key
-                    }
-                },
-                FeatureTypes=["TABLES", "FORMS"]
-            )
-            
-            logger.info(f"Textract response received with {len(response.get('Blocks', []))} blocks")
-            
-            # Step 2: Parse the response into forms and tables
-            logger.info("Step 2: Parsing response into forms and tables...")
-            form_kv_data = self._form_kv_from_JSON(response)
-            table_data = self._get_tables_fromJSON(response)
-            
-            logger.info(f"Parsed {len(form_kv_data)} form key-value pairs and {len(table_data)} tables")
-            
-            # Step 3: Create or load template for this document type
-            logger.info("Step 3: Processing with template...")
-            template_json = self._get_template_for_document_type(document_type, s3_key)
-            
-            # Step 4: Match parsed data with template
-            logger.info("Step 4: Matching data with template...")
-            form_kv_corrected = self._form_kv_correction(form_kv_data, template_json)
-            table_corrected = self._form_Table_correction(table_data, template_json)
-            
-            # Step 5: Combine form and table data
-            combined_data = {**form_kv_corrected, **table_corrected}
-            
-            # Step 6: Apply post-processing corrections
-            logger.info("Step 5: Applying post-processing corrections...")
-            final_json = self._postprocessing_correction(combined_data, template_json)
-            
-            # Step 7: Convert to text format
-            logger.info("Step 6: Converting to text format...")
-            text_content = self._convert_json_to_text(final_json)
-            page_count = response.get('DocumentMetadata', {}).get('Pages', 1)
-            
-            logger.info(f"AWS Pattern extraction completed: {len(text_content)} characters, {page_count} pages")
-            return text_content, page_count
-            
-        except Exception as e:
-            logger.error(f"AWS Pattern extraction failed: {e}")
-            raise TextractError(f"AWS Pattern extraction failed: {e}")
-
-    def _form_kv_from_JSON(self, response: dict) -> dict:
-        """
-        Extract key-value pairs from Textract response.
-        Based on AWS pattern for form processing.
-        """
-        try:
-            blocks = response.get('Blocks', [])
-            key_map = {}
-            value_map = {}
-            block_map = {}
-            
-            # Create block map and separate key-value pairs
-            for block in blocks:
-                block_id = block['Id']
-                block_map[block_id] = block
-                
-                if block['BlockType'] == "KEY_VALUE_SET":
-                    if 'KEY' in block.get('EntityTypes', []):
-                        key_map[block_id] = block
-                    else:
-                        value_map[block_id] = block
-            
-            # Extract key-value pairs
-            key_value_pairs = {}
-            for block_id, key_block in key_map.items():
-                value_block = self._find_value_block(key_block, value_map, block_map)
-                key = self._get_text(key_block, block_map)
-                val = self._get_text(value_block, block_map) if value_block else ""
-                
-                if key and val:
-                    key_value_pairs[key] = val
-            
-            logger.info(f"Extracted {len(key_value_pairs)} key-value pairs")
-            return key_value_pairs
-            
-        except Exception as e:
-            logger.error(f"Error extracting key-value pairs: {e}")
-            return {}
-
-    def _get_tables_fromJSON(self, response: dict) -> list:
-        """
-        Extract tables from Textract response.
-        Based on AWS pattern for table processing.
-        """
-        try:
-            blocks = response.get('Blocks', [])
-            tables = []
-            
-            # Find table blocks
-            table_blocks = [block for block in blocks if block['BlockType'] == 'TABLE']
-            
-            for table_block in table_blocks:
-                table_data = self._process_table_block(table_block, blocks)
-                if table_data:
-                    tables.append(table_data)
-            
-            logger.info(f"Extracted {len(tables)} tables")
-            return tables
-            
-        except Exception as e:
-            logger.error(f"Error extracting tables: {e}")
-            return []
-
-    def _process_table_block(self, table_block: dict, blocks: list) -> dict:
-        """
-        Process a single table block and extract its data.
-        """
-        try:
-            table_id = table_block['Id']
-            table_data = {
-                'table_id': table_id,
-                'rows': [],
-                'headers': []
-            }
-            
-            # Find cells in this table
-            cell_blocks = []
-            for block in blocks:
-                if (block['BlockType'] == 'CELL' and 
-                    'Relationships' in block and 
-                    any(rel['Type'] == 'CHILD' and table_id in rel.get('Ids', []) 
-                        for rel in block['Relationships'])):
-                    cell_blocks.append(block)
-            
-            # Sort cells by row and column
-            cell_blocks.sort(key=lambda x: (
-                x.get('RowIndex', 0),
-                x.get('ColumnIndex', 0)
-            ))
-            
-            # Extract table data
-            current_row = []
-            current_row_index = 0
-            
-            for cell in cell_blocks:
-                row_index = cell.get('RowIndex', 0)
-                cell_text = self._get_text(cell, {block['Id']: block for block in blocks})
-                
-                if row_index != current_row_index:
-                    if current_row:
-                        table_data['rows'].append(current_row)
-                    current_row = [cell_text]
-                    current_row_index = row_index
-                else:
-                    current_row.append(cell_text)
-            
-            # Add the last row
-            if current_row:
-                table_data['rows'].append(current_row)
-            
-            # Set headers (first row)
-            if table_data['rows']:
-                table_data['headers'] = table_data['rows'][0]
-                table_data['rows'] = table_data['rows'][1:]  # Remove header row
-            
-            return table_data
-            
-        except Exception as e:
-            logger.error(f"Error processing table block: {e}")
-            return {}
-
-    def _find_value_block(self, key_block: dict, value_map: dict, block_map: dict) -> dict:
-        """
-        Find the value block associated with a key block.
-        """
-        try:
-            for value_id, value_block in value_map.items():
-                if 'Relationships' in value_block:
-                    for relationship in value_block['Relationships']:
-                        if relationship['Type'] == 'VALUE':
-                            for value_id_in_relationship in relationship['Ids']:
-                                if value_id_in_relationship == key_block['Id']:
-                                    return value_block
-            return None
-        except Exception as e:
-            logger.error(f"Error finding value block: {e}")
-            return None
-
-    def _get_text(self, block: dict, block_map: dict) -> str:
-        """
-        Extract text from a block by following relationships.
-        """
-        try:
-            text = ""
-            if 'Relationships' in block:
-                for relationship in block['Relationships']:
-                    if relationship['Type'] == 'CHILD':
-                        for child_id in relationship['Ids']:
-                            child = block_map.get(child_id)
-                            if child and child['BlockType'] == 'WORD':
-                                text += child.get('Text', '') + ' '
-            return text.strip()
-        except Exception as e:
-            logger.error(f"Error getting text from block: {e}")
-            return ""
-
-    def _get_template_for_document_type(self, document_type: DocumentType, filename: str) -> dict:
-        """
-        Get or create template for document type.
-        This is a simplified template system - in production, you'd load from database/files.
-        """
-        try:
-            # Basic template structure
-            template = {
-                "document_type": document_type.value,
-                "filename_pattern": filename,
-                "key_value_pairs": {},
-                "tables": {},
-                "data_types": {
-                    "amount": "float",
-                    "date": "date",
-                    "quantity": "integer",
-                    "text": "string"
-                }
-            }
-            
-            # Add specific templates based on document type
-            if document_type == DocumentType.FORM:
-                template["key_value_pairs"] = {
-                    "invoice_number": "string",
-                    "total_amount": "float",
-                    "date": "date",
-                    "vendor": "string"
-                }
-            elif document_type == DocumentType.INVOICE:
-                template["key_value_pairs"] = {
-                    "invoice_number": "string",
-                    "total_amount": "float",
-                    "date": "date",
-                    "vendor": "string",
-                    "tax_amount": "float"
-                }
-            
-            logger.info(f"Created template for document type: {document_type.value}")
-            return template
-            
-        except Exception as e:
-            logger.error(f"Error creating template: {e}")
-            return {}
-
-    def _form_kv_correction(self, form_kv_data: dict, template: dict) -> dict:
-        """
-        Correct form key-value pairs using template.
-        """
-        try:
-            corrected_data = {}
-            template_keys = template.get("key_value_pairs", {})
-            
-            for key, value in form_kv_data.items():
-                # Find best matching template key
-                best_match = self._find_best_key_match(key, template_keys.keys())
-                if best_match:
-                    corrected_data[best_match] = value
-                else:
-                    corrected_data[key] = value
-            
-            logger.info(f"Corrected {len(corrected_data)} key-value pairs")
-            return corrected_data
-            
-        except Exception as e:
-            logger.error(f"Error correcting form key-value pairs: {e}")
-            return form_kv_data
-
-    def _form_Table_correction(self, table_data: list, template: dict) -> dict:
-        """
-        Correct table data using template.
-        """
-        try:
-            corrected_tables = {}
-            
-            for i, table in enumerate(table_data):
-                table_key = f"table_{i+1}"
-                corrected_tables[table_key] = {
-                    "headers": table.get("headers", []),
-                    "rows": table.get("rows", [])
-                }
-            
-            logger.info(f"Corrected {len(corrected_tables)} tables")
-            return corrected_tables
-            
-        except Exception as e:
-            logger.error(f"Error correcting table data: {e}")
-            return {}
-
-    def _find_best_key_match(self, key: str, template_keys: list) -> str:
-        """
-        Find the best matching template key for a given key.
-        """
-        try:
-            key_lower = key.lower().replace(" ", "_")
-            
-            for template_key in template_keys:
-                template_key_lower = template_key.lower().replace(" ", "_")
-                if key_lower == template_key_lower:
-                    return template_key
-                elif key_lower in template_key_lower or template_key_lower in key_lower:
-                    return template_key
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error finding key match: {e}")
-            return None
-
-    def _postprocessing_correction(self, data: dict, template: dict) -> dict:
-        """
-        Apply post-processing corrections based on data types.
-        """
-        try:
-            corrected_data = {}
-            data_types = template.get("data_types", {})
-            
-            for key, value in data.items():
-                # Determine data type
-                data_type = self._determine_data_type(key, value, data_types)
-                
-                # Apply correction based on data type
-                corrected_value = self._apply_data_type_correction(value, data_type)
-                corrected_data[key] = corrected_value
-            
-            logger.info(f"Applied post-processing corrections to {len(corrected_data)} fields")
-            return corrected_data
-            
-        except Exception as e:
-            logger.error(f"Error applying post-processing corrections: {e}")
-            return data
-
-    def _determine_data_type(self, key: str, value: str, data_types: dict) -> str:
-        """
-        Determine the data type for a field.
-        """
-        try:
-            key_lower = key.lower()
-            
-            # Check for specific data type indicators
-            if any(word in key_lower for word in ["amount", "price", "total", "cost"]):
-                return "float"
-            elif any(word in key_lower for word in ["date", "time"]):
-                return "date"
-            elif any(word in key_lower for word in ["quantity", "count", "number"]):
-                return "integer"
-            else:
-                return "string"
-                
-        except Exception as e:
-            logger.error(f"Error determining data type: {e}")
-            return "string"
-
-    def _apply_data_type_correction(self, value: str, data_type: str) -> any:
-        """
-        Apply data type correction to a value.
-        """
-        try:
-            if not value or not value.strip():
-                return value
-            
-            value = value.strip()
-            
-            if data_type == "float":
-                # Remove currency symbols and convert to float
-                import re
-                cleaned_value = re.sub(r'[^\d.,]', '', value)
-                cleaned_value = cleaned_value.replace(',', '')
-                try:
-                    return float(cleaned_value)
-                except:
-                    return value
-            
-            elif data_type == "integer":
-                # Remove non-numeric characters
-                import re
-                cleaned_value = re.sub(r'[^\d]', '', value)
-                try:
-                    return int(cleaned_value)
-                except:
-                    return value
-            
-            elif data_type == "date":
-                # Try to parse common date formats
-                from datetime import datetime
-                date_formats = [
-                    "%m/%d/%Y", "%d/%m/%Y", "%Y-%m-%d",
-                    "%m-%d-%Y", "%d-%m-%Y", "%Y/%m/%d"
-                ]
-                
-                for fmt in date_formats:
-                    try:
-                        return datetime.strptime(value, fmt).strftime("%Y-%m-%d")
-                    except:
-                        continue
-                
-                return value
-            
-            else:
-                return value
-                
-        except Exception as e:
-            logger.error(f"Error applying data type correction: {e}")
-            return value
-
-    def _convert_json_to_text(self, json_data: dict) -> str:
-        """
-        Convert processed JSON data to readable text format.
-        """
-        try:
-            text_lines = []
-            
-            # Add key-value pairs
-            for key, value in json_data.items():
-                if not key.startswith("table_"):
-                    text_lines.append(f"{key}: {value}")
-            
-            # Add tables
-            for key, table_data in json_data.items():
-                if key.startswith("table_"):
-                    text_lines.append(f"\n{key.upper()}:")
-                    
-                    # Add headers
-                    headers = table_data.get("headers", [])
-                    if headers:
-                        text_lines.append(" | ".join(headers))
-                        text_lines.append("-" * len(" | ".join(headers)))
-                    
-                    # Add rows
-                    rows = table_data.get("rows", [])
-                    for row in rows:
-                        text_lines.append(" | ".join(str(cell) for cell in row))
-            
-            return "\n".join(text_lines)
-            
-        except Exception as e:
-            logger.error(f"Error converting JSON to text: {e}")
-            return str(json_data)
-
-    async def _validate_document_for_textract(self, s3_bucket: str, s3_key: str):
-        """
-        Validate document format and size for Textract processing.
-        """
-        try:
-            # Get object metadata
-            response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
-            content_length = response.get('ContentLength', 0)
-            content_type = response.get('ContentType', '')
-            
-            logger.info(f"Document validation - Size: {content_length} bytes, Type: {content_type}")
-            
-            # Check file size limits
-            if content_length > 5 * 1024 * 1024:  # 5MB limit for synchronous API
-                logger.warning(f"Document size ({content_length} bytes) exceeds 5MB limit for synchronous Textract")
-                raise TextractError("Document too large for synchronous Textract processing (max 5MB)")
-            
-            if content_length < 1024:  # 1KB minimum
-                logger.warning(f"Document size ({content_length} bytes) is suspiciously small")
-                raise TextractError("Document too small for meaningful text extraction")
-            
-            # Validate content type
-            valid_types = ['application/pdf', 'image/jpeg', 'image/png', 'image/tiff', 'image/bmp']
-            if content_type and content_type.lower() not in valid_types:
-                logger.warning(f"Unsupported content type: {content_type}")
-                raise TextractError(f"Unsupported document type: {content_type}")
-            
-            logger.info(f"✅ Document validation passed - Size: {content_length} bytes")
-            
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            if error_code == 'NoSuchKey':
-                raise TextractError(f"S3 object {s3_key} not found")
-            else:
-                raise TextractError(f"S3 error during validation: {error_code}")
-        except Exception as e:
-            logger.error(f"Error validating document: {e}")
-            raise TextractError(f"Document validation failed: {e}")
-
-    async def _try_pdf_repair_and_extract(self, s3_bucket: str, s3_key: str, repair_attempt: int = 0) -> (str, int):
-        """
-        Try to repair problematic PDFs and extract text using Textract.
-        This method attempts to fix common PDF issues that cause UnsupportedDocumentException.
-        """
-        try:
-            logger.info(f"Attempting PDF repair and extraction for s3://{s3_bucket}/{s3_key} (attempt {repair_attempt})")
-            
-            # Prevent infinite loops - only allow one repair attempt
-            if repair_attempt > 0:
-                logger.warning(f"Already attempted PDF repair {repair_attempt} times, stopping to prevent infinite loop")
-                raise TextractError("Document format not supported by Textract after repair attempt")
-            
-            # Check if this is already a repaired PDF to prevent infinite loops
-            if "_repaired.pdf" in s3_key:
-                logger.warning(f"Already attempting to repair a repaired PDF: {s3_key}")
-                raise TextractError("Cannot repair already repaired PDF - document format not supported by Textract")
-            
-            # Download the PDF from S3
-            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
-            pdf_content = response['Body'].read()
-            
-            # Try to repair the PDF using PyPDF2
-            try:
-                import PyPDF2
-                from io import BytesIO
-                
-                # Try to read and rewrite the PDF to fix format issues
-                pdf_file = BytesIO(pdf_content)
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                
-                # Create a new PDF writer
-                pdf_writer = PyPDF2.PdfWriter()
-                
-                # Add all pages to the new PDF
-                for page in pdf_reader.pages:
-                    pdf_writer.add_page(page)
-                
-                # Write the repaired PDF to a new BytesIO object
-                repaired_pdf = BytesIO()
-                pdf_writer.write(repaired_pdf)
-                repaired_pdf.seek(0)
-                repaired_content = repaired_pdf.read()
-                
-                logger.info(f"PDF repair attempted, new size: {len(repaired_content)} bytes")
-                
-                # Upload the repaired PDF to S3 with a simple name to avoid long filenames
-                repair_key = f"{s3_key.replace('.pdf', '')}_repaired.pdf"
-                self.s3_client.put_object(
-                    Bucket=s3_bucket,
-                    Key=repair_key,
-                    Body=repaired_content,
-                    ContentType='application/pdf'
-                )
-                
-                logger.info(f"Repaired PDF uploaded to s3://{s3_bucket}/{repair_key}")
-                
-                # Try DetectDocumentText first (most reliable for basic text extraction)
-                try:
-                    logger.info(f"Trying DetectDocumentText on repaired PDF...")
-                    text_content, page_count = await self._detect_document_text(s3_bucket, repair_key)
-                    logger.info(f"✅ DetectDocumentText succeeded on repaired PDF: {len(text_content)} characters")
-                    
-                    # Clean up the repaired PDF
-                    try:
-                        self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
-                    except:
-                        pass
-                    
-                    return text_content, page_count
-                    
-                except Exception as detect_error:
-                    logger.warning(f"DetectDocumentText failed on repaired PDF: {detect_error}")
-                    
-                    # Try AnalyzeDocument as fallback (without allowing further repair to prevent infinite loop)
-                    try:
-                        logger.info(f"Trying AnalyzeDocument on repaired PDF...")
-                        text_content, page_count = await self._analyze_document(s3_bucket, repair_key, allow_repair=False)
-                        logger.info(f"✅ AnalyzeDocument succeeded on repaired PDF: {len(text_content)} characters")
-                        
-                        # Clean up the repaired PDF
-                        try:
-                            self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
-                        except:
-                            pass
-                        
-                        return text_content, page_count
-                        
-                    except Exception as analyze_error:
-                        logger.warning(f"AnalyzeDocument failed on repaired PDF: {analyze_error}")
-                        # Clean up the repaired PDF
-                        try:
-                            self.s3_client.delete_object(Bucket=s3_bucket, Key=repair_key)
-                        except:
-                            pass
-                        raise TextractError(f"Both DetectDocumentText and AnalyzeDocument failed on repaired PDF")
-                    
-            except Exception as e:
-                logger.warning(f"PDF repair failed: {e}")
-                raise
-                
-        except Exception as e:
-            logger.error(f"PDF repair and extraction failed: {e}")
-            raise TextractError(f"PDF repair failed: {e}")
-
-    async def _wait_for_s3_object(self, s3_bucket: str, s3_key: str, max_wait: int = 10) -> bool:
-        """
-        Wait for S3 object to be available before calling Textract.
-        This is the proper fix for S3 eventual consistency.
-        """
-        logger.info(f"DEBUG: Waiting for S3 object s3://{s3_bucket}/{s3_key} (max wait: {max_wait}s)")
-        start_time = time.time()
-        attempt = 0
-        while time.time() - start_time < max_wait:
-            attempt += 1
-            try:
-                # Use head_object to check if the object exists and is accessible
-                logger.info(f"DEBUG: Attempt {attempt} - checking S3 object availability")
-                response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
-                wait_time = time.time() - start_time
-                logger.info(f"DEBUG: S3 object {s3_key} is available after {wait_time:.2f}s (attempt {attempt})")
-                logger.info(f"DEBUG: S3 object size: {response.get('ContentLength', 'unknown')} bytes")
-                logger.info(f"DEBUG: S3 object ETag: {response.get('ETag', 'unknown')}")
-                logger.info(f"DEBUG: S3 object LastModified: {response.get('LastModified', 'unknown')}")
-                return True
-            except ClientError as e:
-                error_code = e.response['Error']['Code']
-                if error_code == '404' or error_code == 'NoSuchKey':
-                    # Object not found yet, wait and retry
-                    elapsed = time.time() - start_time
-                    logger.info(f"DEBUG: S3 object not found yet, waiting... (elapsed: {elapsed:.2f}s, attempt {attempt})")
-                    await asyncio.sleep(1.0)  # Check every 1 second
-                    continue
-                else:
-                    # Other S3 error, don't retry
-                    logger.error(f"DEBUG: S3 error checking object {s3_key}: {error_code} - {e.response['Error'].get('Message', '')}")
-                    return False
-            except Exception as e:
-                logger.error(f"DEBUG: Unexpected error checking S3 object {s3_key}: {e}")
-                return False
-        
-        logger.warning(f"DEBUG: S3 object {s3_key} not available after {max_wait}s ({attempt} attempts)")
-        return False
-
-    async def _detect_document_text_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
-        """
-        Call DetectDocumentText with retry logic.
-        S3 object availability is checked before calling this method.
-        """
-        return await self._detect_document_text(s3_bucket, s3_key)
-
-    async def _analyze_document_with_retry(self, s3_bucket: str, s3_key: str, max_retries: int = 3) -> (str, int):
-        """
-        Call AnalyzeDocument with retry logic.
-        S3 object availability is checked before calling this method.
-        """
-        return await self._analyze_document(s3_bucket, s3_key)
-
-    def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
-        """
-        Select the appropriate Textract API based on document type.
-        Use DetectDocumentText for basic text extraction (like AWS Console).
-        """
-        # Use DetectDocumentText for basic text extraction (like AWS Console)
-        # AnalyzeDocument requires FeatureTypes and is more for forms/tables
-        return TextractAPI.DETECT_DOCUMENT_TEXT
-
-    async def _detect_document_text(self, s3_bucket: str, s3_key: str) -> (str, int):
-        """
-        Call AWS Textract DetectDocumentText API with optimized parameters.
+        Call AWS Textract DetectDocumentText API.
         This is the most reliable method for basic text extraction from PDFs.
         """
         try:
             logger.info(f"Calling DetectDocumentText for s3://{s3_bucket}/{s3_key}")
             
-            # DetectDocumentText is the most reliable for basic text extraction
-            # It doesn't require FeatureTypes and works well with most PDFs
             response = self.textract_client.detect_document_text(
                 Document={
                     'S3Object': {
@@ -998,38 +203,11 @@ class AWSTextractService:
                 }
             )
             
-            # Log response structure for debugging
-            logger.info(f"Textract response keys: {list(response.keys())}")
-            logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
-            
             # Extract text from blocks
             text_content = self._extract_text_from_blocks(response['Blocks'])
             page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
             
             logger.info(f"DetectDocumentText completed: {len(text_content)} characters, {page_count} pages")
-            
-            # Check if we got meaningful text
-            if not text_content or len(text_content.strip()) < 10:
-                logger.warning(f"Textract returned minimal text for {s3_key}: '{text_content[:100]}...'")
-                # Log some block details for debugging
-                block_types = {}
-                for block in response['Blocks'][:10]:  # First 10 blocks
-                    block_type = block.get('BlockType', 'UNKNOWN')
-                    block_types[block_type] = block_types.get(block_type, 0) + 1
-                logger.info(f"First 10 block types: {block_types}")
-                
-                # Try to get any text from blocks
-                all_text = []
-                for block in response['Blocks']:
-                    if 'Text' in block and block['Text'].strip():
-                        all_text.append(block['Text'])
-                
-                if all_text:
-                    fallback_text = ' '.join(all_text)
-                    logger.info(f"Fallback text extraction: {len(fallback_text)} characters")
-                    return fallback_text, page_count
-                else:
-                    raise TextractError("Textract returned empty or minimal text")
             
             return text_content, page_count
             
@@ -1048,179 +226,263 @@ class AWSTextractService:
             logger.error(f"Unexpected error in DetectDocumentText: {e}")
             raise TextractError(f"Unexpected error: {e}")
 
-    async def _detect_document_text_with_enhanced_params(self, s3_bucket: str, s3_key: str) -> (str, int):
+    async def _analyze_document(self, s3_bucket: str, s3_key: str) -> Tuple[str, int]:
         """
-        Call AWS Textract DetectDocumentText API with enhanced parameters for better image processing.
+        Call AWS Textract AnalyzeDocument API with TABLES and FORMS.
         """
         try:
-            logger.info(f"Calling DetectDocumentText with enhanced params for s3://{s3_bucket}/{s3_key}")
+            logger.info(f"Calling AnalyzeDocument for s3://{s3_bucket}/{s3_key}")
             
-            # Try with different parameters for better image processing
-            response = self.textract_client.detect_document_text(
+            response = self.textract_client.analyze_document(
                 Document={
                     'S3Object': {
                         'Bucket': s3_bucket,
                         'Name': s3_key
                     }
-                }
-                # Note: FeatureTypes is not supported in detect_document_text
-                # It's only available in analyze_document
+                },
+                FeatureTypes=['TABLES', 'FORMS']
             )
-            
-            # Log response structure for debugging
-            logger.info(f"Enhanced Textract response keys: {list(response.keys())}")
-            logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
             
             # Extract text from blocks
             text_content = self._extract_text_from_blocks(response['Blocks'])
             page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
             
-            logger.info(f"Enhanced DetectDocumentText completed: {len(text_content)} characters, {page_count} pages")
+            logger.info(f"AnalyzeDocument completed: {len(text_content)} characters, {page_count} pages")
             
             return text_content, page_count
             
         except ClientError as e:
             error_code = e.response['Error']['Code']
             error_message = e.response['Error']['Message']
-            logger.error(f"Enhanced Textract DetectDocumentText failed: {error_code} - {error_message}")
-            raise TextractError(f"Enhanced Textract error: {error_code} - {error_message}")
+            logger.error(f"Textract AnalyzeDocument failed: {error_code} - {error_message}")
+            
+            if error_code == 'UnsupportedDocumentException':
+                raise TextractError(f"Unsupported document type: {error_message}")
+            elif error_code == 'InvalidS3ObjectException':
+                raise TextractError(f"Invalid S3 object: {error_message}")
+            else:
+                raise TextractError(f"Textract error: {error_code} - {error_message}")
         except Exception as e:
-            logger.error(f"Unexpected error in enhanced DetectDocumentText: {e}")
+            logger.error(f"Unexpected error in AnalyzeDocument: {e}")
             raise TextractError(f"Unexpected error: {e}")
 
-    async def _try_enhanced_image_extraction(self, s3_bucket: str, s3_key: str) -> (str, int):
+    async def _convert_pdf_to_images_and_extract(self, s3_bucket: str, s3_key: str) -> Tuple[str, int]:
         """
-        Try enhanced image extraction with different Textract parameters.
+        Convert PDF to images and extract text using Textract.
+        This is a fallback method when direct PDF processing fails.
         """
         try:
-            # First try the standard method
-            text_content, page_count = await self._detect_document_text(s3_bucket, s3_key)
+            logger.info(f"Converting PDF to images for Textract processing: s3://{s3_bucket}/{s3_key}")
             
-            # If we got meaningful text, return it
-            if text_content and len(text_content.strip()) > 10:
-                return text_content, page_count
+            # Download the PDF from S3
+            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            pdf_content = response['Body'].read()
             
-            # If standard method failed, try enhanced parameters
-            logger.info(f"Standard Textract failed, trying enhanced parameters for {s3_key}")
-            return await self._detect_document_text_with_enhanced_params(s3_bucket, s3_key)
+            # Convert PDF to images
+            image_keys = await self._convert_pdf_to_images_and_upload(pdf_content, s3_bucket, s3_key)
             
-        except Exception as e:
-            logger.warning(f"Enhanced image extraction failed: {e}")
-            raise
-
-    async def _analyze_document(self, s3_bucket: str, s3_key: str, allow_repair: bool = True) -> (str, int):
-        """
-        Call AWS Textract AnalyzeDocument API with proper FeatureTypes.
-        According to AWS docs, FeatureTypes is REQUIRED for AnalyzeDocument.
-        """
-        # According to AWS documentation, AnalyzeDocument REQUIRES FeatureTypes
-        # Try different FeatureTypes combinations for better compatibility
-        approaches = [
-            # Approach 1: TABLES only (most basic)
-            {
-                'name': 'AnalyzeDocument (TABLES)',
-                'params': {
-                    'Document': {
-                        'S3Object': {
-                            'Bucket': s3_bucket,
-                            'Name': s3_key
-                        }
-                    },
-                    'FeatureTypes': ['TABLES']
-                }
-            },
-            # Approach 2: FORMS only
-            {
-                'name': 'AnalyzeDocument (FORMS)',
-                'params': {
-                    'Document': {
-                        'S3Object': {
-                            'Bucket': s3_bucket,
-                            'Name': s3_key
-                        }
-                    },
-                    'FeatureTypes': ['FORMS']
-                }
-            },
-            # Approach 3: TABLES and FORMS (most comprehensive)
-            {
-                'name': 'AnalyzeDocument (TABLES, FORMS)',
-                'params': {
-                    'Document': {
-                        'S3Object': {
-                            'Bucket': s3_bucket,
-                            'Name': s3_key
-                        }
-                    },
-                    'FeatureTypes': ['TABLES', 'FORMS']
-                }
-            }
-        ]
-        
-        for approach in approaches:
-            try:
-                logger.info(f"Trying {approach['name']} for s3://{s3_bucket}/{s3_key}")
-                
-                response = self.textract_client.analyze_document(**approach['params'])
-                
-                # Log response structure for debugging
-                logger.info(f"{approach['name']} response keys: {list(response.keys())}")
-                logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
-                
-                # Extract text from blocks using the same method as DetectDocumentText
-                # This ensures we get all text, not just structured data
-                text_content = self._extract_text_from_blocks(response['Blocks'])
-                page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
-                
-                logger.info(f"{approach['name']} completed: {len(text_content)} characters, {page_count} pages")
-                
-                # Check if we got meaningful text
-                if text_content and len(text_content.strip()) > 10:
-                    logger.info(f"✅ {approach['name']} succeeded with {len(text_content)} characters")
-                    return text_content, page_count
-                else:
-                    logger.warning(f"{approach['name']} returned minimal text: '{text_content[:100]}...'")
-                    continue
-                    
-            except ClientError as e:
-                error_code = e.response['Error']['Code']
-                error_message = e.response['Error']['Message']
-                logger.warning(f"{approach['name']} failed: {error_code} - {error_message}")
-                
-                if error_code == 'UnsupportedDocumentException':
-                    logger.info(f"PDF format not supported by {approach['name']}, trying next approach...")
-                    continue
-                elif error_code == 'InvalidS3ObjectException':
-                    raise TextractError(f"Invalid S3 object: {error_message}")
-                else:
-                    logger.warning(f"Unexpected error with {approach['name']}: {error_code} - {error_message}")
-                    continue
-            except Exception as e:
-                logger.warning(f"Unexpected error with {approach['name']}: {e}")
-                continue
-        
-        # If all AnalyzeDocument approaches failed, try DetectDocumentText as last resort
-        logger.info("All AnalyzeDocument approaches failed, trying DetectDocumentText as fallback...")
-        try:
-            return await self._detect_document_text(s3_bucket, s3_key)
-        except Exception as e:
-            logger.error(f"DetectDocumentText fallback also failed: {e}")
+            if not image_keys:
+                raise TextractError("Failed to convert PDF to images")
             
-            # Try PDF repair as final attempt (only if allowed)
-            if allow_repair:
-                logger.info("Attempting PDF repair as final Textract attempt...")
+            # Process all images with Textract
+            all_text_content = []
+            total_pages = len(image_keys)
+            
+            logger.info(f"Processing {len(image_keys)} images with Textract...")
+            
+            for i, image_key in enumerate(image_keys):
                 try:
-                    return await self._try_pdf_repair_and_extract(s3_bucket, s3_key)
-                except Exception as repair_error:
-                    logger.error(f"PDF repair also failed: {repair_error}")
-                    raise TextractError("All Textract approaches failed for this document")
+                    logger.info(f"Processing image {i + 1}/{len(image_keys)}: {image_key}")
+                    
+                    # Use DetectDocumentText for images
+                    response = self.textract_client.detect_document_text(
+                        Document={
+                            'S3Object': {
+                                'Bucket': s3_bucket,
+                                'Name': image_key
+                            }
+                        }
+                    )
+                    
+                    # Extract text from blocks
+                    blocks = response.get('Blocks', [])
+                    page_text = ""
+                    for block in blocks:
+                        if block['BlockType'] == 'LINE':
+                            page_text += block.get('Text', '') + '\n'
+                    
+                    if page_text.strip():
+                        all_text_content.append(f"--- Page {i + 1} ---\n{page_text.strip()}")
+                        logger.info(f"✅ Page {i + 1} extracted: {len(page_text)} characters")
+                    else:
+                        logger.warning(f"⚠️ Page {i + 1} returned no text")
+                        all_text_content.append(f"--- Page {i + 1} ---\n[No text detected]")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to process image {i + 1}: {e}")
+                    all_text_content.append(f"--- Page {i + 1} ---\n[Processing failed: {e}]")
+                    continue
+            
+            # Combine all text
+            combined_text = '\n\n'.join(all_text_content)
+            
+            # Clean up image files
+            logger.info("Cleaning up image files...")
+            await self._cleanup_s3_objects(s3_bucket, image_keys)
+            
+            if combined_text.strip():
+                logger.info(f"✅ PDF-to-image extraction successful: {len(combined_text)} characters from {total_pages} pages")
+                return combined_text, total_pages
             else:
-                logger.warning("PDF repair not allowed, failing with UnsupportedDocumentException")
-                raise TextractError("Document format not supported by Textract")
+                raise TextractError("No text extracted from images")
+                
+        except Exception as e:
+            logger.error(f"PDF-to-image extraction failed: {e}")
+            raise TextractError(f"PDF-to-image extraction failed: {e}")
+
+    async def _convert_pdf_to_images_and_upload(self, pdf_content: bytes, s3_bucket: str, s3_key: str) -> List[str]:
+        """
+        Convert PDF to images and upload to S3. Return list of S3 keys.
+        """
+        try:
+            # Try pdf2image first (if available)
+            try:
+                import pdf2image
+                
+                logger.info(f"Converting PDF to images with pdf2image...")
+                images = pdf2image.convert_from_bytes(
+                    pdf_content,
+                    dpi=200,  # Good balance between quality and size
+                    fmt='PNG',
+                    thread_count=1,  # Single thread for Lambda compatibility
+                    transparent=False,
+                    grayscale=False
+                )
+                
+                image_keys = []
+                
+                for page_num, image in enumerate(images):
+                    # Convert PIL image to bytes
+                    img_buffer = BytesIO()
+                    image.save(img_buffer, format='PNG', optimize=True)
+                    img_data = img_buffer.getvalue()
+                    
+                    # Upload image to S3
+                    image_key = f"{s3_key.replace('.pdf', '')}_page_{page_num + 1}.png"
+                    self.s3_client.put_object(
+                        Bucket=s3_bucket,
+                        Key=image_key,
+                        Body=img_data,
+                        ContentType='image/png'
+                    )
+                    image_keys.append(image_key)
+                    
+                    logger.info(f"Uploaded page {page_num + 1} as image: {image_key}")
+                
+                return image_keys
+                
+            except ImportError:
+                logger.warning("pdf2image not available, trying alternative method...")
+                return await self._convert_pdf_alternative_method(pdf_content, s3_bucket, s3_key)
+            except Exception as e:
+                logger.error(f"pdf2image conversion failed: {e}")
+                return await self._convert_pdf_alternative_method(pdf_content, s3_bucket, s3_key)
+                
+        except Exception as e:
+            logger.error(f"Error converting PDF to images: {e}")
+            return []
+
+    async def _convert_pdf_alternative_method(self, pdf_content: bytes, s3_bucket: str, s3_key: str) -> List[str]:
+        """
+        Alternative PDF processing method when pdf2image fails.
+        """
+        try:
+            logger.info("Using alternative PDF processing method...")
+            
+            # Try PyPDF2 to get page count
+            try:
+                import PyPDF2
+                pdf_file = BytesIO(pdf_content)
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                page_count = len(pdf_reader.pages)
+                
+                logger.info(f"PDF has {page_count} pages")
+                
+                # Create simple text-based images for each page
+                image_keys = []
+                
+                for page_num in range(page_count):
+                    try:
+                        # Extract text from page
+                        page = pdf_reader.pages[page_num]
+                        page_text = page.extract_text()
+                        
+                        if page_text.strip():
+                            # Create a simple image with the text
+                            from PIL import Image, ImageDraw, ImageFont
+                            
+                            # Split text into lines
+                            lines = page_text.split('\n')[:50]  # Limit lines
+                            
+                            # Calculate image size
+                            max_line_length = max(len(line) for line in lines if line.strip())
+                            num_lines = len([line for line in lines if line.strip()])
+                            
+                            char_width = 8
+                            line_height = 20
+                            padding = 40
+                            
+                            img_width = min(max_line_length * char_width + padding, 1200)
+                            img_height = min(num_lines * line_height + padding, 1600)
+                            
+                            # Create image
+                            img = Image.new('RGB', (img_width, img_height), color='white')
+                            draw = ImageDraw.Draw(img)
+                            
+                            # Add text
+                            y = 20
+                            for line in lines:
+                                if line.strip():
+                                    display_line = line[:150] if len(line) > 150 else line
+                                    draw.text((20, y), display_line, fill='black')
+                                    y += line_height
+                                    if y > img_height - 40:
+                                        break
+                            
+                            # Convert to bytes
+                            img_buffer = BytesIO()
+                            img.save(img_buffer, format='PNG', optimize=True)
+                            img_bytes = img_buffer.getvalue()
+                            
+                            # Upload to S3
+                            image_key = f"{s3_key.replace('.pdf', '')}_page_{page_num + 1}.png"
+                            self.s3_client.put_object(
+                                Bucket=s3_bucket,
+                                Key=image_key,
+                                Body=img_bytes,
+                                ContentType='image/png'
+                            )
+                            image_keys.append(image_key)
+                            
+                            logger.info(f"Created text-based image for page {page_num + 1}: {image_key}")
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to process page {page_num + 1}: {e}")
+                        continue
+                
+                return image_keys
+                
+            except Exception as e:
+                logger.error(f"Alternative PDF processing failed: {e}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Alternative PDF processing failed: {e}")
+            return []
 
     def _extract_text_from_blocks(self, blocks: List[Dict[str, Any]]) -> str:
         """
-        Extract plain text from Textract blocks with improved LINE and WORD handling.
+        Extract text from Textract blocks preserving block structure and spatial relationships.
         """
         try:
             # Log block types for debugging
@@ -1239,73 +501,18 @@ class AWSTextractService:
                     pages[page_num] = []
                 pages[page_num].append(block)
             
-            all_text_lines = []
+            all_text_content = []
             
             for page_num in sorted(pages.keys()):
                 page_blocks = pages[page_num]
                 logger.info(f"Processing page {page_num} with {len(page_blocks)} blocks")
                 
-                # Extract LINE blocks first (they contain complete lines)
-                line_blocks = [b for b in page_blocks if b['BlockType'] == 'LINE']
-                if line_blocks:
-                    logger.info(f"Found {len(line_blocks)} LINE blocks on page {page_num}")
-                    for line_block in line_blocks:
-                        line_text = line_block.get('Text', '').strip()
-                        if line_text:
-                            all_text_lines.append(line_text)
-                            logger.debug(f"LINE block text: '{line_text}'")
-                
-                # If no LINE blocks, try to reconstruct from WORD blocks
-                if not line_blocks:
-                    word_blocks = [b for b in page_blocks if b['BlockType'] == 'WORD']
-                    if word_blocks:
-                        logger.info(f"No LINE blocks found, reconstructing from {len(word_blocks)} WORD blocks")
-                        
-                        # Sort words by position (top to bottom, left to right)
-                        sorted_words = sorted(word_blocks, key=lambda w: (
-                            w.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
-                            w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
-                        ))
-                        
-                        current_line = []
-                        current_y = None
-                        y_tolerance = 0.05  # Tolerance for same line detection
-                        
-                        for word_block in sorted_words:
-                            word_text = word_block.get('Text', '').strip()
-                            if not word_text:
-                                continue
-                            
-                            # Get Y position
-                            y_pos = word_block.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0)
-                            
-                            # Check if this word is on the same line
-                            if current_y is None or abs(y_pos - current_y) <= y_tolerance:
-                                current_line.append(word_text)
-                                current_y = y_pos
-                            else:
-                                # New line
-                                if current_line:
-                                    line_text = ' '.join(current_line)
-                                    all_text_lines.append(line_text)
-                                    logger.debug(f"Reconstructed line: '{line_text}'")
-                                current_line = [word_text]
-                                current_y = y_pos
-                        
-                        # Add the last line
-                        if current_line:
-                            line_text = ' '.join(current_line)
-                            all_text_lines.append(line_text)
-                            logger.debug(f"Reconstructed line: '{line_text}'")
+                # Extract different block types with spatial awareness
+                page_text = self._extract_structured_text_from_page(page_blocks)
+                all_text_content.append(f"--- Page {page_num} ---\n{page_text}")
             
-            extracted_text = '\n'.join(all_text_lines)
-            logger.info(f"Extracted {len(extracted_text)} characters from {len(all_text_lines)} lines across {len(pages)} pages")
-            
-            if not extracted_text.strip():
-                logger.warning("No text extracted from blocks - this may indicate low-quality images")
-                # Log some block details for debugging
-                for i, block in enumerate(blocks[:5]):  # Log first 5 blocks
-                    logger.debug(f"Block {i}: {block.get('BlockType', 'UNKNOWN')} - Text: '{block.get('Text', 'N/A')}'")
+            extracted_text = '\n\n'.join(all_text_content)
+            logger.info(f"Extracted {len(extracted_text)} characters with block structure from {len(pages)} pages")
             
             return extracted_text
             
@@ -1318,166 +525,278 @@ class AWSTextractService:
                     fallback_text.append(block['Text'])
             return ' '.join(fallback_text)
 
-    def _extract_structured_text_from_blocks(self, blocks: List[Dict[str, Any]]) -> str:
+    def _extract_structured_text_from_page(self, page_blocks: List[Dict[str, Any]]) -> str:
         """
-        Extract structured text from Textract blocks, including forms and tables.
+        Extract structured text from page blocks preserving layout and relationships.
         """
-        text_content = []
-        
-        # Extract form data
-        form_data = self._extract_form_data(blocks)
-        if form_data:
-            text_content.append("=== FORM DATA ===")
-            for key, value in form_data.items():
-                text_content.append(f"{key}: {value}")
-            text_content.append("")
-        
-        # Extract table data
-        table_data = self._extract_table_data(blocks)
-        if table_data:
-            text_content.append("=== TABLES ===")
-            for table_idx, table in enumerate(table_data):
-                text_content.append(f"Table {table_idx + 1}:")
-                for row in table:
-                    text_content.append(" | ".join(row))
-                text_content.append("")
-        
-        # Extract plain text
-        plain_text = self._extract_text_from_blocks(blocks)
-        if plain_text:
-            text_content.append("=== TEXT CONTENT ===")
-            text_content.append(plain_text)
-        
-        return '\n'.join(text_content)
+        try:
+            # Separate blocks by type
+            tables = [b for b in page_blocks if b['BlockType'] == 'TABLE']
+            key_value_sets = [b for b in page_blocks if b['BlockType'] == 'KEY_VALUE_SET']
+            lines = [b for b in page_blocks if b['BlockType'] == 'LINE']
+            words = [b for b in page_blocks if b['BlockType'] == 'WORD']
+            
+            text_sections = []
+            
+            # 1. Extract tables with structure
+            if tables:
+                logger.info(f"Found {len(tables)} tables on page")
+                for i, table_block in enumerate(tables):
+                    table_text = self._extract_table_structure(table_block, page_blocks)
+                    if table_text:
+                        text_sections.append(f"TABLE {i+1}:\n{table_text}")
+            
+            # 2. Extract key-value pairs (forms)
+            if key_value_sets:
+                logger.info(f"Found {len(key_value_sets)} key-value sets on page")
+                form_text = self._extract_form_structure(key_value_sets, page_blocks)
+                if form_text:
+                    text_sections.append(f"FORM DATA:\n{form_text}")
+            
+            # 3. Extract lines with spatial positioning
+            if lines:
+                logger.info(f"Found {len(lines)} lines on page")
+                lines_text = self._extract_lines_with_positioning(lines)
+                if lines_text:
+                    text_sections.append(f"TEXT CONTENT:\n{lines_text}")
+            
+            # 4. If no structured blocks, reconstruct from words
+            if not text_sections and words:
+                logger.info(f"No structured blocks found, reconstructing from {len(words)} words")
+                words_text = self._extract_words_with_positioning(words)
+                if words_text:
+                    text_sections.append(f"TEXT CONTENT:\n{words_text}")
+            
+            return '\n\n'.join(text_sections)
+            
+        except Exception as e:
+            logger.error(f"Error extracting structured text from page: {e}")
+            return ""
 
-    def _extract_form_data(self, blocks: List[Dict[str, Any]]) -> Dict[str, str]:
+    def _extract_table_structure(self, table_block: Dict[str, Any], all_blocks: List[Dict[str, Any]]) -> str:
         """
-        Extract key-value pairs from form blocks.
+        Extract table structure preserving rows, columns, and cell relationships.
         """
-        form_data = {}
-        key_blocks = [block for block in blocks if block['BlockType'] == 'KEY_VALUE_SET' and 'KEY' in block['EntityTypes']]
-        
-        for key_block in key_blocks:
-            key_text = ""
-            value_text = ""
+        try:
+            table_id = table_block['Id']
+            table_text = []
             
-            # Extract key text
-            if 'Relationships' in key_block:
-                for relationship in key_block['Relationships']:
-                    if relationship['Type'] == 'CHILD':
-                        for child_id in relationship['Ids']:
-                            child_block = next((b for b in blocks if b['Id'] == child_id), None)
-                            if child_block and child_block['BlockType'] == 'WORD':
-                                key_text += child_block['Text'] + " "
+            # Find all cells in this table
+            cells = []
+            for block in all_blocks:
+                if (block['BlockType'] == 'CELL' and 
+                    'Relationships' in block and 
+                    any(rel['Type'] == 'CHILD' and table_id in rel.get('Ids', []) 
+                        for rel in block['Relationships'])):
+                    cells.append(block)
             
-            # Extract value text
-            if 'Relationships' in key_block:
-                for relationship in key_block['Relationships']:
-                    if relationship['Type'] == 'VALUE':
-                        for value_id in relationship['Ids']:
-                            value_block = next((b for b in blocks if b['Id'] == value_id), None)
-                            if value_block and 'Relationships' in value_block:
-                                for value_rel in value_block['Relationships']:
-                                    if value_rel['Type'] == 'CHILD':
-                                        for child_id in value_rel['Ids']:
-                                            child_block = next((b for b in blocks if b['Id'] == child_id), None)
-                                            if child_block and child_block['BlockType'] == 'WORD':
-                                                value_text += child_block['Text'] + " "
+            if not cells:
+                return ""
             
-            if key_text.strip() and value_text.strip():
-                form_data[key_text.strip()] = value_text.strip()
-        
-        return form_data
+            # Sort cells by row and column
+            cells.sort(key=lambda x: (x.get('RowIndex', 0), x.get('ColumnIndex', 0)))
+            
+            # Group cells by row
+            rows = {}
+            for cell in cells:
+                row_index = cell.get('RowIndex', 0)
+                if row_index not in rows:
+                    rows[row_index] = []
+                rows[row_index].append(cell)
+            
+            # Extract table content
+            for row_index in sorted(rows.keys()):
+                row_cells = sorted(rows[row_index], key=lambda x: x.get('ColumnIndex', 0))
+                row_text = []
+                
+                for cell in row_cells:
+                    cell_text = self._extract_cell_text(cell, all_blocks)
+                    row_text.append(cell_text)
+                
+                table_text.append(" | ".join(row_text))
+            
+            return '\n'.join(table_text)
+            
+        except Exception as e:
+            logger.error(f"Error extracting table structure: {e}")
+            return ""
 
-    def _extract_table_data(self, blocks: List[Dict[str, Any]]) -> List[List[List[str]]]:
+    def _extract_cell_text(self, cell_block: Dict[str, Any], all_blocks: List[Dict[str, Any]]) -> str:
         """
-        Extract table data from table blocks.
+        Extract text from a table cell.
         """
-        tables = []
-        table_blocks = [block for block in blocks if block['BlockType'] == 'TABLE']
-        
-        for table_block in table_blocks:
-            table = self._process_table(table_block, blocks)
-            if table:
-                tables.append(table)
-        
-        return tables
-
-    def _process_table(self, table_block: Dict[str, Any], blocks: List[Dict[str, Any]]) -> List[List[str]]:
-        """
-        Process a single table block into a 2D array.
-        """
-        table = []
-        cell_blocks = []
-        
-        # Get all cells in this table
-        if 'Relationships' in table_block:
-            for relationship in table_block['Relationships']:
-                if relationship['Type'] == 'CHILD':
-                    for cell_id in relationship['Ids']:
-                        cell_block = next((b for b in blocks if b['Id'] == cell_id), None)
-                        if cell_block and cell_block['BlockType'] == 'CELL':
-                            cell_blocks.append(cell_block)
-        
-        # Sort cells by row and column
-        cell_blocks.sort(key=lambda x: (x.get('RowIndex', 0), x.get('ColumnIndex', 0)))
-        
-        # Build table structure
-        current_row = []
-        current_row_index = None
-        
-        for cell_block in cell_blocks:
-            row_index = cell_block.get('RowIndex', 0)
-            column_index = cell_block.get('ColumnIndex', 0)
-            
-            # Extract cell text
+        try:
             cell_text = ""
             if 'Relationships' in cell_block:
                 for relationship in cell_block['Relationships']:
                     if relationship['Type'] == 'CHILD':
                         for child_id in relationship['Ids']:
-                            child_block = next((b for b in blocks if b['Id'] == child_id), None)
+                            child_block = next((b for b in all_blocks if b['Id'] == child_id), None)
                             if child_block and child_block['BlockType'] == 'WORD':
-                                cell_text += child_block['Text'] + " "
+                                cell_text += child_block.get('Text', '') + ' '
             
-            # Start new row if needed
-            if current_row_index is None or row_index != current_row_index:
-                if current_row:
-                    table.append(current_row)
-                current_row = []
-                current_row_index = row_index
-            
-            current_row.append(cell_text.strip())
-        
-        # Add the last row
-        if current_row:
-            table.append(current_row)
-        
-        return table
-
-    async def process_preprocessed_document(
-        self, 
-        s3_bucket: str, 
-        s3_key: str, 
-        document_type: DocumentType = DocumentType.GENERAL
-    ) -> (str, int):
-        """
-        Process a document that has been preprocessed and normalized by the preprocessing service.
-        This is the recommended approach for production use.
-        """
-        try:
-            logger.info(f"Processing preprocessed document: s3://{s3_bucket}/{s3_key}")
-            
-            # Extract text using Textract
-            text_content, page_count = await self.extract_text_from_s3_pdf(
-                s3_bucket, s3_key, document_type
-            )
-            
-            return text_content, page_count
+            return cell_text.strip()
             
         except Exception as e:
-            logger.error(f"Error processing preprocessed document {s3_key}: {e}")
-            raise TextractError(f"Preprocessed document processing failed: {e}")
+            logger.error(f"Error extracting cell text: {e}")
+            return ""
+
+    def _extract_form_structure(self, key_value_blocks: List[Dict[str, Any]], all_blocks: List[Dict[str, Any]]) -> str:
+        """
+        Extract form structure preserving key-value relationships.
+        """
+        try:
+            form_data = []
+            
+            # Separate keys and values
+            keys = [b for b in key_value_blocks if 'KEY' in b.get('EntityTypes', [])]
+            values = [b for b in key_value_blocks if 'VALUE' in b.get('EntityTypes', [])]
+            
+            # Create key-value pairs
+            for key_block in keys:
+                key_text = self._extract_block_text(key_block, all_blocks)
+                value_text = self._find_value_for_key(key_block, values, all_blocks)
+                
+                if key_text and value_text:
+                    form_data.append(f"{key_text}: {value_text}")
+                elif key_text:
+                    form_data.append(f"{key_text}: [No value found]")
+            
+            return '\n'.join(form_data)
+            
+        except Exception as e:
+            logger.error(f"Error extracting form structure: {e}")
+            return ""
+
+    def _extract_block_text(self, block: Dict[str, Any], all_blocks: List[Dict[str, Any]]) -> str:
+        """
+        Extract text from a block by following relationships.
+        """
+        try:
+            text = ""
+            if 'Relationships' in block:
+                for relationship in block['Relationships']:
+                    if relationship['Type'] == 'CHILD':
+                        for child_id in relationship['Ids']:
+                            child_block = next((b for b in all_blocks if b['Id'] == child_id), None)
+                            if child_block and child_block['BlockType'] == 'WORD':
+                                text += child_block.get('Text', '') + ' '
+            return text.strip()
+            
+        except Exception as e:
+            logger.error(f"Error extracting block text: {e}")
+            return ""
+
+    def _find_value_for_key(self, key_block: Dict[str, Any], value_blocks: List[Dict[str, Any]], all_blocks: List[Dict[str, Any]]) -> str:
+        """
+        Find the value associated with a key block.
+        """
+        try:
+            for value_block in value_blocks:
+                if 'Relationships' in value_block:
+                    for relationship in value_block['Relationships']:
+                        if relationship['Type'] == 'VALUE':
+                            for value_id in relationship['Ids']:
+                                if value_id == key_block['Id']:
+                                    return self._extract_block_text(value_block, all_blocks)
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Error finding value for key: {e}")
+            return ""
+
+    def _extract_lines_with_positioning(self, line_blocks: List[Dict[str, Any]]) -> str:
+        """
+        Extract lines with spatial positioning information.
+        """
+        try:
+            # Sort lines by vertical position (top to bottom)
+            sorted_lines = sorted(line_blocks, key=lambda x: x.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0))
+            
+            lines_text = []
+            for line_block in sorted_lines:
+                line_text = line_block.get('Text', '').strip()
+                if line_text:
+                    # Add positioning info
+                    geometry = line_block.get('Geometry', {}).get('BoundingBox', {})
+                    top = geometry.get('Top', 0)
+                    left = geometry.get('Left', 0)
+                    confidence = line_block.get('Confidence', 0)
+                    
+                    # Format: [Position: Top=Y%, Left=X%] Text (Confidence: Z%)
+                    position_info = f"[Top={top:.2%}, Left={left:.2%}]"
+                    confidence_info = f"(Confidence: {confidence:.1f}%)"
+                    lines_text.append(f"{position_info} {line_text} {confidence_info}")
+            
+            return '\n'.join(lines_text)
+            
+        except Exception as e:
+            logger.error(f"Error extracting lines with positioning: {e}")
+            return ""
+
+    def _extract_words_with_positioning(self, word_blocks: List[Dict[str, Any]]) -> str:
+        """
+        Extract words with spatial positioning and reconstruct text flow.
+        """
+        try:
+            # Sort words by position (top to bottom, left to right)
+            sorted_words = sorted(word_blocks, key=lambda w: (
+                w.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0),
+                w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0)
+            ))
+            
+            # Group words into lines based on Y position
+            lines = []
+            current_line = []
+            current_y = None
+            y_tolerance = 0.02  # Tighter tolerance for better line detection
+            
+            for word_block in sorted_words:
+                word_text = word_block.get('Text', '').strip()
+                if not word_text:
+                    continue
+                
+                # Get Y position
+                y_pos = word_block.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0)
+                
+                # Check if this word is on the same line
+                if current_y is None or abs(y_pos - current_y) <= y_tolerance:
+                    current_line.append(word_block)
+                    current_y = y_pos
+                else:
+                    # New line
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = [word_block]
+                    current_y = y_pos
+            
+            # Add the last line
+            if current_line:
+                lines.append(current_line)
+            
+            # Process each line
+            lines_text = []
+            for line_num, line_words in enumerate(lines):
+                # Sort words in line by X position
+                line_words.sort(key=lambda w: w.get('Geometry', {}).get('BoundingBox', {}).get('Left', 0))
+                
+                line_text = " ".join(word.get('Text', '').strip() for word in line_words if word.get('Text', '').strip())
+                
+                if line_text:
+                    # Add line positioning info
+                    first_word = line_words[0]
+                    geometry = first_word.get('Geometry', {}).get('BoundingBox', {})
+                    top = geometry.get('Top', 0)
+                    left = geometry.get('Left', 0)
+                    
+                    position_info = f"[Line {line_num+1}: Top={top:.2%}, Left={left:.2%}]"
+                    lines_text.append(f"{position_info} {line_text}")
+            
+            return '\n'.join(lines_text)
+            
+        except Exception as e:
+            logger.error(f"Error extracting words with positioning: {e}")
+            return ""
 
     async def upload_to_s3_and_extract(
         self, 
@@ -1485,11 +804,9 @@ class AWSTextractService:
         filename: str, 
         document_type: DocumentType = DocumentType.GENERAL,
         user_id: str = "anonymous"
-    ) -> (str, int):
+    ) -> Tuple[str, int]:
         """
         Upload file to S3 and extract text using AWS Textract.
-        For PDFs: Convert to images first, then process with Textract.
-        For images: Process directly with Textract.
         """
         try:
             # Ensure clients are initialized
@@ -1500,415 +817,89 @@ class AWSTextractService:
             
             bucket_name = aws_config.s3_bucket_name
             
-            if filename.lower().endswith('.pdf'):
-                # For PDFs: Use Textract's direct PDF processing (like AWS console)
-                logger.info(f"📄 Processing PDF directly with Textract: {filename}")
-                
-                # Upload PDF directly to S3
-                s3_key = f"temp-documents/{user_id}/pdfs/{filename}"
-                self.s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=s3_key,
-                    Body=file_content,
-                    ContentType='application/pdf'
-                )
-                logger.info(f"📤 Uploaded PDF to S3: {s3_key}")
-                
-                # Process PDF directly with Textract (no image conversion needed)
-                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
-                
-                # Clean up PDF file
-                await self._cleanup_s3_objects(bucket_name, [s3_key])
-                
-                return text_content, page_count
-            else:
-                # For images: Upload directly and process with Textract
-                s3_key = aws_config.generate_temp_s3_key(filename)
-                
-                logger.info(f"Uploading {filename} to S3: s3://{bucket_name}/{s3_key}")
-                self.s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=s3_key,
-                    Body=file_content,
-                    ContentType=self._get_content_type(filename)
-                )
-                
-                # Extract text using Textract
-                text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
-                
-                # Clean up S3 object
-                await self._cleanup_s3_objects(bucket_name, [s3_key])
-                
-                return text_content, page_count
+            # Upload file to S3
+            s3_key = f"temp-documents/{user_id}/{filename}"
+            self.s3_client.put_object(
+                Bucket=bucket_name,
+                Key=s3_key,
+                Body=file_content,
+                ContentType=self._get_content_type(filename)
+            )
+            logger.info(f"Uploaded {filename} to S3: s3://{bucket_name}/{s3_key}")
+            
+            # Extract text using Textract
+            text_content, page_count = await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
+            
+            # Clean up S3 object
+            await self._cleanup_s3_objects(bucket_name, [s3_key])
+            
+            return text_content, page_count
             
         except Exception as e:
             logger.error(f"Upload and extraction failed: {e}")
             raise TextractError(f"Upload and extraction failed: {e}")
 
-    async def _convert_pdf_to_images_and_upload(
+    async def process_preprocessed_document(
         self, 
-        pdf_content: bytes, 
-        filename: str, 
         bucket_name: str, 
-        user_id: str
-    ) -> List[str]:
+        s3_key: str, 
+        document_type: DocumentType = DocumentType.GENERAL
+    ) -> Tuple[str, int]:
         """
-        Convert PDF to images and upload to S3. Return list of S3 keys.
+        Process a preprocessed document that's already in S3.
         """
         try:
-            # Convert PDF to images
-            image_files = await self._convert_pdf_to_images_local(pdf_content, filename)
-            
-            if not image_files:
-                logger.error("Failed to convert PDF to images")
-                return []
-            
-            # Upload images to S3
-            uploaded_keys = []
-            for i, (image_content, image_filename) in enumerate(image_files):
-                s3_key = f"temp-documents/{user_id}/images/{os.path.splitext(filename)[0]}_page_{i+1}.png"
-                
-                self.s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=s3_key,
-                    Body=image_content,
-                    ContentType='image/png'
-                )
-                uploaded_keys.append(s3_key)
-                logger.info(f"Uploaded image {i+1}/{len(image_files)}: {s3_key}")
-            
-            return uploaded_keys
-            
+            return await self.extract_text_from_s3_pdf(bucket_name, s3_key, document_type)
         except Exception as e:
-            logger.error(f"Error converting PDF to images: {e}")
-            return []
+            logger.error(f"Error processing preprocessed document: {e}")
+            raise TextractError(f"Preprocessed document processing failed: {e}")
 
-    async def _convert_pdf_to_images_local(
-        self, 
-        pdf_content: bytes, 
-        filename: str
-    ) -> List[Tuple[bytes, str]]:
+    async def _try_pypdf2_extraction(self, file_content: bytes, filename: str) -> Tuple[str, int]:
         """
-        Convert PDF to images locally using pdf2image with high DPI for Textract compatibility.
+        Try PyPDF2 extraction as a fallback method.
         """
         try:
-            import pdf2image
-            from PIL import Image
-            import io
+            import PyPDF2
+            pdf = PyPDF2.PdfReader(BytesIO(file_content))
+            text_content = []
+            page_count = len(pdf.pages)
             
-            # Convert PDF to images with high DPI for better Textract OCR
-            logger.info(f"Converting PDF to images with 300 DPI for optimal Textract compatibility")
-            
-            # Try different DPI settings if the first one fails
-            dpi_settings = [300, 200, 150, 100]
-            
-            for dpi in dpi_settings:
+            for i, page in enumerate(pdf.pages):
                 try:
-                    logger.info(f"🔄 Trying PDF conversion with {dpi} DPI...")
-                    images = pdf2image.convert_from_bytes(
-                        pdf_content,
-                        dpi=dpi,
-                        fmt='PNG',
-                        thread_count=1,  # Single thread for Lambda compatibility
-                        transparent=False,  # Ensure solid background
-                        grayscale=False,  # Keep color for better OCR
-                        size=(None, None)  # Use original size with DPI scaling
-                    )
-                    
-                    # Check if images are valid (not blank)
-                    valid_images = []
-                    for i, image in enumerate(images):
-                        # Check if image has content (not mostly white)
-                        try:
-                            gray_image = image.convert('L')
-                            pixels = list(gray_image.getdata())
-                            white_pixels = sum(1 for p in pixels if p > 240)
-                            total_pixels = len(pixels)
-                            white_percentage = (white_pixels / total_pixels) * 100
-                            
-                            if white_percentage < 95:  # Allow some white space but not mostly blank
-                                valid_images.append((i, image))
-                                logger.info(f"✅ Page {i+1} has content ({100-white_percentage:.1f}% non-white)")
-                            else:
-                                logger.warning(f"⚠️ Page {i+1} appears blank ({white_percentage:.1f}% white)")
-                        except Exception as check_e:
-                            logger.warning(f"⚠️ Could not check page {i+1} content: {check_e}")
-                            valid_images.append((i, image))  # Include anyway
-                    
-                    if valid_images:
-                        logger.info(f"✅ PDF conversion successful with {dpi} DPI - {len(valid_images)} valid pages")
-                        break
-                    else:
-                        logger.warning(f"⚠️ All pages appear blank with {dpi} DPI, trying next setting...")
-                        continue
-                        
-                except Exception as dpi_e:
-                    logger.warning(f"⚠️ PDF conversion failed with {dpi} DPI: {dpi_e}")
-                    continue
+                    page_text = page.extract_text()
+                    if page_text and page_text.strip():
+                        text_content.append(f"Page {i+1}: {page_text}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from page {i+1}: {e}")
+            
+            if text_content:
+                result = '\n\n'.join(text_content)
+                logger.info(f"PyPDF2 extraction successful: {filename} ({page_count} pages)")
+                return result, page_count
             else:
-                # If all DPI settings failed, try a different approach
-                logger.error("❌ All PDF conversion attempts failed, trying alternative method...")
-                return await self._convert_pdf_alternative_method(pdf_content, filename)
-            
-            # Process the valid images
-            image_files = []
-            for i, image in enumerate(images):
-                # Optimize image for Textract processing
-                optimized_image = self._optimize_image_for_textract(image)
+                logger.warning(f"PyPDF2 extracted no text from {filename}")
+                return "", page_count
                 
-                # Convert PIL image to bytes
-                img_buffer = io.BytesIO()
-                optimized_image.save(img_buffer, format='PNG', optimize=True)
-                img_bytes = img_buffer.getvalue()
-                
-                image_filename = f"{os.path.splitext(filename)[0]}_page_{i+1}.png"
-                image_files.append((img_bytes, image_filename))
-                
-                logger.info(f"Converted page {i+1} to image: {len(img_bytes)} bytes ({dpi} DPI)")
-                
-                # CRITICAL: Always save images for debugging in Lambda
-                try:
-                    debug_path = f"/tmp/page_{i+1}.png"
-                    optimized_image.save(debug_path)
-                    file_size = os.path.getsize(debug_path)
-                    logger.info(f"CRITICAL DEBUG: Saved rendered PNG: {debug_path} (size: {file_size} bytes)")
-                    
-                    # Check if image is suspiciously small
-                    if file_size < 50000:  # Less than 50KB
-                        logger.warning(f"⚠️ SUSPICIOUS: Image {debug_path} is very small ({file_size} bytes) - may indicate rendering issues")
-                        
-                        # Log image dimensions for debugging
-                        width, height = optimized_image.size
-                        logger.warning(f"⚠️ Image dimensions: {width}x{height} pixels")
-                        
-                        # Check if image is mostly blank
-                        try:
-                            # Convert to grayscale and check if mostly white/blank
-                            gray_image = optimized_image.convert('L')
-                            pixels = list(gray_image.getdata())
-                            white_pixels = sum(1 for p in pixels if p > 240)  # Threshold for "white"
-                            total_pixels = len(pixels)
-                            white_percentage = (white_pixels / total_pixels) * 100
-                            
-                            logger.warning(f"⚠️ Image analysis: {white_percentage:.1f}% white pixels")
-                            if white_percentage > 90:
-                                logger.error(f"❌ CRITICAL: Image appears to be mostly blank ({white_percentage:.1f}% white)")
-                        except Exception as analysis_e:
-                            logger.warning(f"⚠️ Could not analyze image content: {analysis_e}")
-                    
-                except Exception as debug_e:
-                    logger.error(f"❌ CRITICAL: Failed to save debug image: {debug_e}")
-                
-                # Additional debug info
-                logger.info(f"Image format: {optimized_image.format}, Mode: {optimized_image.mode}, Size: {optimized_image.size}")
-                
-                # Check if image has any non-white content
-                try:
-                    # Sample some pixels to check for content
-                    sample_pixels = []
-                    for x in range(0, min(optimized_image.size[0], 100), 10):
-                        for y in range(0, min(optimized_image.size[1], 100), 10):
-                            pixel = optimized_image.getpixel((x, y))
-                            if isinstance(pixel, tuple):
-                                # RGB/RGBA
-                                sample_pixels.append(sum(pixel[:3]) / 3)
-                            else:
-                                # Grayscale
-                                sample_pixels.append(pixel)
-                    
-                    avg_brightness = sum(sample_pixels) / len(sample_pixels)
-                    logger.info(f"Sample pixel analysis: Average brightness = {avg_brightness:.1f}")
-                    
-                except Exception as pixel_e:
-                    logger.warning(f"Could not analyze pixel data: {pixel_e}")
-            
-            return image_files
-            
         except Exception as e:
-            logger.error(f"Error converting PDF to images locally: {e}")
-            # Try alternative method as fallback
-            return await self._convert_pdf_alternative_method(pdf_content, filename)
-    
-    async def _convert_pdf_alternative_method(
-        self, 
-        pdf_content: bytes, 
-        filename: str
-    ) -> List[Tuple[bytes, str]]:
+            logger.warning(f"PyPDF2 extraction failed for {filename}: {e}")
+            return "", 0
+
+    async def _try_raw_text_extraction(self, file_content: bytes, filename: str) -> str:
         """
-        Alternative PDF processing method when pdf2image fails.
+        Try raw text extraction as a fallback method.
         """
         try:
-            logger.info("🔄 Trying alternative PDF processing method...")
-            
-            # First, try to extract text directly from PDF
-            logger.info("📄 Attempting direct PDF text extraction...")
-            text_content = await self._try_raw_text_extraction(pdf_content, filename)
-            
-            if text_content and len(text_content.strip()) > 50:
-                logger.info(f"✅ Direct text extraction successful: {len(text_content)} characters")
-                
-                # Create a simple image with the extracted text for Textract
-                try:
-                    from PIL import Image, ImageDraw, ImageFont
-                    
-                    # Split text into lines and limit for display
-                    lines = text_content.split('\n')[:100]  # Limit to first 100 lines
-                    
-                    # Calculate image size based on content
-                    max_line_length = max(len(line) for line in lines if line.strip())
-                    num_lines = len([line for line in lines if line.strip()])
-                    
-                    # Estimate image dimensions
-                    char_width = 8  # Approximate character width
-                    line_height = 20
-                    padding = 40
-                    
-                    img_width = min(max_line_length * char_width + padding, 1200)
-                    img_height = min(num_lines * line_height + padding, 1600)
-                    
-                    # Create image
-                    img = Image.new('RGB', (img_width, img_height), color='white')
-                    draw = ImageDraw.Draw(img)
-                    
-                    # Try to use a default font
-                    try:
-                        font = ImageFont.load_default()
-                        y = 20
-                        for line in lines:
-                            if line.strip():
-                                # Truncate line if too long
-                                display_line = line[:150] if len(line) > 150 else line
-                                draw.text((20, y), display_line, fill='black', font=font)
-                                y += line_height
-                                if y > img_height - 40:  # Stop if image is full
-                                    break
-                    except Exception as font_e:
-                        logger.warning(f"Font rendering failed: {font_e}")
-                        # Fallback: draw simple rectangles for text areas
-                        y = 20
-                        for line in lines[:50]:  # Limit lines for display
-                            if line.strip():
-                                line_width = min(len(line) * 8, img_width - 40)
-                                draw.rectangle([20, y, 20 + line_width, y + 15], outline='black', fill='lightgray')
-                                y += line_height
-                                if y > img_height - 40:
-                                    break
-                    
-                    # Convert to bytes
-                    img_buffer = io.BytesIO()
-                    img.save(img_buffer, format='PNG', optimize=True)
-                    img_bytes = img_buffer.getvalue()
-                    
-                    image_filename = f"{os.path.splitext(filename)[0]}_text_extract.png"
-                    logger.info(f"✅ Created text-based image: {len(img_bytes)} bytes")
-                    
-                    return [(img_bytes, image_filename)]
-                    
-                except Exception as img_e:
-                    logger.error(f"Failed to create text-based image: {img_e}")
-            
-            # If direct text extraction failed or was insufficient, try a different approach
-            logger.info("🔄 Trying basic PDF structure analysis...")
-            try:
-                # Try to analyze PDF structure and create a simple representation
-                from PIL import Image, ImageDraw
-                
-                # Create a simple diagram showing PDF structure
-                img = Image.new('RGB', (600, 400), color='white')
-                draw = ImageDraw.Draw(img)
-                
-                # Draw a simple document representation
-                draw.rectangle([50, 50, 550, 350], outline='black', width=2)
-                draw.text((70, 70), f"PDF Document: {filename}", fill='black')
-                draw.text((70, 100), "Text extraction available", fill='blue')
-                draw.text((70, 130), "Content processed successfully", fill='green')
-                
-                # Add some visual elements
-                for i in range(5):
-                    y = 160 + i * 30
-                    draw.rectangle([70, y, 530, y + 20], outline='gray', fill='lightblue')
-                    draw.text((80, y + 5), f"Text block {i+1}", fill='black')
-                
-                # Convert to bytes
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format='PNG')
-                img_bytes = img_buffer.getvalue()
-                
-                image_filename = f"{os.path.splitext(filename)[0]}_structure.png"
-                logger.info(f"✅ Created structure diagram: {len(img_bytes)} bytes")
-                
-                return [(img_bytes, image_filename)]
-                
-            except Exception as struct_e:
-                logger.error(f"Structure analysis failed: {struct_e}")
-            
-            # Final fallback: create a simple placeholder image
-            logger.info("🔄 Creating final fallback image...")
-            try:
-                from PIL import Image, ImageDraw
-                
-                img = Image.new('RGB', (400, 200), color='lightgray')
-                draw = ImageDraw.Draw(img)
-                
-                draw.text((50, 50), f"PDF: {filename}", fill='black')
-                draw.text((50, 80), "Processing completed", fill='green')
-                draw.text((50, 110), "Text extraction available", fill='blue')
-                
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format='PNG')
-                img_bytes = img_buffer.getvalue()
-                
-                image_filename = f"{os.path.splitext(filename)[0]}_fallback.png"
-                logger.info(f"✅ Created fallback image: {len(img_bytes)} bytes")
-                
-                return [(img_bytes, image_filename)]
-                
-            except Exception as final_e:
-                logger.error(f"Final fallback failed: {final_e}")
-            
-            return []
-            
+            # Try to decode as text
+            text_content = file_content.decode('utf-8', errors='ignore')
+            if text_content.strip():
+                logger.info(f"Raw text extraction successful for {filename}")
+                return text_content
+            else:
+                logger.warning(f"Raw text extraction returned empty content for {filename}")
+                return ""
         except Exception as e:
-            logger.error(f"Alternative PDF processing failed: {e}")
-            return []
-
-    def _optimize_image_for_textract(self, image):
-        """
-        Optimize image for better Textract OCR results.
-        """
-        try:
-            # Convert to RGB if needed (Textract works better with RGB)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Enhance contrast for better text recognition
-            from PIL import ImageEnhance
-            
-            # Increase contrast slightly
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(1.2)  # 20% more contrast
-            
-            # Increase sharpness
-            enhancer = ImageEnhance.Sharpness(image)
-            image = enhancer.enhance(1.1)  # 10% more sharpness
-            
-            # Ensure minimum size for Textract (at least 100x100 pixels)
-            min_size = 100
-            if image.size[0] < min_size or image.size[1] < min_size:
-                logger.warning(f"Image too small ({image.size}), scaling up for Textract")
-                # Scale up while maintaining aspect ratio
-                ratio = max(min_size / image.size[0], min_size / image.size[1])
-                new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-                image = image.resize(new_size, Image.Resampling.LANCZOS)
-            
-            logger.info(f"Image optimized for Textract - Size: {image.size}, Mode: {image.mode}")
-            return image
-            
-        except Exception as e:
-            logger.warning(f"Image optimization failed: {e}, using original image")
-            return image
-
-
+            logger.warning(f"Raw text extraction failed for {filename}: {e}")
+            return ""
 
     async def _cleanup_s3_objects(self, bucket_name: str, s3_keys: List[str]):
         """
@@ -1920,377 +911,6 @@ class AWSTextractService:
                 logger.info(f"Cleaned up S3 object: {s3_key}")
             except Exception as e:
                 logger.warning(f"Failed to clean up S3 object {s3_key}: {e}")
-
-    async def _hybrid_pdf_extraction(
-        self, 
-        file_content: bytes, 
-        filename: str, 
-        bucket_name: str, 
-        s3_key: str, 
-        document_type: DocumentType,
-        user_id: str
-    ) -> (str, int):
-        """
-        Hybrid PDF extraction: Convert to images and use Textract.
-        """
-        logger.info(f"Starting PDF-to-image extraction for {filename}")
-
-        try:
-            # Convert PDF to images and process with Textract
-            logger.info(f"🔄 Converting PDF {filename} to images for Textract")
-            image_keys = await self._convert_pdf_to_images_and_upload(file_content, filename, bucket_name, user_id)
-            
-            if not image_keys:
-                raise Exception("Failed to convert PDF to images")
-            
-            # Process all images with Textract
-            text_content, page_count = await self.extract_text_from_image_manifest(bucket_name, image_keys, document_type)
-            
-            if text_content and len(text_content.strip()) > 10:
-                logger.info(f"✅ Textract extraction successful: {len(text_content)} characters")
-                logger.info(f"📄 First 100 chars: {text_content[:100]}")
-                
-                # Clean up image files
-                await self._cleanup_s3_objects(bucket_name, image_keys)
-                
-                return text_content, page_count
-            else:
-                logger.warning(f"⚠ Textract returned minimal content ({len(text_content.strip())} chars)")
-                return self._generate_textract_fallback_message(filename, text_content), 1
-                
-        except Exception as e:
-            logger.warning(f"⚠ PDF-to-image extraction failed: {e}")
-
-        # Final fallback: Raw text extraction
-        try:
-            logger.info(f"🔄 Attempting raw text extraction for {filename}")
-            text_content = await self._try_raw_text_extraction(file_content, filename)
-            if text_content and len(text_content.strip()) > 10:
-                logger.info(f"✅ Raw text extraction successful: {len(text_content)} characters")
-                logger.info(f"📄 First 100 chars: {text_content[:100]}")
-                return text_content, 1
-        except Exception as e:
-            logger.warning(f"⚠ Raw text extraction failed: {e}")
-
-        logger.error(f"❌ All extraction methods failed for {filename}")
-        return (
-            f"PDF content could not be extracted from {filename}. Possible reasons:\n"
-            "- The PDF is corrupted or damaged\n"
-            "- The PDF has no embedded text content\n"
-            "- AWS Textract is not available or configured\n"
-            "- Font rendering issues in the container\n"
-            "Please try uploading a different document format.",
-            1
-        )
-
-    def _generate_textract_fallback_message(self, filename: str, text_content: str) -> str:
-        """
-        Generate a helpful message when Textract returns minimal content.
-        """
-        content_length = len(text_content.strip()) if text_content else 0
-        
-        if content_length == 0:
-            return (
-                f"⚠️ Textract could not extract text from {filename}.\n\n"
-                "This usually means the PDF is:\n"
-                "• A scanned document (image-based)\n"
-                "• Created by a browser or certain tools\n"
-                "• Has embedded images instead of text\n\n"
-                "**Solutions:**\n"
-                "1. Upload the original source file (Word, Excel, etc.)\n"
-                "2. Convert the PDF to images (PNG/JPEG) and upload those\n"
-                "3. Use a PDF with embedded text content\n"
-                "4. Re-generate the PDF using Adobe Acrobat or Microsoft Word\n\n"
-                "The document may still be readable visually, but text extraction failed."
-            )
-        elif content_length < 50:
-            return (
-                f"⚠️ Textract extracted very little text from {filename} ({content_length} characters).\n\n"
-                "This suggests the PDF is mostly image-based or has minimal text content.\n\n"
-                "**Extracted content:**\n"
-                f"'{text_content.strip()}'\n\n"
-                "**Recommendations:**\n"
-                "1. Upload the original source file instead\n"
-                "2. Convert to image format and upload those\n"
-                "3. Try a different PDF with more text content"
-            )
-        else:
-            return (
-                f"⚠️ Textract extracted limited text from {filename} ({content_length} characters).\n\n"
-                "**Extracted content:**\n"
-                f"'{text_content.strip()}'\n\n"
-                "This may be sufficient for basic analysis, but consider uploading the original source file for better results."
-            )
-
-    async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
-        """Try very aggressive text extraction from PDF bytes."""
-        try:
-            # Try multiple encodings and extraction strategies
-            encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1', 'ascii']
-            
-            best_text = ""
-            best_score = 0
-            
-            for encoding in encodings:
-                try:
-                    content_str = file_content.decode(encoding, errors='ignore')
-                    
-                    # Look for various text patterns
-                    import re
-                    
-                    # Find words (2+ letters)
-                    words = re.findall(r'\b[A-Za-z]{2,}\b', content_str)
-                    
-                    # Find numbers and prices
-                    numbers = re.findall(r'\$\d+\.?\d*|\d+\.?\d*', content_str)
-                    
-                    # Find domain names and emails
-                    domains = re.findall(r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', content_str)
-                    emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', content_str)
-                    
-                    # Find dates
-                    dates = re.findall(r'\d{1,2}[/-]\d{1,2}[/-]\d{2,4}', content_str)
-                    
-                    # Calculate score based on found patterns
-                    score = len(words) + len(numbers) * 2 + len(domains) * 3 + len(emails) * 5 + len(dates) * 2
-                    
-                    if score > best_score:
-                        best_score = score
-                        # Combine all found text
-                        extracted_parts = []
-                        if words:
-                            extracted_parts.extend(words[:100])  # Limit words
-                        if numbers:
-                            extracted_parts.extend(numbers[:50])  # Limit numbers
-                        if domains:
-                            extracted_parts.extend(domains[:20])  # Limit domains
-                        if emails:
-                            extracted_parts.extend(emails[:10])  # Limit emails
-                        if dates:
-                            extracted_parts.extend(dates[:10])  # Limit dates
-                        
-                        best_text = " ".join(extracted_parts)
-                        
-                except Exception as e:
-                    logger.debug(f"Encoding {encoding} failed: {e}")
-                    continue
-            
-            if best_text and best_score > 10:
-                logger.info(f"Aggressive extraction found {best_score} text elements")
-                return best_text
-            
-            return ""
-            
-        except Exception as e:
-            logger.warning(f"Aggressive text extraction failed: {e}")
-            return ""
-
-    async def _try_raw_text_extraction(self, file_content: bytes, filename: str) -> str:
-        """Try to extract any readable text from PDF bytes using multiple encodings."""
-        try:
-            # Try different encodings and text extraction methods
-            encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-            
-            for encoding in encodings:
-                try:
-                    content_str = file_content.decode(encoding, errors='ignore')
-                    
-                    # Look for text patterns that indicate readable content
-                    import re
-                    
-                    # Find words (3+ letters)
-                    words = re.findall(r'\b[A-Za-z]{3,}\b', content_str)
-                    
-                    # Find numbers and prices
-                    numbers = re.findall(r'\$\d+\.?\d*', content_str)
-                    
-                    # Find domain names
-                    domains = re.findall(r'[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', content_str)
-                    
-                    # Combine all found text
-                    extracted_parts = []
-                    if words:
-                        extracted_parts.extend(words[:50])  # Limit to first 50 words
-                    if numbers:
-                        extracted_parts.extend(numbers[:20])  # Limit to first 20 numbers
-                    if domains:
-                        extracted_parts.extend(domains[:10])  # Limit to first 10 domains
-                    
-                    if extracted_parts:
-                        result = " ".join(extracted_parts)
-                        logger.info(f"Raw text extraction found {len(extracted_parts)} text elements using {encoding}")
-                        return result
-                        
-                except Exception as e:
-                    logger.debug(f"Encoding {encoding} failed: {e}")
-                    continue
-            
-            return ""
-            
-        except Exception as e:
-            logger.warning(f"Raw text extraction failed: {e}")
-            return ""
-
-    async def _try_pypdf2_extraction(self, file_content: bytes, filename: str) -> (str, int):
-        """Try PyPDF2 extraction."""
-        try:
-            import asyncio
-            from PyPDF2 import PdfReader
-            from io import BytesIO
-            
-            def extract_with_timeout():
-                try:
-                    pdf_file = BytesIO(file_content)
-                    reader = PdfReader(pdf_file)
-                    text_content = ""
-                    page_count = len(reader.pages)
-                    
-                    logger.info(f"PyPDF2: Processing {page_count} pages")
-                    
-                    for page_num, page in enumerate(reader.pages):
-                        try:
-                            page_text = page.extract_text()
-                            if page_text:
-                                text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
-                                logger.debug(f"PyPDF2: Page {page_num + 1} extracted {len(page_text)} characters")
-                            else:
-                                logger.debug(f"PyPDF2: Page {page_num + 1} returned no text")
-                        except Exception as e:
-                            logger.warning(f"PyPDF2 error on page {page_num + 1}: {e}")
-                            continue
-                    
-                    logger.info(f"PyPDF2: Total extracted {len(text_content)} characters from {page_count} pages")
-                    return text_content, page_count
-                except Exception as e:
-                    logger.warning(f"PyPDF2 extraction error: {e}")
-                    raise
-            
-            # Run with 5-second timeout
-            loop = asyncio.get_event_loop()
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_with_timeout),
-                timeout=5.0
-            )
-            
-            return result
-            
-        except asyncio.TimeoutError:
-            logger.warning("PyPDF2 extraction timed out (likely corrupted PDF)")
-            raise Exception("Extraction timed out")
-        except Exception as e:
-            logger.warning(f"PyPDF2 extraction failed: {e}")
-            raise
-
-    async def _try_pdfminer_extraction(self, file_content: bytes, filename: str) -> (str, int):
-        """Try PDFMiner extraction.."""
-        try:
-            import asyncio
-            from pdfminer.high_level import extract_text_to_fp
-            from pdfminer.layout import LAParams
-            from io import BytesIO, StringIO
-            
-            # Create output string buffer
-            output_string = StringIO()
-            
-            # Run PDFMiner extraction with timeout to prevent hanging on corrupted PDFs
-            def extract_with_timeout():
-                try:
-                    logger.info(f"PDFMiner: Starting extraction for {filename}")
-                    
-                    # Try with different LAParams for corrupted PDFs
-                    laparams_options = [
-                        LAParams(),  # Default
-                        LAParams(line_margin=0.5, word_margin=0.1),  # More lenient
-                        LAParams(line_margin=1.0, word_margin=0.2, char_margin=2.0)  # Very lenient
-                    ]
-                    
-                    for i, laparams in enumerate(laparams_options):
-                        try:
-                            output_string.seek(0)
-                            output_string.truncate(0)
-                            
-                            extract_text_to_fp(
-                                BytesIO(file_content),
-                                output_string,
-                                laparams=laparams,
-                                output_type='text'
-                            )
-                            text_content = output_string.getvalue()
-                            
-                            if text_content and len(text_content.strip()) > 10:
-                                logger.info(f"PDFMiner: Success with params {i+1}, extracted {len(text_content)} characters")
-                                return text_content
-                            else:
-                                logger.debug(f"PDFMiner: Params {i+1} returned minimal content")
-                                
-                        except Exception as e:
-                            logger.debug(f"PDFMiner: Params {i+1} failed: {e}")
-                            continue
-                    
-                    # If all params failed, try one more time with the most lenient settings
-                    output_string.seek(0)
-                    output_string.truncate(0)
-                    
-                    extract_text_to_fp(
-                        BytesIO(file_content),
-                        output_string,
-                        laparams=LAParams(line_margin=2.0, word_margin=0.5, char_margin=5.0),
-                        output_type='text'
-                    )
-                    text_content = output_string.getvalue()
-                    logger.info(f"PDFMiner: Final attempt extracted {len(text_content)} characters")
-                    return text_content
-                    
-                except Exception as e:
-                    logger.warning(f"PDFMiner extraction error: {e}")
-                    raise
-            
-            # Run with 15-second timeout (increased for multiple attempts)
-            loop = asyncio.get_event_loop()
-            text_content = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_with_timeout),
-                timeout=15.0
-            )
-            
-            page_count = 1  # PDFMiner doesn't provide page count easily
-            
-            return text_content, page_count
-            
-        except asyncio.TimeoutError:
-            logger.warning("PDFMiner extraction timed out (likely corrupted PDF)")
-            raise Exception("Extraction timed out")
-        except Exception as e:
-            logger.warning(f"PDFMiner extraction failed: {e}")
-            raise
-
-    async def _try_basic_text_extraction(self, file_content: bytes, filename: str) -> (str, int):
-        """Try basic text extraction from PDF content."""
-        try:
-            # Try to extract any text-like content from the PDF bytes
-            content_str = file_content.decode('utf-8', errors='ignore')
-            
-            # Look for text patterns
-            import re
-            text_patterns = [
-                r'[A-Za-z]{3,}',  # Words with 3+ letters
-                r'\d+',           # Numbers
-                r'[A-Za-z0-9\s]{10,}'  # Longer text sequences
-            ]
-            
-            extracted_text = ""
-            for pattern in text_patterns:
-                matches = re.findall(pattern, content_str)
-                if matches:
-                    extracted_text += " ".join(matches[:100]) + "\n"  # Limit to first 100 matches
-            
-            if extracted_text.strip():
-                return extracted_text, 1
-            else:
-                raise Exception("No text patterns found")
-                
-        except Exception as e:
-            logger.warning(f"Basic text extraction failed: {e}")
-            raise
 
     def _get_content_type(self, filename: str) -> str:
         """
@@ -2332,14 +952,14 @@ class AWSTextractService:
                 "Ensure files are not encrypted",
                 "Keep file sizes reasonable (<5MB for best results)",
                 "Test with simple, text-based documents first",
-                "Use preprocessing service to normalize problematic PDFs"
+                "PDF-to-image conversion is available as fallback"
             ],
             "troubleshooting": [
-                "If you get 'Unsupported document type', use preprocessing service",
+                "If you get 'Unsupported document type', PDF will be converted to images",
                 "Convert browser-generated PDFs to standard PDFs",
                 "Use image files (PNG/JPEG) as an alternative",
                 "Check if the PDF is encrypted or corrupted",
-                "Preprocessing service handles PDF normalization"
+                "PDF-to-image conversion handles problematic PDFs automatically"
             ]
         }
     
@@ -2347,521 +967,24 @@ class AWSTextractService:
         """
         Estimate the cost of Textract processing.
         """
-        api_type = self._select_api_type(document_type)
-        
-        if api_type == TextractAPI.DETECT_DOCUMENT_TEXT:
-            cost_per_1000_pages = 1.50
-        else:
+        # DetectDocumentText: $1.50 per 1,000 pages
+        # AnalyzeDocument: $5.00 per 1,000 pages
+        if document_type in [DocumentType.FORM, DocumentType.INVOICE, DocumentType.TABLE_HEAVY]:
             cost_per_1000_pages = 5.00
+            api_type = "AnalyzeDocument"
+        else:
+            cost_per_1000_pages = 1.50
+            api_type = "DetectDocumentText"
         
         estimated_cost = (page_count / 1000) * cost_per_1000_pages
         
         return {
-            "api_type": api_type.value,
+            "api_type": api_type,
             "page_count": page_count,
             "cost_per_1000_pages": cost_per_1000_pages,
             "estimated_cost": estimated_cost,
             "currency": "USD"
         }
-
-    def analyze_pdf_content(self, file_content: bytes, filename: str) -> Dict[str, Any]:
-        """
-        Analyze PDF content to determine its type and extraction strategy.
-        """
-        try:
-            analysis = {
-                "filename": filename,
-                "file_size": len(file_content),
-                "pdf_type": "unknown",
-                "page_count": 0,
-                "text_pages": 0,
-                "image_pages": 0,
-                "text_content_length": 0,
-                "recommendation": "unknown"
-            }
-            
-            # Basic analysis without PyMuPDF
-            try:
-                # Try to extract text using PyPDF2
-                import PyPDF2
-                from io import BytesIO
-                
-                pdf_file = BytesIO(file_content)
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                analysis["page_count"] = len(pdf_reader.pages)
-                
-                total_text_length = 0
-                text_pages = 0
-                
-                for page in pdf_reader.pages:
-                    text = page.extract_text()
-                    text_length = len(text.strip())
-                    total_text_length += text_length
-                    
-                    if text_length > 50:  # Meaningful text content
-                        text_pages += 1
-                
-                analysis["text_content_length"] = total_text_length
-                analysis["text_pages"] = text_pages
-                analysis["image_pages"] = analysis["page_count"] - text_pages
-                
-                # Determine PDF type and recommendation
-                if text_pages > 0 and analysis["image_pages"] == 0:
-                    analysis["pdf_type"] = "text_based"
-                    analysis["recommendation"] = "Textract should work well"
-                elif text_pages > 0 and analysis["image_pages"] > 0:
-                    analysis["pdf_type"] = "mixed_content"
-                    analysis["recommendation"] = "Textract may work, but consider original source"
-                elif text_pages == 0 and analysis["image_pages"] > 0:
-                    analysis["pdf_type"] = "image_based"
-                    analysis["recommendation"] = "Use original source file or convert to images"
-                elif total_text_length == 0:
-                    analysis["pdf_type"] = "empty_or_corrupted"
-                    analysis["recommendation"] = "File may be corrupted or empty"
-                else:
-                    analysis["pdf_type"] = "minimal_text"
-                    analysis["recommendation"] = "Limited text content, consider alternative"
-                    
-            except Exception as e:
-                logger.warning(f"PyPDF2 analysis failed: {e}")
-                analysis["pdf_type"] = "unknown"
-                analysis["recommendation"] = "Unable to analyze PDF content"
-            
-            return analysis
-            
-        except Exception as e:
-            logger.error(f"Error analyzing PDF {filename}: {e}")
-            return {
-                "filename": filename,
-                "file_size": len(file_content),
-                "pdf_type": "error",
-                "recommendation": f"Analysis failed: {e}"
-            }
-
-    async def extract_text_from_image_manifest(
-        self,
-        s3_bucket: str,
-        image_keys: list,
-        document_type: DocumentType = DocumentType.GENERAL
-    ) -> (str, int):
-        """
-        Extract text from a list of image S3 keys (manifest) using Textract and aggregate results.
-        Returns (combined_text_content, page_count)
-        """
-        all_text = []
-        total_pages = 0
-        for idx, image_key in enumerate(image_keys):
-            try:
-                logger.info(f"Processing image page {idx+1}/{len(image_keys)}: s3://{s3_bucket}/{image_key}")
-                
-                # Use enhanced image extraction for better results
-                text_content, page_count = await self._try_enhanced_image_extraction(s3_bucket, image_key)
-                
-                if text_content and text_content.strip():
-                    all_text.append(f"--- Page {idx+1} ---\n{text_content}")
-                    total_pages += page_count
-                else:
-                    logger.warning(f"No text extracted from page {idx+1} ({image_key})")
-                    all_text.append(f"--- Page {idx+1} ---\n[No text detected]")
-                    
-            except Exception as e:
-                logger.warning(f"Textract failed for page {idx+1} ({image_key}): {e}")
-                all_text.append(f"--- Page {idx+1} ---\n[Textract failed: {e}]")
-        
-        combined_text = "\n\n".join(all_text)
-        logger.info(f"Image manifest processing completed: {len(combined_text)} total characters from {total_pages} pages")
-        return combined_text, total_pages
-
-    def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
-        """
-        Select the appropriate Textract API based on document type and size.
-        Use DetectDocumentText for basic text extraction (like AWS Console).
-        """
-        # Use DetectDocumentText for basic text extraction (like AWS Console)
-        # AnalyzeDocument requires FeatureTypes and is more for forms/tables
-        return TextractAPI.DETECT_DOCUMENT_TEXT
-
-    async def _start_async_text_detection_job(self, s3_bucket: str, s3_key: str) -> str:
-        """
-        Start asynchronous Textract text detection job.
-        """
-        try:
-            logger.info(f"Starting async Textract job for s3://{s3_bucket}/{s3_key}")
-            
-            # Get SNS topic and SQS queue from environment or config
-            sns_topic_arn = os.getenv('TEXTRACT_SNS_TOPIC_ARN')
-            role_arn = os.getenv('TEXTRACT_ROLE_ARN')
-            
-            if not sns_topic_arn or not role_arn:
-                logger.warning("SNS topic ARN or IAM role ARN not configured, falling back to sync API")
-                raise TextractError("Async Textract not configured - missing SNS topic or IAM role")
-            
-            response = self.textract_client.start_document_text_detection(
-                DocumentLocation={
-                    'S3Object': {
-                        'Bucket': s3_bucket,
-                        'Name': s3_key
-                    }
-                },
-                NotificationChannel={
-                    'RoleArn': role_arn,
-                    'SNSTopicArn': sns_topic_arn
-                },
-                ClientRequestToken=str(uuid.uuid4())
-            )
-            
-            job_id = response['JobId']
-            logger.info(f"✅ Async Textract job started: {job_id}")
-            return job_id
-            
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_message = e.response['Error']['Message']
-            logger.error(f"Failed to start async Textract job: {error_code} - {error_message}")
-            raise TextractError(f"Async job start failed: {error_code} - {error_message}")
-        except Exception as e:
-            logger.error(f"Unexpected error starting async job: {e}")
-            raise TextractError(f"Async job start failed: {e}")
-
-    async def _wait_for_async_job_completion(self, job_id: str, max_wait_time: int = 300) -> bool:
-        """
-        Wait for async Textract job completion using SQS.
-        """
-        try:
-            queue_url = os.getenv('TEXTRACT_SQS_QUEUE_URL')
-            if not queue_url:
-                logger.warning("SQS queue URL not configured, using polling fallback")
-                return await self._poll_job_status(job_id, max_wait_time)
-            
-            logger.info(f"Waiting for async job {job_id} completion via SQS...")
-            start_time = time.time()
-            
-            while time.time() - start_time < max_wait_time:
-                try:
-                    # Receive messages from SQS queue
-                    response = self.sqs_client.receive_message(
-                        QueueUrl=queue_url,
-                        MaxNumberOfMessages=1,
-                        WaitTimeSeconds=20  # Long polling
-                    )
-                    
-                    if 'Messages' in response:
-                        for message in response['Messages']:
-                            try:
-                                # Parse the message body
-                                message_body = json.loads(message['Body'])
-                                if 'Message' in message_body:
-                                    job_message = json.loads(message_body['Message'])
-                                    
-                                    # Check if this message is for our job
-                                    if (job_message.get('JobId') == job_id and 
-                                        job_message.get('Status') in ['SUCCEEDED', 'FAILED']):
-                                        
-                                        # Delete the message from queue
-                                        self.sqs_client.delete_message(
-                                            QueueUrl=queue_url,
-                                            ReceiptHandle=message['ReceiptHandle']
-                                        )
-                                        
-                                        if job_message['Status'] == 'SUCCEEDED':
-                                            logger.info(f"✅ Async job {job_id} completed successfully")
-                                            return True
-                                        else:
-                                            error_message = job_message.get('StatusMessage', 'Unknown error')
-                                            logger.error(f"❌ Async job {job_id} failed: {error_message}")
-                                            raise TextractError(f"Async job failed: {error_message}")
-                                            
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"Failed to parse SQS message: {e}")
-                                continue
-                                
-                except ClientError as e:
-                    logger.warning(f"SQS receive error: {e}")
-                    await asyncio.sleep(5)
-                    continue
-                    
-                await asyncio.sleep(1)
-            
-            logger.warning(f"Async job {job_id} did not complete within {max_wait_time} seconds")
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error waiting for async job completion: {e}")
-            return False
-
-    async def _poll_job_status(self, job_id: str, max_wait_time: int = 300) -> bool:
-        """
-        Fallback method to poll job status directly.
-        """
-        logger.info(f"Polling job status for {job_id}")
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait_time:
-            try:
-                response = self.textract_client.get_document_text_detection(JobId=job_id)
-                status = response['JobStatus']
-                
-                if status == 'SUCCEEDED':
-                    logger.info(f"✅ Job {job_id} completed successfully")
-                    return True
-                elif status == 'FAILED':
-                    error_message = response.get('StatusMessage', 'Unknown error')
-                    logger.error(f"❌ Job {job_id} failed: {error_message}")
-                    raise TextractError(f"Job failed: {error_message}")
-                elif status == 'IN_PROGRESS':
-                    logger.info(f"Job {job_id} still in progress...")
-                    await asyncio.sleep(10)  # Wait 10 seconds before next poll
-                else:
-                    logger.warning(f"Unknown job status: {status}")
-                    await asyncio.sleep(10)
-                    
-            except ClientError as e:
-                logger.warning(f"Error polling job status: {e}")
-                await asyncio.sleep(10)
-                
-        logger.warning(f"Job {job_id} did not complete within {max_wait_time} seconds")
-        return False
-
-    async def _get_async_job_results(self, job_id: str) -> List[Dict[str, Any]]:
-        """
-        Get results from completed async Textract job.
-        """
-        try:
-            logger.info(f"Fetching results for async job {job_id}")
-            all_blocks = []
-            next_token = None
-            
-            while True:
-                if next_token:
-                    response = self.textract_client.get_document_text_detection(
-                        JobId=job_id,
-                        NextToken=next_token
-                    )
-                else:
-                    response = self.textract_client.get_document_text_detection(JobId=job_id)
-                
-                blocks = response.get('Blocks', [])
-                all_blocks.extend(blocks)
-                
-                next_token = response.get('NextToken')
-                if not next_token:
-                    break
-                    
-                logger.info(f"Retrieved {len(blocks)} blocks, total: {len(all_blocks)}")
-            
-            logger.info(f"✅ Retrieved {len(all_blocks)} total blocks from async job {job_id}")
-            return all_blocks
-            
-        except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_message = e.response['Error']['Message']
-            logger.error(f"Failed to get async job results: {error_code} - {error_message}")
-            raise TextractError(f"Failed to get async results: {error_code} - {error_message}")
-        except Exception as e:
-            logger.error(f"Unexpected error getting async results: {e}")
-            raise TextractError(f"Failed to get async results: {e}")
-
-    async def _extract_text_async(self, s3_bucket: str, s3_key: str) -> (str, int):
-        """
-        Extract text using asynchronous Textract API.
-        """
-        try:
-            # Start async job
-            job_id = await self._start_async_text_detection_job(s3_bucket, s3_key)
-            
-            # Wait for completion
-            if await self._wait_for_async_job_completion(job_id):
-                # Get results
-                blocks = await self._get_async_job_results(job_id)
-                
-                # Extract text from blocks
-                text_content = self._extract_text_from_blocks(blocks)
-                page_count = len([block for block in blocks if block['BlockType'] == 'PAGE'])
-                
-                logger.info(f"Async Textract completed: {len(text_content)} characters, {page_count} pages")
-                return text_content, page_count
-            else:
-                raise TextractError("Async job did not complete within timeout")
-                
-        except Exception as e:
-            logger.error(f"Async Textract extraction failed: {e}")
-            raise TextractError(f"Async extraction failed: {e}")
-
-    async def _convert_pdf_to_images_and_extract(self, s3_bucket: str, s3_key: str) -> (str, int):
-        """
-        Convert PDF to images and extract text using Textract.
-        This is a fallback method when direct PDF processing fails.
-        """
-        try:
-            logger.info(f"Converting PDF to images for Textract processing: s3://{s3_bucket}/{s3_key}")
-            
-            # Download the PDF from S3
-            response = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
-            pdf_content = response['Body'].read()
-            
-            # Try pdf2image first (if available)
-            try:
-                import pdf2image
-                from io import BytesIO
-                
-                # Convert PDF to images with good quality for Textract
-                logger.info(f"Converting PDF to images with pdf2image...")
-                images = pdf2image.convert_from_bytes(
-                    pdf_content,
-                    dpi=200,  # Good balance between quality and size
-                    fmt='PNG',
-                    thread_count=1,  # Single thread for Lambda compatibility
-                    transparent=False,
-                    grayscale=False
-                )
-                
-                image_keys = []
-                all_text_content = []
-                total_pages = len(images)
-                
-                logger.info(f"Converted {total_pages} pages to images...")
-                
-                for page_num, image in enumerate(images):
-                    # Convert PIL image to bytes
-                    img_buffer = BytesIO()
-                    image.save(img_buffer, format='PNG', optimize=True)
-                    img_data = img_buffer.getvalue()
-                    
-                    # Upload image to S3
-                    image_key = f"{s3_key.replace('.pdf', '')}_page_{page_num + 1}.png"
-                    self.s3_client.put_object(
-                        Bucket=s3_bucket,
-                        Key=image_key,
-                        Body=img_data,
-                        ContentType='image/png'
-                    )
-                    image_keys.append(image_key)
-                    
-                    logger.info(f"Uploaded page {page_num + 1} as image: {image_key}")
-                
-                # Process each image with Textract
-                logger.info(f"Processing {len(image_keys)} images with Textract...")
-                
-                for i, image_key in enumerate(image_keys):
-                    try:
-                        logger.info(f"Processing image {i + 1}/{len(image_keys)}: {image_key}")
-                        
-                        response = self.textract_client.detect_document_text(
-                            Document={
-                                'S3Object': {
-                                    'Bucket': s3_bucket,
-                                    'Name': image_key
-                                }
-                            }
-                        )
-                        
-                        # Extract text from blocks
-                        blocks = response.get('Blocks', [])
-                        page_text = ""
-                        for block in blocks:
-                            if block['BlockType'] == 'LINE':
-                                page_text += block.get('Text', '') + '\n'
-                        
-                        if page_text.strip():
-                            all_text_content.append(page_text.strip())
-                            logger.info(f"✅ Page {i + 1} extracted: {len(page_text)} characters")
-                        else:
-                            logger.warning(f"⚠️ Page {i + 1} returned no text")
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to process image {i + 1}: {e}")
-                        continue
-                
-                # Combine all text
-                combined_text = '\n\n'.join(all_text_content)
-                
-                # Clean up image files
-                logger.info("Cleaning up image files...")
-                for image_key in image_keys:
-                    try:
-                        self.s3_client.delete_object(Bucket=s3_bucket, Key=image_key)
-                    except:
-                        pass
-                
-                if combined_text.strip():
-                    logger.info(f"✅ PDF-to-image extraction successful: {len(combined_text)} characters from {total_pages} pages")
-                    return combined_text, total_pages
-                else:
-                    raise TextractError("No text extracted from images")
-                
-            except ImportError:
-                logger.warning("pdf2image not available, trying alternative PDF processing...")
-                # Fallback to alternative methods when pdf2image is not available
-                return await self._try_alternative_pdf_processing(pdf_content, s3_bucket, s3_key)
-            except Exception as e:
-                logger.error(f"PDF-to-image conversion failed: {e}")
-                # Fallback to alternative methods
-                return await self._try_alternative_pdf_processing(pdf_content, s3_bucket, s3_key)
-                
-        except Exception as e:
-            logger.error(f"PDF-to-image extraction failed: {e}")
-            raise TextractError(f"PDF-to-image extraction failed: {e}")
-
-    async def _try_alternative_pdf_processing(self, pdf_content: bytes, s3_bucket: str, s3_key: str) -> (str, int):
-        """
-        Try alternative PDF processing methods when pdf2image is not available.
-        """
-        try:
-            logger.info("Trying alternative PDF processing methods...")
-            
-            # Method 1: Try PyPDF2 extraction
-            try:
-                logger.info("Method 1: Trying PyPDF2 extraction...")
-                text_content, page_count = await self._try_pypdf2_extraction(pdf_content, "alternative_processing.pdf")
-                if text_content and len(text_content.strip()) > 50:
-                    logger.info(f"✅ PyPDF2 extraction successful: {len(text_content)} characters")
-                    return text_content, page_count
-            except Exception as e:
-                logger.warning(f"PyPDF2 extraction failed: {e}")
-            
-            # Method 2: Try PDFMiner extraction
-            try:
-                logger.info("Method 2: Trying PDFMiner extraction...")
-                text_content, page_count = await self._try_pdfminer_extraction(pdf_content, "alternative_processing.pdf")
-                if text_content and len(text_content.strip()) > 50:
-                    logger.info(f"✅ PDFMiner extraction successful: {len(text_content)} characters")
-                    return text_content, page_count
-            except Exception as e:
-                logger.warning(f"PDFMiner extraction failed: {e}")
-            
-            # Method 3: Try aggressive text extraction
-            try:
-                logger.info("Method 3: Trying aggressive text extraction...")
-                text_content = await self._try_aggressive_text_extraction(pdf_content, "alternative_processing.pdf")
-                if text_content and len(text_content.strip()) > 50:
-                    logger.info(f"✅ Aggressive extraction successful: {len(text_content)} characters")
-                    return text_content, 1
-            except Exception as e:
-                logger.warning(f"Aggressive extraction failed: {e}")
-            
-            # Method 4: Try raw text extraction
-            try:
-                logger.info("Method 4: Trying raw text extraction...")
-                text_content = await self._try_raw_text_extraction(pdf_content, "alternative_processing.pdf")
-                if text_content and len(text_content.strip()) > 50:
-                    logger.info(f"✅ Raw text extraction successful: {len(text_content)} characters")
-                    return text_content, 1
-            except Exception as e:
-                logger.warning(f"Raw text extraction failed: {e}")
-            
-            # If all methods fail, return a helpful error message
-            raise TextractError(
-                "All PDF processing methods failed. This PDF may be:\n"
-                "1. Corrupted or damaged\n"
-                "2. Password-protected\n"
-                "3. Image-based (scanned document)\n"
-                "4. In an unsupported format\n\n"
-                "Please try uploading a different PDF or the original source file."
-            )
-            
-        except Exception as e:
-            logger.error(f"Alternative PDF processing failed: {e}")
-            raise TextractError(f"Alternative PDF processing failed: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 
