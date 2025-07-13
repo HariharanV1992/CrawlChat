@@ -133,8 +133,8 @@ class AWSTextractService:
             if document_size > 5 * 1024 * 1024:  # 5MB
                 logger.info(f"Using async Textract API for large document ({document_size} bytes)")
                 return await self._extract_text_async(s3_bucket, s3_key, document_type)
-                else:
-                    logger.info(f"Using sync Textract API for document ({document_size} bytes)")
+            else:
+                logger.info(f"Using sync Textract API for document ({document_size} bytes)")
                 return await self._extract_text_sync(s3_bucket, s3_key, document_type)
                     
         except Exception as e:
@@ -166,12 +166,78 @@ class AWSTextractService:
                     
                     logger.info(f"✅ PyMuPDF fallback successful: {len(pymupdf_text)} characters from {page_count} pages")
                     return pymupdf_text, page_count
-            else:
+                else:
                     raise TextractError("All extraction methods failed")
                     
             except Exception as fallback_error:
                 logger.error(f"PyMuPDF fallback also failed: {fallback_error}")
                 raise TextractError(f"All text extraction methods failed: {e}")
+
+    async def _extract_text_async(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> Tuple[str, int]:
+        """
+        Extract text using AWS Textract asynchronous API for large documents.
+        """
+        try:
+            logger.info(f"Starting async Textract processing for s3://{s3_bucket}/{s3_key}")
+            
+            # Start async job
+            response = self.textract_client.start_document_text_detection(
+                DocumentLocation={
+                    'S3Object': {
+                        'Bucket': s3_bucket,
+                        'Name': s3_key
+                    }
+                }
+            )
+            
+            job_id = response['JobId']
+            logger.info(f"Started async Textract job: {job_id}")
+            
+            # Wait for completion
+            while True:
+                response = self.textract_client.get_document_text_detection(JobId=job_id)
+                status = response['JobStatus']
+                
+                if status == 'SUCCEEDED':
+                    logger.info(f"Async Textract job completed: {job_id}")
+                    break
+                elif status == 'FAILED':
+                    error_message = response.get('StatusMessage', 'Unknown error')
+                    raise TextractError(f"Async Textract job failed: {error_message}")
+                elif status == 'IN_PROGRESS':
+                    logger.info(f"Async Textract job in progress: {job_id}")
+                    import asyncio
+                    await asyncio.sleep(5)  # Wait 5 seconds before checking again
+                else:
+                    raise TextractError(f"Unexpected job status: {status}")
+            
+            # Get results
+            text_content = ""
+            page_count = 0
+            
+            while True:
+                response = self.textract_client.get_document_text_detection(JobId=job_id)
+                
+                # Extract text from blocks
+                blocks = response.get('Blocks', [])
+                text_content += self._extract_text_from_blocks(blocks)
+                page_count += len([block for block in blocks if block['BlockType'] == 'PAGE'])
+                
+                # Check if there are more pages
+                if response.get('NextToken'):
+                    response = self.textract_client.get_document_text_detection(
+                        JobId=job_id,
+                        NextToken=response['NextToken']
+                    )
+                else:
+                    break
+            
+            logger.info(f"Async Textract completed: {len(text_content)} characters, {page_count} pages")
+            return text_content, page_count
+            
+        except Exception as e:
+            logger.error(f"Async Textract extraction failed: {e}")
+            raise TextractError(f"Async Textract extraction failed: {e}")
 
     async def _extract_text_sync(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> Tuple[str, int]:
         """
@@ -184,10 +250,10 @@ class AWSTextractService:
             logger.info("Strategy 1: Trying DetectDocumentText...")
             try:
                 text_content, page_count = await self._detect_document_text(s3_bucket, s3_key)
-            if text_content and len(text_content.strip()) > 10:
+                if text_content and len(text_content.strip()) > 10:
                     logger.info(f"✅ DetectDocumentText succeeded: {len(text_content)} characters extracted")
-                return text_content, page_count
-            else:
+                    return text_content, page_count
+                else:
                     logger.warning("DetectDocumentText returned minimal text, trying AnalyzeDocument...")
             except Exception as e:
                 logger.warning(f"DetectDocumentText failed: {e}, trying AnalyzeDocument...")
@@ -201,17 +267,17 @@ class AWSTextractService:
                     return text_content, page_count
                 else:
                     logger.warning("AnalyzeDocument returned minimal text")
-        except Exception as e:
+            except Exception as e:
                 logger.warning(f"AnalyzeDocument failed: {e}")
                 
             # Strategy 3: Convert PDF to images and extract
             logger.info("Strategy 3: Converting PDF to images and extracting...")
-                try:
-                    text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
-                    if text_content and len(text_content.strip()) > 10:
-                        logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
-                        return text_content, page_count
-                    else:
+            try:
+                text_content, page_count = await self._convert_pdf_to_images_and_extract(s3_bucket, s3_key)
+                if text_content and len(text_content.strip()) > 10:
+                    logger.info(f"✅ PDF-to-image extraction succeeded: {len(text_content)} characters extracted")
+                    return text_content, page_count
+                else:
                     logger.warning("PDF-to-image extraction returned minimal text")
             except Exception as e:
                 logger.warning(f"PDF-to-image extraction failed: {e}")
@@ -346,7 +412,7 @@ class AWSTextractService:
                     
                     # Debug: Log what types of blocks we got
                     block_types = {}
-            for block in blocks:
+                    for block in blocks:
                         block_type = block.get('BlockType', 'UNKNOWN')
                         block_types[block_type] = block_types.get(block_type, 0) + 1
                     
@@ -361,7 +427,7 @@ class AWSTextractService:
                         for block in line_blocks:
                             page_text += block.get('Text', '') + '\n'
                         logger.info(f"Extracted from {len(line_blocks)} LINE blocks")
-                else:
+                    else:
                         # Fallback to WORD blocks if no LINE blocks found
                         word_blocks = [b for b in blocks if b['BlockType'] == 'WORD']
                         if word_blocks:
@@ -438,14 +504,14 @@ class AWSTextractService:
                     if page_text.strip():
                         all_text_content.append(f"--- Page {i + 1} ---\n{page_text.strip()}")
                         logger.info(f"✅ Page {i + 1} extracted: {len(page_text)} characters")
-                else:
+                    else:
                         logger.warning(f"⚠️ Page {i + 1} returned no text")
                         all_text_content.append(f"--- Page {i + 1} ---\n[No text detected]")
             
         except Exception as e:
-                    logger.warning(f"Failed to process image {i + 1}: {e}")
-                    all_text_content.append(f"--- Page {i + 1} ---\n[Processing failed: {e}]")
-                    continue
+            logger.warning(f"Failed to process image {i + 1}: {e}")
+            all_text_content.append(f"--- Page {i + 1} ---\n[Processing failed: {e}]")
+            continue
             
             # Combine all text
             combined_text = '\n\n'.join(all_text_content)
@@ -492,8 +558,8 @@ class AWSTextractService:
                 logger.warning("pytesseract not available, skipping Tesseract OCR")
                 return ""
         except Exception as e:
-                logger.warning(f"Tesseract OCR error: {e}")
-                return ""
+            logger.warning(f"Tesseract OCR error: {e}")
+            return ""
                 
         except Exception as e:
             logger.warning(f"Failed to extract text with Tesseract: {e}")
@@ -1043,12 +1109,12 @@ class AWSTextractService:
             
             # Upload file to S3
             s3_key = f"temp-documents/{user_id}/{filename}"
-                self.s3_client.put_object(
-                    Bucket=bucket_name,
-                    Key=s3_key,
-                    Body=file_content,
-                    ContentType=self._get_content_type(filename)
-                )
+            self.s3_client.put_object(
+                Bucket=bucket_name,
+                Key=s3_key,
+                Body=file_content,
+                ContentType=self._get_content_type(filename)
+            )
             logger.info(f"Uploaded {filename} to S3: s3://{bucket_name}/{s3_key}")
                 
                 # Extract text using Textract
@@ -1100,7 +1166,7 @@ class AWSTextractService:
                 result = '\n\n'.join(text_content)
                 logger.info(f"PyPDF2 extraction successful: {filename} ({page_count} pages)")
                 return result, page_count
-                            else:
+            else:
                 logger.warning(f"PyPDF2 extracted no text from {filename}")
                 return "", page_count
             
