@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.config import Config
 
 from ..core.aws_config import aws_config
 from ..core.exceptions import TextractError
@@ -53,7 +54,7 @@ class AWSTextractService:
         """Initialize AWS clients with optimized configuration."""
         try:
             # Configure boto3 with optimized settings
-            config = boto3.Config(
+            config = Config(
                 retries=dict(
                     max_attempts=3,
                     mode='adaptive'
