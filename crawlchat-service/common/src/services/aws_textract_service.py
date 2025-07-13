@@ -381,11 +381,11 @@ class AWSTextractService:
     def _select_api_type(self, document_type: DocumentType) -> TextractAPI:
         """
         Select the appropriate Textract API based on document type.
+        Use AnalyzeDocument for better PDF compatibility (like AWS Console).
         """
-        if document_type in [DocumentType.FORM, DocumentType.INVOICE, DocumentType.TABLE_HEAVY]:
-            return TextractAPI.ANALYZE_DOCUMENT
-        else:
-            return TextractAPI.DETECT_DOCUMENT_TEXT
+        # Use AnalyzeDocument for all document types for better compatibility
+        # This matches AWS Console behavior which handles PDF format issues better
+        return TextractAPI.ANALYZE_DOCUMENT
 
     async def _detect_document_text(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
@@ -516,11 +516,13 @@ class AWSTextractService:
 
     async def _analyze_document(self, s3_bucket: str, s3_key: str) -> (str, int):
         """
-        Call AWS Textract AnalyzeDocument API.
+        Call AWS Textract AnalyzeDocument API with parameters that match AWS Console behavior.
         """
         try:
             logger.info(f"Calling AnalyzeDocument for s3://{s3_bucket}/{s3_key}")
             
+            # Use parameters that match AWS Console behavior
+            # AWS Console uses AnalyzeDocument with TABLES and FORMS features
             response = self.textract_client.analyze_document(
                 Document={
                     'S3Object': {
@@ -531,11 +533,40 @@ class AWSTextractService:
                 FeatureTypes=['TABLES', 'FORMS']
             )
             
-            # Extract structured text from blocks
-            text_content = self._extract_structured_text_from_blocks(response['Blocks'])
+            # Log response structure for debugging
+            logger.info(f"AnalyzeDocument response keys: {list(response.keys())}")
+            logger.info(f"Number of blocks returned: {len(response.get('Blocks', []))}")
+            
+            # Extract text from blocks using the same method as DetectDocumentText
+            # This ensures we get all text, not just structured data
+            text_content = self._extract_text_from_blocks(response['Blocks'])
             page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
             
             logger.info(f"AnalyzeDocument completed: {len(text_content)} characters, {page_count} pages")
+            
+            # Check if we got meaningful text
+            if not text_content or len(text_content.strip()) < 10:
+                logger.warning(f"AnalyzeDocument returned minimal text for {s3_key}: '{text_content[:100]}...'")
+                # Log some block details for debugging
+                block_types = {}
+                for block in response['Blocks'][:10]:  # First 10 blocks
+                    block_type = block.get('BlockType', 'UNKNOWN')
+                    block_types[block_type] = block_types.get(block_type, 0) + 1
+                logger.info(f"First 10 block types: {block_types}")
+                
+                # Try to get any text from blocks
+                all_text = []
+                for block in response['Blocks']:
+                    if 'Text' in block and block['Text'].strip():
+                        all_text.append(block['Text'])
+                
+                if all_text:
+                    fallback_text = ' '.join(all_text)
+                    logger.info(f"Fallback text extraction: {len(fallback_text)} characters")
+                    return fallback_text, page_count
+                else:
+                    raise TextractError("AnalyzeDocument returned empty or minimal text")
+            
             return text_content, page_count
             
         except ClientError as e:
