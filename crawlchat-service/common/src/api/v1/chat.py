@@ -444,8 +444,17 @@ async def upload_document(
         
         logger.info(f"[API] Document uploaded and processed successfully: {document.document_id}")
         
+        # Determine response message based on vector store status
+        vector_status = vector_result.get("status", "unknown")
+        if vector_status == "uploaded":
+            response_message = f"Document uploaded and processed successfully using {extraction_method}. Vector processing is in progress."
+        elif vector_status == "error":
+            response_message = f"Document uploaded and processed successfully using {extraction_method}. Vector processing failed but document is available for chat."
+        else:
+            response_message = f"Document uploaded and processed successfully using {extraction_method}"
+        
         return DocumentUploadResponse(
-            message=f"Document uploaded and processed successfully using {extraction_method}",
+            message=response_message,
             document_id=document.document_id,
             filename=file.filename,
             file_size=file_size
@@ -630,6 +639,82 @@ async def upload_document_base64(
         logger.error(f"[API] Error uploading Base64 document: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
 
+@router.post("/sessions/{session_id}/documents/background")
+async def upload_document_background(
+    session_id: str,
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Upload a document for background processing to avoid timeouts."""
+    logger.info(f"[API] Background upload for document: {file.filename} to session: {session_id}")
+    
+    try:
+        # Verify session exists and belongs to user
+        session = await chat_service.get_session(session_id, current_user.user_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Validate file type
+        allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.html', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']
+        file_extension = '.' + file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
+            )
+        
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        # Check file size (max 10MB)
+        if file_size > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB")
+        
+        # Generate task ID for organization
+        task_id = str(uuid.uuid4())
+        
+        # Upload to S3 using unified storage service with task_id
+        result = await unified_storage_service.upload_user_document(
+            file_content=file_content,
+            filename=file.filename,
+            user_id=current_user.user_id,
+            content_type=file.content_type,
+            task_id=task_id
+        )
+        s3_key = result["s3_key"]
+        
+        logger.info(f"[API] Document uploaded to S3: {s3_key}")
+        
+        # Create a background task for processing
+        from common.src.services.aws_background_service import aws_background_service
+        
+        background_task = await aws_background_service.create_document_processing_task(
+            task_id=task_id,
+            session_id=session_id,
+            user_id=current_user.user_id,
+            filename=file.filename,
+            s3_key=s3_key,
+            file_size=file_size,
+            content_type=file.content_type
+        )
+        
+        return {
+            "message": f"Document uploaded successfully. Processing started in background.",
+            "task_id": task_id,
+            "background_task_id": background_task.get("task_id"),
+            "status": "processing",
+            "filename": file.filename,
+            "file_size": file_size
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API] Error in background document upload: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
+
 @router.get("/cache/stats")
 async def get_cache_stats(current_user: UserResponse = Depends(get_current_user)):
     """Get cache statistics for monitoring performance."""
@@ -710,13 +795,68 @@ async def force_completion_message(
     session_id: str,
     current_user: UserResponse = Depends(get_current_user)
 ):
-    """Force add a completion message if processing is done but message is missing."""
+    """Force add a completion message to a session."""
     try:
-        success = await chat_service.force_completion_message(session_id, current_user.user_id)
-        if success:
-            return {"message": "Completion message added successfully"}
-        else:
-            raise HTTPException(status_code=400, detail="Failed to add completion message")
+        await chat_service.force_add_completion_message(session_id, current_user.user_id)
+        return {"message": "Completion message added successfully"}
     except Exception as e:
         logger.error(f"Error forcing completion message: {e}")
-        raise HTTPException(status_code=500, detail="Failed to force completion message") 
+        raise HTTPException(status_code=500, detail="Failed to add completion message")
+
+@router.get("/sessions/{session_id}/documents/{document_id}/vector-status")
+async def check_document_vector_status(
+    session_id: str,
+    document_id: str,
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Check the vector store processing status for a specific document."""
+    try:
+        # Verify session exists and belongs to user
+        session = await chat_service.get_session(session_id, current_user.user_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Get document from database
+        from common.src.core.database import mongodb
+        await mongodb.connect()
+        
+        doc_data = await mongodb.get_collection("documents").find_one({
+            "document_id": document_id,
+            "user_id": current_user.user_id
+        })
+        
+        if not doc_data:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Check vector store status
+        vector_result = doc_data.get("metadata", {}).get("vector_store_result", {})
+        file_id = vector_result.get("vector_store_file_id")
+        
+        if not file_id:
+            return {
+                "document_id": document_id,
+                "vector_status": "not_uploaded",
+                "message": "Document not uploaded to vector store"
+            }
+        
+        # Check current status from vector store
+        from common.src.services.vector_store_service import vector_store_service
+        status_check = await vector_store_service.check_file_upload_status(
+            file_id, 
+            vector_result.get("vector_store_id")
+        )
+        
+        return {
+            "document_id": document_id,
+            "vector_status": status_check.get("status", "unknown"),
+            "file_id": file_id,
+            "error": status_check.get("error"),
+            "usage": status_check.get("usage"),
+            "message": f"Vector store status: {status_check.get('status', 'unknown')}"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking vector status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to check vector status") 

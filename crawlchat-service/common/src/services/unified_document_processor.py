@@ -110,11 +110,19 @@ class UnifiedDocumentProcessor:
                 )
             
             # Step 6: Update document record with processing results
+            processing_status = "processed"
+            if not text_content or not text_content.strip():
+                processing_status = "processed_no_text"
+            elif vector_result and vector_result.get("status") == "uploaded":
+                processing_status = "processed_vector_pending"
+            elif vector_result and vector_result.get("status") == "error":
+                processing_status = "processed_vector_failed"
+            
             await self._update_document_record(
                 document_id=document_id,
                 content=text_content,
                 vector_result=vector_result,
-                processing_status="processed" if vector_result else "processed_no_text"
+                processing_status=processing_status
             )
             
             return {
@@ -554,7 +562,7 @@ class UnifiedDocumentProcessor:
         metadata: Optional[Dict[str, Any]] = None,
         source: str = "uploaded"
     ) -> Optional[Dict[str, Any]]:
-        """Process document with vector store."""
+        """Process document with vector store using non-blocking upload."""
         try:
             logger.info(f"[UNIFIED_PROCESSOR] Processing with vector store: {filename}")
             
@@ -578,18 +586,26 @@ class UnifiedDocumentProcessor:
             if session_id:
                 vector_store_id = await vector_store_service.get_or_create_session_vector_store(session_id)
             
-            # Upload to vector store
+            # Upload to vector store (non-blocking)
             file_id = await vector_store_service.upload_text_to_vector_store(
                 text=content,
                 filename=filename,
                 vector_store_id=vector_store_id
             )
             
+            # Check initial status
+            status_check = await vector_store_service.check_file_upload_status(file_id, vector_store_id)
+            initial_status = status_check.get("status", "unknown")
+            
+            logger.info(f"[UNIFIED_PROCESSOR] Vector store upload initiated: {file_id} (status: {initial_status})")
+            
             return {
                 "vector_store_file_id": file_id,
                 "vector_store_id": vector_store_service.vector_store_id,
                 "content_hash": content_hash,
-                "status": "success"
+                "status": "uploaded",  # Changed from "success" to "uploaded"
+                "processing_status": initial_status,
+                "message": "Document uploaded to vector store for processing"
             }
             
         except Exception as e:

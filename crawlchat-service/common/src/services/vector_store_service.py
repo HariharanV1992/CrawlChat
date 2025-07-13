@@ -135,7 +135,7 @@ class VectorStoreService:
         file_path: str, 
         vector_store_id: Optional[str] = None
     ) -> str:
-        """Upload a file to the vector store with automatic chunking and embedding."""
+        """Upload a file to the vector store with non-blocking upload to prevent timeouts."""
         try:
             if not vector_store_id:
                 vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
@@ -145,23 +145,59 @@ class VectorStoreService:
             
             logger.info(f"[VECTOR_STORE] Uploading file: {file_path}")
             
-            # Upload file with automatic chunking
+            # Upload file without polling to prevent timeouts
             client = self._get_client()
             if client is None:
                 raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
             
             with open(file_path, "rb") as file:
-                vector_store_file = client.vector_stores.files.upload_and_poll(
+                # Use upload instead of upload_and_poll to avoid blocking
+                vector_store_file = client.vector_stores.files.upload(
                     vector_store_id=vector_store_id,
                     file=file
                 )
             
-            logger.info(f"[VECTOR_STORE] Successfully uploaded file: {vector_store_file.id}")
+            logger.info(f"[VECTOR_STORE] Successfully uploaded file: {vector_store_file.id} (status: {vector_store_file.status})")
             return vector_store_file.id
             
         except Exception as e:
             logger.error(f"[VECTOR_STORE] Error uploading file {file_path}: {e}")
             raise
+    
+    async def check_file_upload_status(
+        self, 
+        file_id: str, 
+        vector_store_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Check the status of a file upload in the vector store."""
+        try:
+            if not vector_store_id:
+                vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
+            
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            # Get file status
+            file_status = client.vector_stores.files.retrieve(
+                file_id=file_id,
+                vector_store_id=vector_store_id
+            )
+            
+            return {
+                "file_id": file_id,
+                "status": file_status.status,
+                "error": getattr(file_status, 'error', None),
+                "usage": getattr(file_status, 'usage', None)
+            }
+            
+        except Exception as e:
+            logger.error(f"[VECTOR_STORE] Error checking file status {file_id}: {e}")
+            return {
+                "file_id": file_id,
+                "status": "error",
+                "error": str(e)
+            }
     
     async def upload_text_to_vector_store(
         self, 
@@ -491,6 +527,61 @@ class VectorStoreService:
         except Exception as e:
             logger.error(f"[VECTOR_STORE] Error updating file attributes: {e}")
             return False
+
+    async def wait_for_file_processing(
+        self, 
+        file_id: str, 
+        vector_store_id: Optional[str] = None,
+        timeout_seconds: int = 30,
+        check_interval: int = 2
+    ) -> Dict[str, Any]:
+        """Wait for a file to complete processing in the vector store with timeout."""
+        try:
+            if not vector_store_id:
+                vector_store_id = self.vector_store_id or await self.get_or_create_vector_store()
+            
+            client = self._get_client()
+            if client is None:
+                raise ValueError("OpenAI client not available - check OPENAI_API_KEY environment variable")
+            
+            start_time = asyncio.get_event_loop().time()
+            
+            while True:
+                # Check if timeout exceeded
+                if asyncio.get_event_loop().time() - start_time > timeout_seconds:
+                    return {
+                        "file_id": file_id,
+                        "status": "timeout",
+                        "error": f"Processing timeout after {timeout_seconds} seconds"
+                    }
+                
+                # Get current status
+                file_status = client.vector_stores.files.retrieve(
+                    file_id=file_id,
+                    vector_store_id=vector_store_id
+                )
+                
+                logger.info(f"[VECTOR_STORE] File {file_id} status: {file_status.status}")
+                
+                # Check if processing is complete
+                if file_status.status in ["completed", "failed", "cancelled"]:
+                    return {
+                        "file_id": file_id,
+                        "status": file_status.status,
+                        "error": getattr(file_status, 'error', None),
+                        "usage": getattr(file_status, 'usage', None)
+                    }
+                
+                # Wait before checking again
+                await asyncio.sleep(check_interval)
+            
+        except Exception as e:
+            logger.error(f"[VECTOR_STORE] Error waiting for file processing {file_id}: {e}")
+            return {
+                "file_id": file_id,
+                "status": "error",
+                "error": str(e)
+            }
 
 # Global instance
 vector_store_service = VectorStoreService() 
