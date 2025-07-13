@@ -14,9 +14,10 @@ from datetime import datetime
 from pathlib import Path
 import io
 
+from common.src.models.documents import Document, DocumentType, DocumentStatus
 from common.src.services.unified_storage_service import unified_storage_service
 from common.src.services.vector_store_service import vector_store_service
-from common.src.services.aws_textract_service import textract_service, DocumentType as TextractDocumentType
+from common.src.services.aws_textract_service import textract_service, TextractDocumentType
 from common.src.core.database import mongodb
 from common.src.core.config import config
 
@@ -110,13 +111,13 @@ class UnifiedDocumentProcessor:
                 )
             
             # Step 6: Update document record with processing results
-            processing_status = "processed"
+            processing_status = DocumentStatus.PROCESSED
             if not text_content or not text_content.strip():
-                processing_status = "processed_no_text"
+                processing_status = DocumentStatus.PROCESSED_NO_TEXT
             elif vector_result and vector_result.get("status") == "uploaded":
-                processing_status = "processed_vector_pending"
+                processing_status = DocumentStatus.PROCESSED_VECTOR_PENDING
             elif vector_result and vector_result.get("status") == "error":
-                processing_status = "processed_vector_failed"
+                processing_status = DocumentStatus.PROCESSED_VECTOR_FAILED
             
             await self._update_document_record(
                 document_id=document_id,
@@ -200,7 +201,7 @@ class UnifiedDocumentProcessor:
                 document_id=document_id,
                 content=cleaned_content,
                 vector_result=vector_result,
-                processing_status="processed"
+                processing_status=DocumentStatus.PROCESSED
             )
             
             return {
@@ -537,7 +538,7 @@ class UnifiedDocumentProcessor:
                 "filename": filename,
                 "file_size": file_size,
                 "document_type": doc_type,
-                "status": "processing",
+                "status": DocumentStatus.PROCESSING.value,
                 "source": source,
                 "metadata": metadata or {},
                 "created_at": datetime.utcnow(),
@@ -620,13 +621,13 @@ class UnifiedDocumentProcessor:
         document_id: str,
         content: str,
         vector_result: Optional[Dict[str, Any]] = None,
-        processing_status: str = "processed"
+        processing_status: DocumentStatus = DocumentStatus.PROCESSED
     ):
         """Update document record with processing results."""
         try:
             update_data = {
                 "content": content,
-                "status": processing_status,
+                "status": processing_status.value,
                 "processed_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow()
             }

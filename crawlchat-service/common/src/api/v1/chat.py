@@ -704,7 +704,7 @@ async def upload_document_background(
             "message": f"Document uploaded successfully. Processing started in background.",
             "task_id": task_id,
             "background_task_id": background_task.get("task_id"),
-            "status": "processing",
+            "status": "processing",  # This is a response status, not a document status
             "filename": file.filename,
             "file_size": file_size
         }

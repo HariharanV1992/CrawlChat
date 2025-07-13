@@ -29,6 +29,9 @@ class DocumentStatus(str, Enum):
     PROCESSING = "processing"
     PROCESSED = "processed"
     FAILED = "failed"
+    PROCESSED_VECTOR_PENDING = "processed_vector_pending"
+    PROCESSED_VECTOR_FAILED = "processed_vector_failed"
+    PROCESSED_NO_TEXT = "processed_no_text"
 
 
 class Document(BaseModel):
