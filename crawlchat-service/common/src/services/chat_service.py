@@ -1161,13 +1161,7 @@ Please provide a helpful response:"""
             logger.error(f"[COMPLETION] Error checking for missing completion message: {e}")
             return False
 
-    async def force_completion_message(self, session_id: str, user_id: str) -> bool:
-        """Force add a completion message if processing is done but message is missing."""
-        try:
-            return await self.check_and_add_missing_completion_message(session_id, user_id)
-        except Exception as e:
-            logger.error(f"Error forcing completion message: {e}")
-            return False
+
 
 # Global chat service instance
 chat_service = ChatService() 

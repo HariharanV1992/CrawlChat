@@ -27,7 +27,8 @@ logger.info(f"AWS_LAMBDA_FUNCTION_NAME: {os.environ.get('AWS_LAMBDA_FUNCTION_NAM
 
 # Import from common structure
 try:
-    from common.src.services.crawler_service import crawler_service
+    # Crawler service removed - using separate crawler-service instead
+# from common.src.services.crawler_service import crawler_service
     from common.src.core.database import mongodb
 except ImportError:
     # Fallback for local development
@@ -348,14 +349,10 @@ def process_sqs_message(event, context):
                 task_id = message_body.get('task_id')
                 user_id = message_body.get('user_id')
 
-                # Fetch the full task from DB
-                task = loop.run_until_complete(crawler_service.get_task_status(task_id))
-                if not task or not getattr(task, 'url', None):
-                    logger.error(f"Task {task_id} not found or URL missing!")
-                    continue
-
-                # Actually run the crawl
-                loop.run_until_complete(crawler_service._run_crawl_task(task))
+                # Crawler service removed - using separate crawler-service instead
+                # Task processing is now handled by the dedicated crawler-service Lambda
+                logger.info(f"Task {task_id} processing moved to dedicated crawler-service")
+                continue
 
             except Exception as e:
                 error_msg = f"Error processing SQS record: {e}"

@@ -275,7 +275,7 @@ class AuthService:
             raise AuthenticationError(f"Failed to create user: {e}")
     
     async def ensure_default_user(self):
-        """Create a default admin user if no users exist, or fix existing users' password hashes."""
+        """Create a default admin user if no users exist."""
         try:
             await self._ensure_mongodb_connected()
             
@@ -297,46 +297,7 @@ class AuthService:
                 await mongodb.get_collection("users").insert_one(default_user.dict())
                 logger.info("Created default admin user: admin@example.com / admin123")
             else:
-                # Check and fix password hashes for all existing users
-                fixed_count = 0
-                for user in users:
-                    user_id = user.get("user_id")
-                    username = user.get("username")
-                    email = user.get("email")
-                    hashed_password = user.get("hashed_password", "")
-                    
-                    # Check if password hash is valid
-                    try:
-                        # Test if the hash is valid
-                        test_result = pwd_context.verify("test", hashed_password)
-                        logger.debug(f"User {username} has valid password hash")
-                    except Exception as e:
-                        if "hash could not be identified" in str(e):
-                            logger.warning(f"User {username} has invalid password hash, fixing...")
-                            
-                            # Fix the password hash based on user type
-                            if username == "admin":
-                                new_hash = self.get_password_hash("admin123")
-                                logger.info(f"Fixed admin user password hash")
-                            else:
-                                # For other users, set a default password
-                                new_hash = self.get_password_hash("password123")
-                                logger.info(f"Fixed password hash for user {username} ({email})")
-                            
-                            # Update the user
-                            await mongodb.get_collection("users").update_one(
-                                {"user_id": user_id},
-                                {"$set": {"hashed_password": new_hash, "updated_at": datetime.utcnow()}}
-                            )
-                            fixed_count += 1
-                        else:
-                            logger.error(f"Error checking password hash for {username}: {e}")
-                
-                if fixed_count > 0:
-                    logger.info(f"Fixed password hashes for {fixed_count} users")
-                    logger.info("Default passwords:")
-                    logger.info("  admin: admin123")
-                    logger.info("  other users: password123")
+                logger.info(f"Found {len(users)} existing users, no default user needed")
                 
         except Exception as e:
             logger.error(f"Error ensuring default user: {e}")

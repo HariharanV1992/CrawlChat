@@ -95,7 +95,7 @@ def setup_logging(
     # Application-specific loggers - reduce verbose INFO logs
     logging.getLogger('src.crawler').setLevel(logging.INFO)  # Allow crawler logs
     logging.getLogger('src.services.chat_service').setLevel(logging.WARNING)
-    logging.getLogger('src.services.crawler_service').setLevel(logging.INFO)  # Allow crawler service logs
+    # logging.getLogger('src.services.crawler_service').setLevel(logging.INFO)  # Crawler service removed
     logging.getLogger('src.services.auth_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.document_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.email_service').setLevel(logging.WARNING)

@@ -420,55 +420,7 @@ class DocumentProcessingService:
             logger.error(f"[DOC_PROCESSING] Error getting vector store stats: {e}")
             return {"error": str(e)}
     
-    async def batch_process_files(
-        self, 
-        file_paths: List[str],
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Process multiple files in batch."""
-        try:
-            logger.info(f"[DOC_PROCESSING] Batch processing {len(file_paths)} files")
-            
-            results = []
-            
-            for file_path in file_paths:
-                try:
-                    if not os.path.exists(file_path):
-                        logger.warning(f"[DOC_PROCESSING] File not found: {file_path}")
-                        continue
-                    
-                    # Read file content
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    
-                    # Generate document ID and filename
-                    document_id = str(uuid.uuid4())
-                    filename = os.path.basename(file_path)
-                    
-                    # Process the document
-                    result = await self.process_document_with_vector_store(
-                        document_id=document_id,
-                        content=content,
-                        filename=filename,
-                        metadata=metadata
-                    )
-                    
-                    results.append(result)
-                    
-                except Exception as e:
-                    logger.error(f"[DOC_PROCESSING] Error processing file {file_path}: {e}")
-                    results.append({
-                        "file_path": file_path,
-                        "status": "error",
-                        "error": str(e)
-                    })
-            
-            logger.info(f"[DOC_PROCESSING] Completed batch processing")
-            return results
-            
-        except Exception as e:
-            logger.error(f"[DOC_PROCESSING] Error in batch file processing: {e}")
-            raise
+
 
     async def process_document_with_preprocessing(
         self,

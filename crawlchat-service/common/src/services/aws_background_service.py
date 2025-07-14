@@ -95,22 +95,6 @@ class AWSBackgroundService:
         }
         return self.invoke_lambda_function(payload)
     
-    def invoke_document_processing_lambda(self, document_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Invoke document processing Lambda function.
-        
-        Args:
-            document_data: Document processing data
-            
-        Returns:
-            Response from document processing Lambda function
-        """
-        payload = {
-            "action": "process_document",
-            "data": document_data
-        }
-        return self.invoke_lambda_function(payload)
-    
     def test_connection(self) -> Dict[str, Any]:
         """
         Test AWS connection by listing Lambda functions.
