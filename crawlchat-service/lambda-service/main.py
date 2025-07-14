@@ -26,8 +26,10 @@ def get_storage_service_lazy():
     return get_storage_service()
 
 def get_crawler_service_lazy():
-    from common.src.services.crawler_service import crawler_service
-    return crawler_service
+    # Crawler service removed - using separate crawler-service instead
+    # from common.src.services.crawler_service import crawler_service
+    # return crawler_service
+    return None
 
 def get_chat_service_lazy():
     from common.src.services.chat_service import chat_service

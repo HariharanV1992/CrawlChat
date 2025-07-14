@@ -12,6 +12,7 @@ from botocore.exceptions import ClientError
 from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
 import asyncio
+import io
 from io import BytesIO
 from PIL import Image, ImageOps, ImageFilter
 
@@ -948,6 +949,168 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"Error uploading and extracting document: {e}")
             raise TextractError(f"Failed to upload and extract document: {e}")
+
+    async def extract_text_from_s3_pdf(self, s3_bucket: str, s3_key: str, document_type: DocumentType = DocumentType.GENERAL) -> Tuple[str, int]:
+        """
+        Extract text from PDF stored in S3 using Textract.
+        This method is called by unified_document_processor.py.
+        
+        Args:
+            s3_bucket: S3 bucket name
+            s3_key: S3 key for the PDF
+            document_type: Type of document to process
+            
+        Returns:
+            Tuple of (text_content, page_count)
+        """
+        try:
+            logger.info(f"Extracting text from S3 PDF: s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
+            
+            # Use the comprehensive async processing for PDF documents
+            results = await self.process_document_async_comprehensive(
+                s3_bucket=s3_bucket,
+                s3_key=s3_key,
+                feature_types=["TABLES", "FORMS", "SIGNATURES", "LAYOUT"]
+            )
+            
+            # Extract text content from paragraphs for better quality
+            text_content = ""
+            if results.get("paragraphs_for_vector"):
+                # Use vector-optimized paragraphs for better text quality
+                paragraph_texts = [p["text"] for p in results["paragraphs_for_vector"]]
+                text_content = "\n\n".join(paragraph_texts)
+            elif results.get("text_lines"):
+                # Fallback to text lines if paragraphs not available
+                text_content = "\n".join(results["text_lines"])
+            
+            page_count = results.get("page_count", 1)
+            
+            logger.info(f"Successfully extracted text from S3 PDF: {len(text_content)} characters, {page_count} pages")
+            return text_content, page_count
+            
+        except Exception as e:
+            logger.error(f"Error extracting text from S3 PDF: {e}")
+            raise TextractError(f"Failed to extract text from S3 PDF: {e}")
+
+    async def _try_pypdf2_extraction(self, file_content: bytes, filename: str) -> Tuple[str, int]:
+        """
+        Try PyPDF2 extraction as a fallback method.
+        This method is called by unified_document_processor.py.
+        
+        Args:
+            file_content: PDF file content as bytes
+            filename: Original filename
+            
+        Returns:
+            Tuple of (text_content, page_count)
+        """
+        try:
+            logger.info(f"Trying PyPDF2 extraction for: {filename}")
+            
+            # Import PyPDF2
+            try:
+                import PyPDF2
+            except ImportError:
+                logger.warning("PyPDF2 not available, skipping PyPDF2 extraction")
+                return "", 0
+            
+            # Create PDF reader from bytes
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
+            
+            # Extract text from all pages
+            text_content = ""
+            page_count = len(pdf_reader.pages)
+            
+            for page_num in range(page_count):
+                try:
+                    page = pdf_reader.pages[page_num]
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_content += page_text + "\n"
+                except Exception as page_error:
+                    logger.warning(f"Error extracting text from page {page_num}: {page_error}")
+                    continue
+            
+            logger.info(f"PyPDF2 extraction completed: {len(text_content)} characters, {page_count} pages")
+            return text_content.strip(), page_count
+            
+        except Exception as e:
+            logger.error(f"PyPDF2 extraction failed: {e}")
+            return "", 0
+
+    async def _try_aggressive_text_extraction(self, file_content: bytes, filename: str) -> str:
+        """
+        Try aggressive text extraction using regex patterns.
+        This method is called by unified_document_processor.py.
+        
+        Args:
+            file_content: File content as bytes
+            filename: Original filename
+            
+        Returns:
+            Extracted text content
+        """
+        try:
+            logger.info(f"Trying aggressive text extraction for: {filename}")
+            
+            # Try to decode as text first
+            try:
+                text_content = file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    text_content = file_content.decode('latin-1')
+                except UnicodeDecodeError:
+                    logger.warning("Could not decode file content as text")
+                    return ""
+            
+            # Apply aggressive cleaning
+            import re
+            
+            # Remove common PDF artifacts
+            text_content = re.sub(r'\x00', '', text_content)  # Remove null bytes
+            text_content = re.sub(r'[^\x20-\x7E\n\r\t]', '', text_content)  # Keep only printable ASCII
+            
+            # Remove excessive whitespace
+            text_content = re.sub(r'\n\s*\n', '\n\n', text_content)  # Multiple newlines to double newlines
+            text_content = re.sub(r' +', ' ', text_content)  # Multiple spaces to single space
+            
+            # Remove common PDF headers/footers
+            text_content = re.sub(r'Page \d+ of \d+', '', text_content)
+            text_content = re.sub(r'^\d+$', '', text_content, flags=re.MULTILINE)  # Remove standalone page numbers
+            
+            # Clean up
+            text_content = text_content.strip()
+            
+            logger.info(f"Aggressive text extraction completed: {len(text_content)} characters")
+            return text_content
+            
+        except Exception as e:
+            logger.error(f"Aggressive text extraction failed: {e}")
+            return ""
+
+    async def _try_raw_text_extraction(self, file_content: bytes, filename: str) -> str:
+        """
+        Try raw text extraction for image files.
+        This method is called by unified_document_processor.py.
+        
+        Args:
+            file_content: Image file content as bytes
+            filename: Original filename
+            
+        Returns:
+            Extracted text content
+        """
+        try:
+            logger.info(f"Trying raw text extraction for: {filename}")
+            
+            # For images, we can't extract text without OCR
+            # This is a placeholder for future OCR implementation
+            logger.warning("Raw text extraction not implemented for images (requires OCR)")
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Raw text extraction failed: {e}")
+            return ""
 
 # Global instance
 textract_service = AWSTextractService() 
