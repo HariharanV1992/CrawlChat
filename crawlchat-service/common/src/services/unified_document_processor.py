@@ -355,7 +355,7 @@ class UnifiedDocumentProcessor:
             logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing with AWS pattern for {filename}")
             document_type = self._determine_document_type_for_textract(filename, file_content)
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
-                file_content=file_content,
+                content=file_content,
                 filename=filename,
                 document_type=document_type
             )
@@ -415,7 +415,7 @@ class UnifiedDocumentProcessor:
             logger.info(f"[UNIFIED_PROCESSOR] Trying direct Textract processing with AWS pattern for {filename}")
             document_type = self._determine_document_type_for_textract(filename, file_content)
             text_content, page_count = await textract_service.upload_to_s3_and_extract(
-                file_content=file_content,
+                content=file_content,
                 filename=filename,
                 document_type=document_type
             )

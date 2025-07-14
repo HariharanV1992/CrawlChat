@@ -76,39 +76,44 @@ def setup_logging(
             logging.warning(f"Could not create log file {log_file}: {e}")
     
     # Set specific logger levels to reduce noise
-    # External libraries - set to WARNING or ERROR only
+    # External libraries - set to ERROR only to minimize noise
     logging.getLogger('urllib3').setLevel(logging.ERROR)
     logging.getLogger('boto3').setLevel(logging.ERROR)
     logging.getLogger('botocore').setLevel(logging.ERROR)
     logging.getLogger('s3transfer').setLevel(logging.ERROR)
     logging.getLogger('httpx').setLevel(logging.ERROR)
     logging.getLogger('httpcore').setLevel(logging.ERROR)
-    logging.getLogger('asyncio').setLevel(logging.WARNING)
-    logging.getLogger('uvicorn').setLevel(logging.WARNING)
-    logging.getLogger('fastapi').setLevel(logging.WARNING)
-    logging.getLogger('pymongo').setLevel(logging.WARNING)
-    logging.getLogger('motor').setLevel(logging.WARNING)
-    logging.getLogger('redis').setLevel(logging.WARNING)
-    logging.getLogger('celery').setLevel(logging.WARNING)
-    logging.getLogger('openai').setLevel(logging.WARNING)
+    logging.getLogger('asyncio').setLevel(logging.ERROR)
+    logging.getLogger('uvicorn').setLevel(logging.ERROR)
+    logging.getLogger('fastapi').setLevel(logging.ERROR)
+    logging.getLogger('pymongo').setLevel(logging.ERROR)
+    logging.getLogger('motor').setLevel(logging.ERROR)
+    logging.getLogger('redis').setLevel(logging.ERROR)
+    logging.getLogger('celery').setLevel(logging.ERROR)
+    logging.getLogger('openai').setLevel(logging.ERROR)
+    logging.getLogger('mangum').setLevel(logging.ERROR)
     
     # Application-specific loggers - reduce verbose INFO logs
-    logging.getLogger('src.crawler').setLevel(logging.INFO)  # Allow crawler logs
+    logging.getLogger('src.crawler').setLevel(logging.WARNING)
     logging.getLogger('src.services.chat_service').setLevel(logging.WARNING)
-    # logging.getLogger('src.services.crawler_service').setLevel(logging.INFO)  # Crawler service removed
     logging.getLogger('src.services.auth_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.document_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.email_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.aws_background_service').setLevel(logging.WARNING)
+    logging.getLogger('src.services.unified_document_processor').setLevel(logging.WARNING)
+    logging.getLogger('src.services.unified_storage_service').setLevel(logging.WARNING)
     logging.getLogger('src.utils.vector_store_demo').setLevel(logging.ERROR)
     
-    # Allow crawler-related logs
-    logging.getLogger('crawler').setLevel(logging.INFO)
-    logging.getLogger('crawler.advanced_crawler').setLevel(logging.INFO)
-    logging.getLogger('crawler.proxy_manager').setLevel(logging.INFO)
-    logging.getLogger('crawler.link_extractor').setLevel(logging.INFO)
-    logging.getLogger('crawler.file_downloader').setLevel(logging.INFO)
-    logging.getLogger('crawler.settings_manager').setLevel(logging.INFO)
+    # AWS Textract service - allow INFO logs for Lambda monitoring
+    logging.getLogger('src.services.aws_textract_service').setLevel(logging.INFO)
+    
+    # Allow crawler-related logs but reduce noise
+    logging.getLogger('crawler').setLevel(logging.WARNING)
+    logging.getLogger('crawler.advanced_crawler').setLevel(logging.WARNING)
+    logging.getLogger('crawler.proxy_manager').setLevel(logging.WARNING)
+    logging.getLogger('crawler.link_extractor').setLevel(logging.WARNING)
+    logging.getLogger('crawler.file_downloader').setLevel(logging.WARNING)
+    logging.getLogger('crawler.settings_manager').setLevel(logging.WARNING)
     
     # Only log important startup/shutdown messages
     if log_level.upper() == "INFO":

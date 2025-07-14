@@ -43,7 +43,6 @@ class AWSTextractService:
         try:
             # Get region from environment or config
             region = os.getenv('AWS_REGION', 'ap-south-1')
-            logger.info(f"Initializing AWS clients in region: {region}")
             
             # Check if running in Lambda environment
             is_lambda = (
@@ -54,7 +53,7 @@ class AWSTextractService:
             
             if is_lambda:
                 # Running in Lambda - use IAM role
-                logger.info("Running in Lambda environment, using IAM role")
+                logger.info("🔧 AWS Textract: Initializing clients in Lambda environment")
                 self.textract_client = boto3.client('textract', region_name=region)
                 self.s3_client = boto3.client('s3', region_name=region)
             else:
@@ -63,7 +62,7 @@ class AWSTextractService:
                 secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
                 
                 if access_key and secret_key:
-                    logger.info("Running locally, using provided AWS credentials")
+                    logger.info("🔧 AWS Textract: Initializing clients locally")
                     self.textract_client = boto3.client(
                         'textract',
                         aws_access_key_id=access_key,
@@ -77,29 +76,23 @@ class AWSTextractService:
                         region_name=region
                     )
                 else:
-                    logger.warning("AWS credentials not available for local environment")
+                    logger.warning("AWS Textract: No credentials available for local environment")
                     self.textract_client = None
                     self.s3_client = None
             
-            if self.textract_client:
-                logger.info("Textract client initialized successfully")
+            if self.textract_client and self.s3_client:
+                logger.info("✅ AWS Textract: Clients initialized successfully")
             else:
-                logger.error("Textract client initialization failed")
-                    
-            if self.s3_client:
-                logger.info("S3 client initialized successfully")
-            else:
-                logger.error("S3 client initialization failed")
+                logger.error("❌ AWS Textract: Client initialization failed")
                 
         except Exception as e:
-            logger.error(f"Failed to initialize AWS clients: {e}")
+            logger.error(f"❌ AWS Textract: Failed to initialize clients: {e}")
             self.textract_client = None
             self.s3_client = None
     
     def _ensure_clients_initialized(self):
         """Ensure AWS clients are initialized (lazy initialization)."""
         if not self._clients_initialized:
-            logger.info("Initializing AWS clients (lazy initialization)...")
             self._init_clients()
             self._clients_initialized = True
 
@@ -119,8 +112,7 @@ class AWSTextractService:
             if feature_types is None:
                 feature_types = ["TABLES", "FORMS", "SIGNATURES", "LAYOUT"]
             
-            logger.info(f"Starting document analysis job for s3://{s3_bucket}/{s3_key}")
-            logger.info(f"Feature types: {feature_types}")
+            logger.info(f"🚀 AWS Textract: Starting async job for s3://{s3_bucket}/{s3_key}")
             
             response = self.textract_client.start_document_analysis(
                 DocumentLocation={'S3Object': {'Bucket': s3_bucket, 'Name': s3_key}},
@@ -128,7 +120,7 @@ class AWSTextractService:
             )
             
             job_id = response['JobId']
-            logger.info(f"Document analysis job started with ID: {job_id}")
+            logger.info(f"✅ AWS Textract: Job started successfully - ID: {job_id}")
             
             return job_id
             
@@ -151,25 +143,23 @@ class AWSTextractService:
             if not self.textract_client:
                 raise TextractError("AWS Textract client not available")
             
-            logger.info(f"Waiting for job completion: {job_id}")
+            logger.info(f"⏳ AWS Textract: Waiting for job completion - {job_id}")
             
             while True:
                 result = self.textract_client.get_document_analysis(JobId=job_id)
                 status = result['JobStatus']
-                logger.info(f"Job Status: {status}")
                 
                 if status == 'SUCCEEDED':
-                    logger.info(f"Job {job_id} completed successfully")
+                    logger.info(f"✅ AWS Textract: Job {job_id} completed successfully")
                     return
                 elif status == 'FAILED':
                     error_message = result.get('StatusMessage', 'Unknown error')
-                    logger.error(f"Job {job_id} failed: {error_message}")
+                    logger.error(f"❌ AWS Textract: Job {job_id} failed: {error_message}")
                     raise TextractError(f"Textract job failed: {error_message}")
                 elif status == 'IN_PROGRESS':
-                    logger.info(f"Job {job_id} still in progress, waiting {poll_interval} seconds...")
                     await asyncio.sleep(poll_interval)
                 else:
-                    logger.warning(f"Unknown job status: {status}")
+                    logger.warning(f"⚠️ AWS Textract: Unknown job status: {status}")
                     await asyncio.sleep(poll_interval)
                     
         except ClientError as e:
@@ -191,7 +181,7 @@ class AWSTextractService:
             if not self.textract_client:
                 raise TextractError("AWS Textract client not available")
             
-            logger.info(f"Retrieving all blocks from job: {job_id}")
+            logger.info(f"📥 AWS Textract: Retrieving blocks from job {job_id}")
             
             blocks = []
             next_token = None
@@ -211,7 +201,7 @@ class AWSTextractService:
                 if not next_token:
                     break
             
-            logger.info(f"Retrieved {len(blocks)} blocks from job {job_id}")
+            logger.info(f"✅ AWS Textract: Retrieved {len(blocks)} blocks from job {job_id}")
             return blocks
             
         except ClientError as e:
@@ -250,7 +240,7 @@ class AWSTextractService:
                     "Relationships": block.get("Relationships", [])
                 })
             
-            logger.info(f"Organized {len(blocks)} blocks into {len(organized)} types")
+            logger.info(f"📊 AWS Textract: Organized {len(blocks)} blocks into {len(organized)} types")
             return organized
             
         except Exception as e:
@@ -266,7 +256,7 @@ class AWSTextractService:
         This is the main method that combines all async functionality.
         """
         try:
-            logger.info(f"Starting comprehensive async document processing: s3://{s3_bucket}/{s3_key}")
+            logger.info(f"🚀 AWS Textract: Starting comprehensive processing for s3://{s3_bucket}/{s3_key}")
             
             if feature_types is None:
                 feature_types = ["TABLES", "FORMS", "SIGNATURES", "LAYOUT"]
@@ -303,12 +293,12 @@ class AWSTextractService:
                 try:
                     with open(output_filename, "w") as f:
                         json.dump(organized_blocks, f, indent=2, ensure_ascii=False)
-                    logger.info(f"✅ Organized blocks saved to {output_filename}")
+                    logger.info(f"💾 AWS Textract: Organized blocks saved to {output_filename}")
                     results["output_file"] = output_filename
                 except Exception as e:
-                    logger.error(f"Failed to save organized blocks: {e}")
+                    logger.error(f"❌ AWS Textract: Failed to save organized blocks: {e}")
             
-            logger.info(f"✅ Comprehensive async document processing completed successfully")
+            logger.info(f"✅ AWS Textract: Comprehensive processing completed successfully")
             return results
             
         except Exception as e:
@@ -360,14 +350,8 @@ class AWSTextractService:
                     block for block in organized_blocks["SIGNATURE"]
                 ]
             
-            logger.info(f"Extracted: {len(extracted_data['text_lines'])} text lines, "
-                       f"{len(extracted_data['paragraphs'])} paragraphs, "
-                       f"{len(extracted_data['form_data'])} form fields, "
-                       f"{len(extracted_data['tables'])} tables, "
-                       f"{extracted_data['page_count']} pages")
-            
         except Exception as e:
-            logger.error(f"Error extracting specific data types: {e}")
+            logger.error(f"❌ AWS Textract: Error extracting specific data types: {e}")
         
         return extracted_data
 
@@ -407,7 +391,7 @@ class AWSTextractService:
             return dict(kvs)
             
         except Exception as e:
-            logger.error(f"Error extracting form data: {e}")
+            logger.error(f"❌ AWS Textract: Error extracting form data: {e}")
             return {}
 
     def _find_value_block_for_key(self, key_block: Dict[str, Any], value_map: Dict[str, Any]) -> Dict[str, Any]:
@@ -422,7 +406,7 @@ class AWSTextractService:
                             return value_map[value_id]
             return {}
         except Exception as e:
-            logger.error(f"Error finding value block: {e}")
+            logger.error(f"❌ AWS Textract: Error finding value block: {e}")
             return {}
 
     def _get_text_from_block(self, block: Dict[str, Any], block_map: Dict[str, Any]) -> str:
@@ -444,7 +428,7 @@ class AWSTextractService:
                                         text += "X"
             return text.strip()
         except Exception as e:
-            logger.error(f"Error getting text from block: {e}")
+            logger.error(f"❌ AWS Textract: Error getting text from block: {e}")
             return ""
 
     def _extract_tables_from_blocks(self, organized_blocks: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -480,7 +464,7 @@ class AWSTextractService:
             return tables
             
         except Exception as e:
-            logger.error(f"Error extracting tables: {e}")
+            logger.error(f"❌ AWS Textract: Error extracting tables: {e}")
             return []
 
     def extract_paragraphs_from_blocks(self, organized_blocks: Dict[str, List[Dict[str, Any]]], 
@@ -502,7 +486,7 @@ class AWSTextractService:
             paragraphs = []
             
             if "LINE" not in organized_blocks:
-                logger.warning("No LINE blocks found for paragraph extraction")
+                logger.warning("⚠️ AWS Textract: No LINE blocks found for paragraph extraction")
                 return paragraphs
             
             # Group lines by page
@@ -586,7 +570,6 @@ class AWSTextractService:
                 if len(current_paragraph["text"]) >= min_paragraph_length:
                     paragraphs.append(current_paragraph)
             
-            logger.info(f"Extracted {len(paragraphs)} paragraphs from {len(lines_by_page)} pages")
             return paragraphs
             
         except Exception as e:
@@ -634,7 +617,6 @@ class AWSTextractService:
                 
                 enhanced_paragraphs.append(enhanced_paragraph)
             
-            logger.info(f"Enhanced {len(enhanced_paragraphs)} paragraphs for vector storage")
             return enhanced_paragraphs
             
         except Exception as e:
@@ -654,8 +636,6 @@ class AWSTextractService:
             if not self.textract_client:
                 raise TextractError("AWS Textract client not available")
             
-            logger.info(f"Calling DetectDocumentText Lambda-style for s3://{s3_bucket}/{s3_key}")
-            
             response = self.textract_client.detect_document_text(
                 Document={
                     'S3Object': {
@@ -668,8 +648,6 @@ class AWSTextractService:
             # Extract text using LINE blocks (Lambda-style)
             line_text = self._extract_text_lambda_style(response, extract_by="LINE")
             page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
-            
-            logger.info(f"Lambda-style DetectDocumentText completed: {len(line_text)} lines, {page_count} pages")
             
             return line_text, page_count
             
@@ -693,7 +671,7 @@ class AWSTextractService:
                     line_text.append(block["Text"])
             return line_text
         except Exception as e:
-            logger.error(f"Error extracting text Lambda-style: {e}")
+            logger.error(f"❌ AWS Textract: Error extracting text Lambda-style: {e}")
             return []
 
     async def analyze_document_forms_lambda_style(self, s3_bucket: str, s3_key: str) -> Dict[str, List[str]]:
@@ -707,15 +685,11 @@ class AWSTextractService:
             if not self.textract_client:
                 raise TextractError("AWS Textract client not available")
             
-            logger.info(f"Calling AnalyzeDocument Lambda-style for forms: s3://{s3_bucket}/{s3_key}")
-            
             # Get key-value maps using Lambda-style approach
             key_map, value_map, block_map = await self._get_kv_map_lambda_style(s3_bucket, s3_key)
             
             # Get key-value relationships
             kvs = self._get_kv_relationship_lambda_style(key_map, value_map, block_map)
-            
-            logger.info(f"Lambda-style form analysis completed: {len(kvs)} key-value pairs found")
             
             return kvs
             
@@ -741,7 +715,6 @@ class AWSTextractService:
 
             # Get the text blocks
             blocks = response['Blocks']
-            logger.info(f'Lambda-style form analysis returned {len(blocks)} blocks')
 
             # Get key and value maps
             key_map = {}
@@ -780,7 +753,7 @@ class AWSTextractService:
             return dict(kvs)
             
         except Exception as e:
-            logger.error(f"Error getting KV relationships Lambda-style: {e}")
+            logger.error(f"❌ AWS Textract: Error getting KV relationships Lambda-style: {e}")
             return {}
 
     def _find_value_block_lambda_style(self, key_block: Dict[str, Any], value_map: Dict[str, Any]) -> Dict[str, Any]:
@@ -795,7 +768,7 @@ class AWSTextractService:
                             return value_map[value_id]
             return {}
         except Exception as e:
-            logger.error(f"Error finding value block Lambda-style: {e}")
+            logger.error(f"❌ AWS Textract: Error finding value block Lambda-style: {e}")
             return {}
 
     def _get_text_lambda_style(self, result: Dict[str, Any], blocks_map: Dict[str, Any]) -> str:
@@ -817,7 +790,7 @@ class AWSTextractService:
                                         text += 'X'
             return text.strip()
         except Exception as e:
-            logger.error(f"Error getting text Lambda-style: {e}")
+            logger.error(f"❌ AWS Textract: Error getting text Lambda-style: {e}")
             return ""
 
     async def process_document_lambda_style(self, s3_bucket: str, s3_key: str) -> Dict[str, Any]:
@@ -825,8 +798,6 @@ class AWSTextractService:
         Process document using Lambda-style approach combining text detection and form analysis.
         """
         try:
-            logger.info(f"Processing document Lambda-style: s3://{s3_bucket}/{s3_key}")
-            
             results = {
                 "text_lines": [],
                 "form_data": {},
@@ -839,17 +810,15 @@ class AWSTextractService:
                 text_lines, page_count = await self.detect_document_text_lambda_style(s3_bucket, s3_key)
                 results["text_lines"] = text_lines
                 results["page_count"] = page_count
-                logger.info(f"Lambda-style text detection successful: {len(text_lines)} lines")
             except Exception as e:
-                logger.warning(f"Lambda-style text detection failed: {e}")
+                logger.warning(f"⚠️ AWS Textract: Lambda-style text detection failed: {e}")
             
             # Try form analysis
             try:
                 form_data = await self.analyze_document_forms_lambda_style(s3_bucket, s3_key)
                 results["form_data"] = form_data
-                logger.info(f"Lambda-style form analysis successful: {len(form_data)} key-value pairs")
             except Exception as e:
-                logger.warning(f"Lambda-style form analysis failed: {e}")
+                logger.warning(f"⚠️ AWS Textract: Lambda-style form analysis failed: {e}")
             
             return results
             
@@ -871,7 +840,7 @@ class AWSTextractService:
             Tuple of (text_content, page_count)
         """
         try:
-            logger.info(f"Processing preprocessed document: s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
+            logger.info(f"📄 AWS Textract: Processing preprocessed document s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
             
             # Use the comprehensive async processing for preprocessed documents
             results = await self.process_document_async_comprehensive(
@@ -892,7 +861,7 @@ class AWSTextractService:
             
             page_count = results.get("page_count", 1)
             
-            logger.info(f"Successfully processed preprocessed document: {len(text_content)} characters, {page_count} pages")
+            logger.info(f"✅ AWS Textract: Preprocessed document completed - {len(text_content)} chars, {page_count} pages")
             return text_content, page_count
             
         except Exception as e:
@@ -914,7 +883,7 @@ class AWSTextractService:
             Tuple of (text_content, page_count)
         """
         try:
-            logger.info(f"Uploading and extracting document: {filename} (type: {document_type.value})")
+            logger.info(f"📤 AWS Textract: Uploading and extracting {filename} (type: {document_type.value})")
             
             # Import unified storage service
             from common.src.services.unified_storage_service import unified_storage_service
@@ -928,7 +897,7 @@ class AWSTextractService:
             )
             
             s3_key = upload_result["s3_key"]
-            logger.info(f"Document uploaded to S3: {s3_key}")
+            logger.info(f"📁 AWS Textract: Document uploaded to S3: {s3_key}")
             
             # Process with Textract
             text_content, page_count = await self.process_preprocessed_document(
@@ -940,9 +909,9 @@ class AWSTextractService:
             # Clean up temporary file
             try:
                 await unified_storage_service.delete_file(s3_key)
-                logger.info(f"Cleaned up temporary file: {s3_key}")
+                logger.info(f"🧹 AWS Textract: Cleaned up temporary file: {s3_key}")
             except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temporary file {s3_key}: {cleanup_error}")
+                logger.warning(f"⚠️ AWS Textract: Failed to cleanup temporary file {s3_key}: {cleanup_error}")
             
             return text_content, page_count
             
@@ -964,7 +933,7 @@ class AWSTextractService:
             Tuple of (text_content, page_count)
         """
         try:
-            logger.info(f"Extracting text from S3 PDF: s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
+            logger.info(f"📄 AWS Textract: Extracting text from S3 PDF s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
             
             # Use the comprehensive async processing for PDF documents
             results = await self.process_document_async_comprehensive(
@@ -985,7 +954,7 @@ class AWSTextractService:
             
             page_count = results.get("page_count", 1)
             
-            logger.info(f"Successfully extracted text from S3 PDF: {len(text_content)} characters, {page_count} pages")
+            logger.info(f"✅ AWS Textract: S3 PDF extraction completed - {len(text_content)} chars, {page_count} pages")
             return text_content, page_count
             
         except Exception as e:
@@ -1005,13 +974,13 @@ class AWSTextractService:
             Tuple of (text_content, page_count)
         """
         try:
-            logger.info(f"Trying PyPDF2 extraction for: {filename}")
+            logger.info(f"🔄 AWS Textract: Trying PyPDF2 fallback for {filename}")
             
             # Import PyPDF2
             try:
                 import PyPDF2
             except ImportError:
-                logger.warning("PyPDF2 not available, skipping PyPDF2 extraction")
+                logger.warning("⚠️ AWS Textract: PyPDF2 not available, skipping extraction")
                 return "", 0
             
             # Create PDF reader from bytes
@@ -1028,10 +997,10 @@ class AWSTextractService:
                     if page_text:
                         text_content += page_text + "\n"
                 except Exception as page_error:
-                    logger.warning(f"Error extracting text from page {page_num}: {page_error}")
+                    logger.warning(f"⚠️ AWS Textract: Error extracting text from page {page_num}: {page_error}")
                     continue
             
-            logger.info(f"PyPDF2 extraction completed: {len(text_content)} characters, {page_count} pages")
+            logger.info(f"✅ AWS Textract: PyPDF2 fallback completed - {len(text_content)} chars, {page_count} pages")
             return text_content.strip(), page_count
             
         except Exception as e:
@@ -1051,7 +1020,7 @@ class AWSTextractService:
             Extracted text content
         """
         try:
-            logger.info(f"Trying aggressive text extraction for: {filename}")
+            logger.info(f"🔄 AWS Textract: Trying aggressive text extraction for {filename}")
             
             # Try to decode as text first
             try:
@@ -1060,7 +1029,7 @@ class AWSTextractService:
                 try:
                     text_content = file_content.decode('latin-1')
                 except UnicodeDecodeError:
-                    logger.warning("Could not decode file content as text")
+                    logger.warning("⚠️ AWS Textract: Could not decode file content as text")
                     return ""
             
             # Apply aggressive cleaning
@@ -1081,7 +1050,7 @@ class AWSTextractService:
             # Clean up
             text_content = text_content.strip()
             
-            logger.info(f"Aggressive text extraction completed: {len(text_content)} characters")
+            logger.info(f"✅ AWS Textract: Aggressive text extraction completed - {len(text_content)} chars")
             return text_content
             
         except Exception as e:
@@ -1101,15 +1070,15 @@ class AWSTextractService:
             Extracted text content
         """
         try:
-            logger.info(f"Trying raw text extraction for: {filename}")
+            logger.info(f"🔄 AWS Textract: Trying raw text extraction for {filename}")
             
             # For images, we can't extract text without OCR
             # This is a placeholder for future OCR implementation
-            logger.warning("Raw text extraction not implemented for images (requires OCR)")
+            logger.warning("⚠️ AWS Textract: Raw text extraction not implemented for images (requires OCR)")
             return ""
             
         except Exception as e:
-            logger.error(f"Raw text extraction failed: {e}")
+            logger.error(f"❌ AWS Textract: Raw text extraction failed: {e}")
             return ""
 
 # Global instance
