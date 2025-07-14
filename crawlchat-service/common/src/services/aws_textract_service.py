@@ -1300,6 +1300,10 @@ class AWSTextractService:
             )
             
             s3_key = upload_result["s3_key"]
+            
+            # Import config here to avoid reference before assignment error
+            from common.src.core.config import config
+            
             complete_s3_path = f"s3://{config.s3_bucket}/{s3_key}"
             logger.info(f"📁 AWS Textract: Document uploaded to S3")
             logger.info(f"📁 AWS Textract: Complete S3 path: {complete_s3_path}")
@@ -1307,7 +1311,6 @@ class AWSTextractService:
             logger.info(f"📁 AWS Textract: Processing purpose: textract_processing")
             
             # Process with Textract using environment-appropriate method
-            from common.src.core.config import config
             is_lambda = self._is_running_in_lambda()
             
             if is_lambda:

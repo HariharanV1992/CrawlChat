@@ -326,6 +326,10 @@ async def upload_document(
         # Read file content
         file_content = await file.read()
         file_size = len(file_content)
+        # Log file content bytes for debugging
+        logger.info(f"[API] File size: {file_size}")
+        logger.info(f"[API] First 20 bytes: {file_content[:20]}")
+        logger.info(f"[API] Last 20 bytes: {file_content[-20:]}")
         
         # Check file size (max 10MB)
         if file_size > 10 * 1024 * 1024:

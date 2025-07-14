@@ -106,6 +106,10 @@ class UnifiedStorageService:
             # Calculate file hash for integrity
             file_hash = hashlib.md5(file_content).hexdigest()
             
+            # Log file content bytes for debugging
+            logger.info(f"[UNIFIED_STORAGE] File content first 20 bytes: {file_content[:20]}")
+            logger.info(f"[UNIFIED_STORAGE] File content last 20 bytes: {file_content[-20:]}")
+
             # Upload to S3
             upload_params = {
                 'Bucket': config.s3_bucket,
