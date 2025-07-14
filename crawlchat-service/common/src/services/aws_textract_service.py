@@ -1300,18 +1300,34 @@ class AWSTextractService:
             )
             
             s3_key = upload_result["s3_key"]
-            logger.info(f"📁 AWS Textract: Document uploaded to S3: {s3_key}")
+            complete_s3_path = f"s3://{config.s3_bucket}/{s3_key}"
+            logger.info(f"📁 AWS Textract: Document uploaded to S3")
+            logger.info(f"📁 AWS Textract: Complete S3 path: {complete_s3_path}")
+            logger.info(f"📁 AWS Textract: S3 key: {s3_key}")
+            logger.info(f"📁 AWS Textract: Processing purpose: textract_processing")
             
-            # Process with Textract
+            # Process with Textract using environment-appropriate method
             from common.src.core.config import config
-            text_content, page_count = await self.process_preprocessed_document(
-                s3_bucket=config.s3_bucket,
-                s3_key=s3_key,
-                document_type=document_type
-            )
+            is_lambda = self._is_running_in_lambda()
             
-            # If no text content extracted, try PDF to image fallback
-            if not text_content or len(text_content.strip()) == 0:
+            if is_lambda:
+                # Use Lambda-optimized processing
+                logger.info(f"⚡ AWS Textract: Using Lambda-optimized processing for direct upload")
+                text_content, page_count = await self.process_document_lambda_optimized(
+                    s3_bucket=config.s3_bucket,
+                    s3_key=s3_key,
+                    document_type=document_type
+                )
+            else:
+                # Use regular processing for local environment
+                text_content, page_count = await self.process_preprocessed_document(
+                    s3_bucket=config.s3_bucket,
+                    s3_key=s3_key,
+                    document_type=document_type
+                )
+            
+            # If no text content extracted, try PDF to image fallback (only for local environment)
+            if not is_lambda and (not text_content or len(text_content.strip()) == 0):
                 logger.warning("⚠️ AWS Textract: No text content extracted — trying PDF to image fallback")
                 try:
                     text_content, page_count = await self.fallback_textract_on_pdf_images(
@@ -1334,6 +1350,175 @@ class AWSTextractService:
             logger.error(f"Error uploading and extracting document: {e}")
             raise TextractError(f"Failed to upload and extract document: {e}")
 
+    async def process_document_lambda_optimized(self, s3_bucket: str, s3_key: str, document_type: DocumentType = DocumentType.GENERAL) -> Tuple[str, int]:
+        """
+        Lambda-optimized document processing that uses sync Textract calls for faster processing.
+        This method is designed to complete within Lambda timeout limits.
+        """
+        try:
+            logger.info(f"⚡ AWS Textract: Lambda-optimized processing for s3://{s3_bucket}/{s3_key}")
+            
+            # Check Lambda timeout constraints
+            import time
+            start_time = time.time()
+            max_processing_time = 25  # Leave 5 seconds buffer for Lambda timeout
+            
+            self._ensure_clients_initialized()
+            
+            if not self.textract_client:
+                raise TextractError("AWS Textract client not available")
+            
+            # Try sync text detection first (faster than async)
+            try:
+                logger.info(f"⚡ AWS Textract: Attempting sync text detection")
+                response = self.textract_client.detect_document_text(
+                    Document={'S3Object': {'Bucket': s3_bucket, 'Name': s3_key}}
+                )
+                
+                # Check if we got meaningful text
+                line_blocks = [block for block in response['Blocks'] if block['BlockType'] == 'LINE']
+                word_blocks = [block for block in response['Blocks'] if block['BlockType'] == 'WORD']
+                
+                logger.info(f"⚡ AWS Textract: Sync detection found {len(line_blocks)} lines, {len(word_blocks)} words")
+                
+                if line_blocks:
+                    # Extract text from LINE blocks
+                    text_lines = [block['Text'] for block in line_blocks]
+                    text_content = '\n'.join(text_lines)
+                    page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
+                    
+                    logger.info(f"✅ AWS Textract: Lambda-optimized sync processing completed - {len(text_content)} chars, {page_count} pages")
+                    return text_content, page_count
+                
+            except Exception as sync_error:
+                logger.warning(f"⚠️ AWS Textract: Sync detection failed: {sync_error}")
+            
+            # Check timeout
+            if time.time() - start_time > max_processing_time:
+                logger.error("❌ AWS Textract: Processing timeout - switching to fallback")
+                return await self._quick_fallback_processing(s3_bucket, s3_key, document_type)
+            
+            # Try sync form analysis if no text found
+            try:
+                logger.info(f"⚡ AWS Textract: Attempting sync form analysis")
+                response = self.textract_client.analyze_document(
+                    Document={'S3Object': {'Bucket': s3_bucket, 'Name': s3_key}},
+                    FeatureTypes=['FORMS']
+                )
+                
+                # Extract text from form blocks
+                text_content = self._extract_text_from_form_blocks(response['Blocks'])
+                
+                if text_content:
+                    page_count = len([block for block in response['Blocks'] if block['BlockType'] == 'PAGE'])
+                    logger.info(f"✅ AWS Textract: Lambda-optimized form processing completed - {len(text_content)} chars, {page_count} pages")
+                    return text_content, page_count
+                
+            except Exception as form_error:
+                logger.warning(f"⚠️ AWS Textract: Form analysis failed: {form_error}")
+            
+            # Check timeout again
+            if time.time() - start_time > max_processing_time:
+                logger.error("❌ AWS Textract: Processing timeout - switching to fallback")
+                return await self._quick_fallback_processing(s3_bucket, s3_key, document_type)
+            
+            # If we still have time, try one page of PDF to image conversion
+            logger.warning("⚠️ AWS Textract: No text found with sync methods - trying single page conversion")
+            return await self._quick_fallback_processing(s3_bucket, s3_key, document_type)
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Lambda-optimized processing failed: {e}")
+            raise TextractError(f"Lambda-optimized processing failed: {e}")
+
+    def _extract_text_from_form_blocks(self, blocks: List[Dict[str, Any]]) -> str:
+        """
+        Extract text from form analysis blocks.
+        """
+        try:
+            text_lines = []
+            
+            # Extract text from KEY_VALUE_SET blocks
+            for block in blocks:
+                if block['BlockType'] == 'KEY_VALUE_SET':
+                    # Get the text from key-value relationships
+                    if 'Relationships' in block:
+                        for relationship in block['Relationships']:
+                            if relationship['Type'] == 'CHILD':
+                                for child_id in relationship['Ids']:
+                                    # Find the child block
+                                    child_block = next((b for b in blocks if b['Id'] == child_id), None)
+                                    if child_block and child_block['BlockType'] == 'WORD':
+                                        text_lines.append(child_block['Text'])
+            
+            # Also extract from regular LINE blocks
+            for block in blocks:
+                if block['BlockType'] == 'LINE':
+                    text_lines.append(block['Text'])
+            
+            return ' '.join(text_lines)
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Error extracting text from form blocks: {e}")
+            return ""
+
+    async def _quick_fallback_processing(self, s3_bucket: str, s3_key: str, document_type: DocumentType) -> Tuple[str, int]:
+        """
+        Quick fallback processing that converts only the first page to image for speed.
+        """
+        try:
+            logger.info(f"⚡ AWS Textract: Quick fallback processing - converting first page only")
+            
+            # Download PDF content
+            self._ensure_clients_initialized()
+            pdf_obj = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            pdf_bytes = pdf_obj["Body"].read()
+            
+            # Convert only first page to image
+            try:
+                from pdf2image import convert_from_bytes
+                images = convert_from_bytes(pdf_bytes, dpi=200, first_page=1, last_page=1)  # Only first page
+                
+                if not images:
+                    logger.warning("⚠️ AWS Textract: No images generated from PDF")
+                    return "", 1
+                
+                image = images[0]
+                
+                # Save image to temporary file
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                    image.save(tmp_file.name, "PNG")
+                    
+                    # Read image bytes
+                    with open(tmp_file.name, "rb") as img_file:
+                        image_bytes = img_file.read()
+                    
+                    # Clean up temp file
+                    os.unlink(tmp_file.name)
+                
+                # Use sync text detection on the image
+                response = self.textract_client.detect_document_text(
+                    Document={'Bytes': image_bytes}
+                )
+                
+                # Extract text
+                line_blocks = [block for block in response['Blocks'] if block['BlockType'] == 'LINE']
+                text_lines = [block['Text'] for block in line_blocks]
+                text_content = '\n'.join(text_lines)
+                
+                logger.info(f"✅ AWS Textract: Quick fallback completed - {len(text_content)} chars, 1 page")
+                return text_content, 1
+                
+            except ImportError:
+                logger.error("❌ AWS Textract: pdf2image not available for quick fallback")
+                return "", 1
+            except Exception as e:
+                logger.error(f"❌ AWS Textract: Quick fallback failed: {e}")
+                return "", 1
+                
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Quick fallback processing failed: {e}")
+            return "", 1
+
     async def extract_text_from_s3_pdf(self, s3_bucket: str, s3_key: str, document_type: DocumentType = DocumentType.GENERAL) -> Tuple[str, int]:
         """
         Extract text from PDF stored in S3 using Textract.
@@ -1354,7 +1539,12 @@ class AWSTextractService:
             is_lambda = self._is_running_in_lambda()
             logger.info(f"🔧 AWS Textract: Running in {'Lambda' if is_lambda else 'Local'} environment")
             
-            # Run comprehensive diagnostics
+            # Use Lambda-optimized processing in Lambda environment
+            if is_lambda:
+                logger.info(f"⚡ AWS Textract: Using Lambda-optimized processing")
+                return await self.process_document_lambda_optimized(s3_bucket, s3_key, document_type)
+            
+            # Run comprehensive diagnostics for local environment
             self._log_environment_diagnostics()
             
             # Validate S3 file before processing
@@ -1362,7 +1552,7 @@ class AWSTextractService:
                 logger.error("❌ AWS Textract: S3 file validation failed, cannot proceed")
                 raise TextractError("S3 file validation failed")
             
-            # Use the comprehensive async processing for PDF documents
+            # Use the comprehensive async processing for local environment
             results = await self.process_document_async_comprehensive(
                 s3_bucket=s3_bucket,
                 s3_key=s3_key,
@@ -1378,22 +1568,8 @@ class AWSTextractService:
             logger.info(f"🔍 AWS Textract: Total blocks: {total_blocks}")
             logger.info(f"🔍 AWS Textract: LINE blocks found: {line_count}")
             
-            # Lambda-specific fallback logic
-            if is_lambda and line_count == 0:
-                logger.warning("❗ AWS Textract: Lambda environment detected with 0 LINE blocks — forcing image fallback")
-                try:
-                    # Download PDF content from S3
-                    self._ensure_clients_initialized()
-                    pdf_obj = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
-                    pdf_bytes = pdf_obj["Body"].read()
-                    logger.info(f"📦 AWS Textract: Downloaded PDF for fallback - {len(pdf_bytes)} bytes")
-                    return await self.fallback_textract_on_pdf_images(pdf_bytes, s3_bucket, document_type)
-                except Exception as fallback_error:
-                    logger.error(f"❌ AWS Textract: PDF to image fallback failed: {fallback_error}")
-                    # Continue with normal processing as last resort
-            
-            # Regular fallback logic for non-Lambda or when Lambda fallback fails
-            elif line_count == 0:
+            # Fallback logic for local environment
+            if line_count == 0:
                 logger.warning("⚠️ AWS Textract: No LINE blocks found — fallback to image conversion")
                 try:
                     # Download PDF content from S3

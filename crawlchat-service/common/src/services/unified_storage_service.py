@@ -124,7 +124,14 @@ class UnifiedStorageService:
             
             self.s3_client.put_object(**upload_params)
             
-            logger.info(f"[UNIFIED_STORAGE] Uploaded user document: {filename} -> {s3_key}")
+            # Log complete S3 path for user uploads
+            complete_s3_path = f"s3://{config.s3_bucket}/{s3_key}"
+            logger.info(f"[UNIFIED_STORAGE] Uploaded user document: {filename}")
+            logger.info(f"[UNIFIED_STORAGE] Complete S3 path: {complete_s3_path}")
+            logger.info(f"[UNIFIED_STORAGE] S3 key: {s3_key}")
+            logger.info(f"[UNIFIED_STORAGE] User ID: {user_id}, Task ID: {task_id or 'None'}")
+            logger.info(f"[UNIFIED_STORAGE] File size: {len(file_content):,} bytes")
+            logger.info(f"[UNIFIED_STORAGE] File hash: {file_hash}")
             
             return {
                 "s3_key": s3_key,
@@ -259,7 +266,13 @@ class UnifiedStorageService:
                 }
             )
             
-            logger.info(f"[UNIFIED_STORAGE] Uploaded temp file: {filename} -> {s3_key}")
+            # Log complete S3 path for temporary files
+            complete_s3_path = f"s3://{config.s3_bucket}/{s3_key}"
+            logger.info(f"[UNIFIED_STORAGE] Uploaded temp file: {filename}")
+            logger.info(f"[UNIFIED_STORAGE] Complete S3 path: {complete_s3_path}")
+            logger.info(f"[UNIFIED_STORAGE] S3 key: {s3_key}")
+            logger.info(f"[UNIFIED_STORAGE] Purpose: {purpose}, User ID: {user_id or 'anonymous'}")
+            logger.info(f"[UNIFIED_STORAGE] File size: {len(file_content):,} bytes")
             
             return {
                 "s3_key": s3_key,
