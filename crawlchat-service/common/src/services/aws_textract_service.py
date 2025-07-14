@@ -15,6 +15,7 @@ import asyncio
 import io
 from io import BytesIO
 from PIL import Image, ImageOps, ImageFilter
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,366 @@ class AWSTextractService:
         if not self._clients_initialized:
             self._init_clients()
             self._clients_initialized = True
+
+    def _is_running_in_lambda(self) -> bool:
+        """Check if running in AWS Lambda environment."""
+        return bool(
+            os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
+            os.getenv('AWS_EXECUTION_ENV') or 
+            os.getenv('LAMBDA_TASK_ROOT')
+        )
+
+    def _validate_s3_file(self, s3_bucket: str, s3_key: str) -> bool:
+        """
+        Validate that S3 file exists and has content.
+        Returns True if file is valid, False otherwise.
+        """
+        try:
+            self._ensure_clients_initialized()
+            
+            if not self.s3_client:
+                logger.error("❌ AWS Textract: S3 client not available for file validation")
+                return False
+            
+            # Check if file exists and get its size
+            response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+            file_size = response.get('ContentLength', 0)
+            
+            logger.info(f"📦 AWS Textract: S3 file validation - size: {file_size} bytes")
+            
+            if file_size == 0:
+                logger.error("❌ AWS Textract: S3 file is empty (0 bytes)")
+                return False
+            
+            # Try to read a small portion to verify access
+            obj = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+            content_sample = obj['Body'].read(1024)  # Read first 1KB
+            
+            logger.info(f"📦 AWS Textract: S3 file access verified - sample size: {len(content_sample)} bytes")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: S3 file validation failed: {e}")
+            return False
+
+    def _check_aws_permissions(self) -> Dict[str, bool]:
+        """
+        Check AWS permissions for Textract and S3 operations.
+        Returns a dictionary with permission status for each service.
+        """
+        permissions = {
+            "s3_read": False,
+            "s3_write": False,
+            "textract_sync": False,
+            "textract_async": False,
+            "iam_role": False
+        }
+        
+        try:
+            self._ensure_clients_initialized()
+            
+            # Check if running in Lambda with IAM role
+            is_lambda = self._is_running_in_lambda()
+            if is_lambda:
+                try:
+                    # Try to get caller identity to verify IAM role
+                    sts_client = boto3.client('sts')
+                    identity = sts_client.get_caller_identity()
+                    role_arn = identity.get('Arn', '')
+                    permissions["iam_role"] = True
+                    logger.info(f"🔐 AWS Textract: IAM Role verified - {role_arn}")
+                except Exception as e:
+                    logger.error(f"❌ AWS Textract: IAM Role check failed: {e}")
+                    permissions["iam_role"] = False
+            
+            # Test S3 read permissions
+            if self.s3_client:
+                try:
+                    # Try to list buckets (basic S3 permission)
+                    self.s3_client.list_buckets()
+                    permissions["s3_read"] = True
+                    logger.info("✅ AWS Textract: S3 read permissions verified")
+                except Exception as e:
+                    logger.error(f"❌ AWS Textract: S3 read permission check failed: {e}")
+                    permissions["s3_read"] = False
+                
+                # Test S3 write permissions (try to upload a small test file)
+                try:
+                    from common.src.core.config import config
+                    test_key = f"permission_test_{int(time.time())}.txt"
+                    test_content = b"Permission test file"
+                    
+                    self.s3_client.put_object(
+                        Bucket=config.s3_bucket,
+                        Key=test_key,
+                        Body=test_content
+                    )
+                    
+                    # Clean up test file
+                    self.s3_client.delete_object(Bucket=config.s3_bucket, Key=test_key)
+                    permissions["s3_write"] = True
+                    logger.info("✅ AWS Textract: S3 write permissions verified")
+                except Exception as e:
+                    logger.error(f"❌ AWS Textract: S3 write permission check failed: {e}")
+                    permissions["s3_write"] = False
+            
+            # Test Textract sync permissions
+            if self.textract_client:
+                try:
+                    # Create a simple test image for Textract
+                    from PIL import Image, ImageDraw, ImageFont
+                    import io
+                    
+                    # Create a test image with text
+                    img = Image.new('RGB', (200, 100), color='white')
+                    draw = ImageDraw.Draw(img)
+                    draw.text((10, 40), "Test", fill='black')
+                    
+                    # Convert to bytes
+                    img_bytes = io.BytesIO()
+                    img.save(img_bytes, format='PNG')
+                    img_bytes.seek(0)
+                    
+                    # Test sync Textract call
+                    self.textract_client.detect_document_text(
+                        Document={'Bytes': img_bytes.getvalue()}
+                    )
+                    permissions["textract_sync"] = True
+                    logger.info("✅ AWS Textract: Textract sync permissions verified")
+                except Exception as e:
+                    logger.error(f"❌ AWS Textract: Textract sync permission check failed: {e}")
+                    permissions["textract_sync"] = False
+                
+                # Test Textract async permissions (just check if we can start a job)
+                try:
+                    # Upload test image to S3 for async test
+                    from common.src.core.config import config
+                    test_img_key = f"textract_test_{int(time.time())}.png"
+                    
+                    self.s3_client.put_object(
+                        Bucket=config.s3_bucket,
+                        Key=test_img_key,
+                        Body=img_bytes.getvalue()
+                    )
+                    
+                    # Try to start async job
+                    response = self.textract_client.start_document_analysis(
+                        DocumentLocation={'S3Object': {'Bucket': config.s3_bucket, 'Name': test_img_key}},
+                        FeatureTypes=['TABLES']
+                    )
+                    
+                    job_id = response['JobId']
+                    logger.info(f"✅ AWS Textract: Textract async permissions verified - Job ID: {job_id}")
+                    
+                    # Cancel the job immediately to avoid charges
+                    try:
+                        self.textract_client.cancel_document_analysis(JobId=job_id)
+                        logger.info(f"✅ AWS Textract: Cancelled test job {job_id}")
+                    except:
+                        pass  # Job might have already started
+                    
+                    permissions["textract_async"] = True
+                    
+                    # Clean up test image
+                    try:
+                        self.s3_client.delete_object(Bucket=config.s3_bucket, Key=test_img_key)
+                    except:
+                        pass
+                        
+                except Exception as e:
+                    logger.error(f"❌ AWS Textract: Textract async permission check failed: {e}")
+                    permissions["textract_async"] = False
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Permission check failed: {e}")
+        
+        return permissions
+
+    def _log_environment_diagnostics(self):
+        """
+        Log comprehensive environment diagnostics for troubleshooting.
+        """
+        try:
+            logger.info("🔍 AWS Textract: === ENVIRONMENT DIAGNOSTICS ===")
+            
+            # Environment detection
+            is_lambda = self._is_running_in_lambda()
+            logger.info(f"🔧 AWS Textract: Environment: {'Lambda' if is_lambda else 'Local'}")
+            
+            # AWS Configuration
+            region = os.getenv('AWS_REGION', 'ap-south-1')
+            access_key = os.getenv('AWS_ACCESS_KEY_ID')
+            secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+            
+            logger.info(f"🌍 AWS Textract: Region: {region}")
+            logger.info(f"🔑 AWS Textract: Access Key: {'Set' if access_key else 'Not Set'}")
+            logger.info(f"🔑 AWS Textract: Secret Key: {'Set' if secret_key else 'Not Set'}")
+            
+            # Lambda-specific environment variables
+            if is_lambda:
+                lambda_function = os.getenv('AWS_LAMBDA_FUNCTION_NAME', 'Unknown')
+                lambda_version = os.getenv('AWS_LAMBDA_FUNCTION_VERSION', 'Unknown')
+                lambda_memory = os.getenv('AWS_LAMBDA_FUNCTION_MEMORY_SIZE', 'Unknown')
+                lambda_timeout = os.getenv('AWS_LAMBDA_FUNCTION_TIMEOUT', 'Unknown')
+                
+                logger.info(f"⚡ AWS Textract: Lambda Function: {lambda_function}")
+                logger.info(f"⚡ AWS Textract: Lambda Version: {lambda_version}")
+                logger.info(f"⚡ AWS Textract: Lambda Memory: {lambda_memory}MB")
+                logger.info(f"⚡ AWS Textract: Lambda Timeout: {lambda_timeout}s")
+            
+            # Check permissions
+            permissions = self._check_aws_permissions()
+            logger.info("🔐 AWS Textract: === PERMISSION STATUS ===")
+            for permission, status in permissions.items():
+                status_emoji = "✅" if status else "❌"
+                logger.info(f"{status_emoji} AWS Textract: {permission}: {status}")
+            
+            # Client status
+            logger.info("🔧 AWS Textract: === CLIENT STATUS ===")
+            logger.info(f"{'✅' if self.textract_client else '❌'} AWS Textract: Textract Client: {'Available' if self.textract_client else 'Not Available'}")
+            logger.info(f"{'✅' if self.s3_client else '❌'} AWS Textract: S3 Client: {'Available' if self.s3_client else 'Not Available'}")
+            
+            # Configuration
+            try:
+                from common.src.core.config import config
+                logger.info(f"📁 AWS Textract: S3 Bucket: {config.s3_bucket}")
+                logger.info(f"🌍 AWS Textract: Config Region: {getattr(config, 'aws_region', 'Not Set')}")
+            except Exception as e:
+                logger.error(f"❌ AWS Textract: Config access failed: {e}")
+            
+            logger.info("🔍 AWS Textract: === END DIAGNOSTICS ===")
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Environment diagnostics failed: {e}")
+
+    def _log_textract_job_diagnostics(self, job_id: str, s3_bucket: str, s3_key: str):
+        """
+        Log detailed diagnostics for Textract job processing.
+        """
+        try:
+            logger.info(f"🔍 AWS Textract: === JOB DIAGNOSTICS for {job_id} ===")
+            logger.info(f"📦 AWS Textract: S3 Location: s3://{s3_bucket}/{s3_key}")
+            
+            # Check S3 file status
+            try:
+                if self.s3_client:
+                    response = self.s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+                    file_size = response.get('ContentLength', 0)
+                    last_modified = response.get('LastModified')
+                    content_type = response.get('ContentType', 'Unknown')
+                    
+                    logger.info(f"📦 AWS Textract: File Size: {file_size} bytes")
+                    logger.info(f"📦 AWS Textract: Last Modified: {last_modified}")
+                    logger.info(f"📦 AWS Textract: Content Type: {content_type}")
+                    
+                    if file_size == 0:
+                        logger.error("❌ AWS Textract: WARNING - File is empty!")
+                    elif file_size < 1024:
+                        logger.warning("⚠️ AWS Textract: WARNING - File is very small (< 1KB)")
+                    elif file_size > 50 * 1024 * 1024:  # 50MB
+                        logger.warning("⚠️ AWS Textract: WARNING - File is very large (> 50MB)")
+                else:
+                    logger.error("❌ AWS Textract: S3 client not available for file check")
+            except Exception as e:
+                logger.error(f"❌ AWS Textract: S3 file check failed: {e}")
+            
+            # Check job status
+            try:
+                if self.textract_client:
+                    result = self.textract_client.get_document_analysis(JobId=job_id)
+                    status = result.get('JobStatus', 'Unknown')
+                    status_message = result.get('StatusMessage', 'No message')
+                    job_tag = result.get('JobTag', 'No tag')
+                    
+                    logger.info(f"📊 AWS Textract: Job Status: {status}")
+                    logger.info(f"📊 AWS Textract: Status Message: {status_message}")
+                    logger.info(f"📊 AWS Textract: Job Tag: {job_tag}")
+                    
+                    if status == 'FAILED':
+                        logger.error(f"❌ AWS Textract: Job failed with message: {status_message}")
+                    elif status == 'IN_PROGRESS':
+                        logger.info("⏳ AWS Textract: Job is still in progress")
+                    elif status == 'SUCCEEDED':
+                        logger.info("✅ AWS Textract: Job completed successfully")
+                else:
+                    logger.error("❌ AWS Textract: Textract client not available for job check")
+            except Exception as e:
+                logger.error(f"❌ AWS Textract: Job status check failed: {e}")
+            
+            logger.info(f"🔍 AWS Textract: === END JOB DIAGNOSTICS ===")
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Job diagnostics failed: {e}")
+
+    def _log_block_analysis_diagnostics(self, blocks: List[Dict[str, Any]], job_id: str):
+        """
+        Log detailed analysis of Textract blocks for debugging.
+        """
+        try:
+            logger.info(f"🔍 AWS Textract: === BLOCK ANALYSIS for {job_id} ===")
+            
+            if not blocks:
+                logger.warning("⚠️ AWS Textract: No blocks returned from Textract")
+                return
+            
+            # Count block types
+            block_types = {}
+            page_count = 0
+            line_count = 0
+            word_count = 0
+            
+            for block in blocks:
+                btype = block.get('BlockType', 'UNKNOWN')
+                block_types[btype] = block_types.get(btype, 0) + 1
+                
+                if btype == 'PAGE':
+                    page_count += 1
+                elif btype == 'LINE':
+                    line_count += 1
+                elif btype == 'WORD':
+                    word_count += 1
+            
+            logger.info(f"📊 AWS Textract: Total Blocks: {len(blocks)}")
+            logger.info(f"📊 AWS Textract: Page Count: {page_count}")
+            logger.info(f"📊 AWS Textract: Line Count: {line_count}")
+            logger.info(f"📊 AWS Textract: Word Count: {word_count}")
+            
+            # Log block type distribution
+            logger.info("📊 AWS Textract: Block Type Distribution:")
+            for btype, count in sorted(block_types.items()):
+                percentage = (count / len(blocks)) * 100
+                logger.info(f"   {btype}: {count} ({percentage:.1f}%)")
+            
+            # Check for potential issues
+            if line_count == 0:
+                logger.error("❌ AWS Textract: CRITICAL - No LINE blocks found!")
+                logger.error("❌ AWS Textract: This indicates the document may be:")
+                logger.error("   - A scanned image with no OCR text")
+                logger.error("   - An image-based PDF")
+                logger.error("   - A document with very low quality")
+                logger.error("   - A document in an unsupported format")
+            elif line_count < 5:
+                logger.warning("⚠️ AWS Textract: Very few LINE blocks found - document may have limited text")
+            
+            if word_count == 0:
+                logger.error("❌ AWS Textract: CRITICAL - No WORD blocks found!")
+            elif word_count < 10:
+                logger.warning("⚠️ AWS Textract: Very few WORD blocks found - document may have minimal text")
+            
+            # Sample some LINE blocks for content analysis
+            if line_count > 0:
+                logger.info("📝 AWS Textract: Sample LINE blocks:")
+                sample_lines = [block for block in blocks if block.get('BlockType') == 'LINE'][:5]
+                for i, line_block in enumerate(sample_lines):
+                    text = line_block.get('Text', '')
+                    confidence = line_block.get('Confidence', 0)
+                    logger.info(f"   Line {i+1}: '{text[:50]}{'...' if len(text) > 50 else ''}' (Confidence: {confidence:.1f}%)")
+            
+            logger.info(f"🔍 AWS Textract: === END BLOCK ANALYSIS ===")
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: Block analysis diagnostics failed: {e}")
 
     # === NEW ASYNC DOCUMENT ANALYSIS METHODS (from working reference code) ===
     
@@ -185,6 +546,7 @@ class AWSTextractService:
             
             blocks = []
             next_token = None
+            page_count = 0
             
             while True:
                 if next_token:
@@ -195,13 +557,40 @@ class AWSTextractService:
                 else:
                     response = self.textract_client.get_document_analysis(JobId=job_id)
                 
-                blocks.extend(response['Blocks'])
+                current_blocks = response['Blocks']
+                blocks.extend(current_blocks)
+                
+                # Count block types for debugging
+                block_types = {}
+                for block in current_blocks:
+                    btype = block.get('BlockType', 'UNKNOWN')
+                    block_types[btype] = block_types.get(btype, 0) + 1
+                
+                logger.info(f"📊 AWS Textract: Retrieved {len(current_blocks)} blocks in this batch")
+                logger.info(f"📊 AWS Textract: Block types in this batch: {block_types}")
+                
                 next_token = response.get("NextToken")
                 
                 if not next_token:
                     break
             
-            logger.info(f"✅ AWS Textract: Retrieved {len(blocks)} blocks from job {job_id}")
+            # Final analysis of all blocks
+            total_block_types = {}
+            for block in blocks:
+                btype = block.get('BlockType', 'UNKNOWN')
+                total_block_types[btype] = total_block_types.get(btype, 0) + 1
+            
+            logger.info(f"✅ AWS Textract: Retrieved {len(blocks)} total blocks from job {job_id}")
+            logger.info(f"📊 AWS Textract: Total block types: {total_block_types}")
+            
+            # Check for potential issues
+            if len(blocks) == 0:
+                logger.warning("⚠️ AWS Textract: No blocks returned from Textract job")
+            elif 'LINE' not in total_block_types:
+                logger.warning("⚠️ AWS Textract: No LINE blocks found - document may be image-based")
+            elif total_block_types.get('LINE', 0) == 0:
+                logger.warning("⚠️ AWS Textract: 0 LINE blocks found - document may be scanned")
+            
             return blocks
             
         except ClientError as e:
@@ -258,17 +647,26 @@ class AWSTextractService:
         try:
             logger.info(f"🚀 AWS Textract: Starting comprehensive processing for s3://{s3_bucket}/{s3_key}")
             
+            # Run environment diagnostics first
+            self._log_environment_diagnostics()
+            
             if feature_types is None:
                 feature_types = ["TABLES", "FORMS", "SIGNATURES", "LAYOUT"]
             
             # Start the async job
             job_id = await self.start_document_analysis_job(s3_bucket, s3_key, feature_types)
             
+            # Log job diagnostics
+            self._log_textract_job_diagnostics(job_id, s3_bucket, s3_key)
+            
             # Wait for completion
             await self.wait_for_job_completion(job_id)
             
             # Get all blocks
             all_blocks = await self.get_all_blocks_from_job(job_id)
+            
+            # Log detailed block analysis
+            self._log_block_analysis_diagnostics(all_blocks, job_id)
             
             # Organize blocks by type
             organized_blocks = self.organize_blocks_by_type(all_blocks)
@@ -912,6 +1310,17 @@ class AWSTextractService:
                 document_type=document_type
             )
             
+            # If no text content extracted, try PDF to image fallback
+            if not text_content or len(text_content.strip()) == 0:
+                logger.warning("⚠️ AWS Textract: No text content extracted — trying PDF to image fallback")
+                try:
+                    text_content, page_count = await self.fallback_textract_on_pdf_images(
+                        content, config.s3_bucket, document_type
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"❌ AWS Textract: PDF to image fallback failed: {fallback_error}")
+                    # Continue with empty content as last resort
+            
             # Clean up temporary file
             try:
                 await unified_storage_service.delete_file(s3_key)
@@ -941,6 +1350,18 @@ class AWSTextractService:
         try:
             logger.info(f"📄 AWS Textract: Extracting text from S3 PDF s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
             
+            # Environment detection
+            is_lambda = self._is_running_in_lambda()
+            logger.info(f"🔧 AWS Textract: Running in {'Lambda' if is_lambda else 'Local'} environment")
+            
+            # Run comprehensive diagnostics
+            self._log_environment_diagnostics()
+            
+            # Validate S3 file before processing
+            if not self._validate_s3_file(s3_bucket, s3_key):
+                logger.error("❌ AWS Textract: S3 file validation failed, cannot proceed")
+                raise TextractError("S3 file validation failed")
+            
             # Use the comprehensive async processing for PDF documents
             results = await self.process_document_async_comprehensive(
                 s3_bucket=s3_bucket,
@@ -948,12 +1369,44 @@ class AWSTextractService:
                 feature_types=["TABLES", "FORMS", "SIGNATURES", "LAYOUT"]
             )
             
+            # Check if we got any LINE blocks (text content)
+            organized_blocks = results.get("organized_blocks", {})
+            line_count = len(organized_blocks.get("LINE", []))
+            total_blocks = results.get("total_blocks", 0)
+            
+            logger.info(f"🔍 AWS Textract: Found block types: {list(organized_blocks.keys())}")
+            logger.info(f"🔍 AWS Textract: Total blocks: {total_blocks}")
+            logger.info(f"🔍 AWS Textract: LINE blocks found: {line_count}")
+            
+            # Lambda-specific fallback logic
+            if is_lambda and line_count == 0:
+                logger.warning("❗ AWS Textract: Lambda environment detected with 0 LINE blocks — forcing image fallback")
+                try:
+                    # Download PDF content from S3
+                    self._ensure_clients_initialized()
+                    pdf_obj = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+                    pdf_bytes = pdf_obj["Body"].read()
+                    logger.info(f"📦 AWS Textract: Downloaded PDF for fallback - {len(pdf_bytes)} bytes")
+                    return await self.fallback_textract_on_pdf_images(pdf_bytes, s3_bucket, document_type)
+                except Exception as fallback_error:
+                    logger.error(f"❌ AWS Textract: PDF to image fallback failed: {fallback_error}")
+                    # Continue with normal processing as last resort
+            
+            # Regular fallback logic for non-Lambda or when Lambda fallback fails
+            elif line_count == 0:
+                logger.warning("⚠️ AWS Textract: No LINE blocks found — fallback to image conversion")
+                try:
+                    # Download PDF content from S3
+                    self._ensure_clients_initialized()
+                    pdf_obj = self.s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+                    pdf_bytes = pdf_obj["Body"].read()
+                    return await self.fallback_textract_on_pdf_images(pdf_bytes, s3_bucket, document_type)
+                except Exception as fallback_error:
+                    logger.error(f"❌ AWS Textract: PDF to image fallback failed: {fallback_error}")
+                    # Continue with normal processing as last resort
+            
             # Extract text content from paragraphs for better quality
             text_content = ""
-            
-            # Debug: Log what types of blocks we found
-            organized_blocks = results.get("organized_blocks", {})
-            logger.info(f"🔍 AWS Textract: Found block types: {list(organized_blocks.keys())}")
             
             if results.get("paragraphs_for_vector"):
                 # Use vector-optimized paragraphs for better text quality
@@ -1095,6 +1548,79 @@ class AWSTextractService:
         except Exception as e:
             logger.error(f"❌ AWS Textract: Raw text extraction failed: {e}")
             return ""
+
+    async def fallback_textract_on_pdf_images(self, pdf_content: bytes, s3_bucket: str, document_type: DocumentType) -> Tuple[str, int]:
+        """
+        Fallback method: Convert PDF to images and process with Textract.
+        This handles scanned PDFs that don't have extractable text.
+        """
+        try:
+            logger.warning("🌀 AWS Textract: Converting PDF to images and re-processing...")
+            
+            # Try to import pdf2image
+            try:
+                from pdf2image import convert_from_bytes
+            except ImportError:
+                logger.error("❌ AWS Textract: pdf2image not available. Install with: pip install pdf2image")
+                raise TextractError("pdf2image not available for PDF to image conversion")
+            
+            # Convert PDF to images
+            images = convert_from_bytes(pdf_content, dpi=300)
+            combined_text = []
+            page_count = len(images)
+            
+            logger.info(f"🔄 AWS Textract: Converted PDF to {page_count} images")
+            
+            for i, image in enumerate(images):
+                logger.info(f"🔄 AWS Textract: Processing page {i+1}/{page_count}")
+                
+                # Save image to temporary file
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+                    image.save(tmp_file.name, "PNG")
+                    
+                    # Read image bytes
+                    with open(tmp_file.name, "rb") as img_file:
+                        image_bytes = img_file.read()
+                    
+                    # Clean up temp file
+                    os.unlink(tmp_file.name)
+                
+                # Upload image to S3
+                from common.src.services.unified_storage_service import unified_storage_service
+                upload_result = await unified_storage_service.upload_temp_file(
+                    file_content=image_bytes,
+                    filename=f"fallback_page_{i+1}.png",
+                    purpose="textract_fallback",
+                    user_id="system"
+                )
+                s3_key = upload_result["s3_key"]
+                
+                # Process image with Textract
+                try:
+                    text_content, _ = await self.process_preprocessed_document(
+                        s3_bucket=s3_bucket,
+                        s3_key=s3_key,
+                        document_type=document_type
+                    )
+                    combined_text.append(text_content)
+                    logger.info(f"✅ AWS Textract: Page {i+1} processed - {len(text_content)} chars")
+                except Exception as page_error:
+                    logger.warning(f"⚠️ AWS Textract: Error processing page {i+1}: {page_error}")
+                    combined_text.append("")  # Empty text for failed pages
+                finally:
+                    # Clean up temporary image
+                    try:
+                        await unified_storage_service.delete_file(s3_key)
+                    except Exception as cleanup_error:
+                        logger.warning(f"⚠️ AWS Textract: Failed to cleanup temp image {s3_key}: {cleanup_error}")
+            
+            final_text = "\n\n".join(combined_text)
+            logger.info(f"✅ AWS Textract: PDF to image fallback completed - {len(final_text)} chars, {page_count} pages")
+            return final_text, page_count
+            
+        except Exception as e:
+            logger.error(f"❌ AWS Textract: PDF to image fallback failed: {e}")
+            raise TextractError(f"PDF to image fallback failed: {e}")
 
 # Global instance
 textract_service = AWSTextractService() 
