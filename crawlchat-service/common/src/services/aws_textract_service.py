@@ -273,6 +273,11 @@ class AWSTextractService:
             # Organize blocks by type
             organized_blocks = self.organize_blocks_by_type(all_blocks)
             
+            # Debug: Log block details
+            logger.info(f"🔍 AWS Textract: Block analysis - Total: {len(all_blocks)}")
+            for block_type, blocks in organized_blocks.items():
+                logger.info(f"🔍 AWS Textract: {block_type}: {len(blocks)} blocks")
+            
             # Prepare results
             results = {
                 "job_id": job_id,
@@ -900,8 +905,9 @@ class AWSTextractService:
             logger.info(f"📁 AWS Textract: Document uploaded to S3: {s3_key}")
             
             # Process with Textract
+            from common.src.core.config import config
             text_content, page_count = await self.process_preprocessed_document(
-                s3_bucket=upload_result["bucket"],
+                s3_bucket=config.s3_bucket,
                 s3_key=s3_key,
                 document_type=document_type
             )
@@ -944,13 +950,22 @@ class AWSTextractService:
             
             # Extract text content from paragraphs for better quality
             text_content = ""
+            
+            # Debug: Log what types of blocks we found
+            organized_blocks = results.get("organized_blocks", {})
+            logger.info(f"🔍 AWS Textract: Found block types: {list(organized_blocks.keys())}")
+            
             if results.get("paragraphs_for_vector"):
                 # Use vector-optimized paragraphs for better text quality
                 paragraph_texts = [p["text"] for p in results["paragraphs_for_vector"]]
                 text_content = "\n\n".join(paragraph_texts)
+                logger.info(f"📝 AWS Textract: Using paragraphs_for_vector - {len(paragraph_texts)} paragraphs")
             elif results.get("text_lines"):
                 # Fallback to text lines if paragraphs not available
                 text_content = "\n".join(results["text_lines"])
+                logger.info(f"📝 AWS Textract: Using text_lines - {len(results['text_lines'])} lines")
+            else:
+                logger.warning(f"⚠️ AWS Textract: No text content found in any format")
             
             page_count = results.get("page_count", 1)
             
