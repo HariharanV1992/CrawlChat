@@ -21,7 +21,7 @@ from botocore.exceptions import ClientError
 
 from common.src.core.config import config
 from common.src.core.exceptions import PreprocessingError
-from common.src.services.storage_service import get_storage_service
+from common.src.services.unified_storage_service import unified_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class UnifiedPreprocessingService:
     def __init__(self):
         """Initialize the unified preprocessing service."""
         self.s3_client = None
-        self.storage_service = get_storage_service()
+        self.storage_service = unified_storage_service
         self._init_clients()
     
     def _init_clients(self):

@@ -17,7 +17,7 @@ from common.src.models.documents import Document
 from common.src.core.database import mongodb
 from common.src.core.config import config
 from common.src.core.exceptions import VectorStoreError, DatabaseError
-from common.src.services.storage_service import get_storage_service
+from common.src.services.unified_storage_service import unified_storage_service
 
 logger = logging.getLogger(__name__)
 

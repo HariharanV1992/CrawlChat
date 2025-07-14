@@ -835,7 +835,7 @@ Please provide a helpful response:"""
                         if not s3_key.startswith('crawled_documents/'):
                             s3_key = f"crawled_documents/{s3_key}"
                         
-                        content = await storage_service.get_file_content(s3_key)
+                        content = await unified_storage_service.get_file_content(s3_key)
                         
                         if content:
                             # Decode content
@@ -993,7 +993,6 @@ Please provide a helpful response:"""
             
             # Import unified document processor
             from common.src.services.unified_document_processor import unified_document_processor
-            from common.src.services.storage_service import StorageService
             
             try:
                 logger.info(f"[EMBEDDING] Creating embeddings for uploaded document: {document.filename}")

@@ -288,9 +288,14 @@ class DocumentService:
     async def _extract_content(self, document: Document) -> str:
         """Extract content from document based on type with optimized performance."""
         try:
-            storage_service = get_storage_service()
-            
-            content = await storage_service.get_file_content(document.file_path)
+            # Handle both S3 keys and legacy MongoDB paths
+            if document.file_path.startswith('mongodb://'):
+                # Legacy MongoDB path - skip for now
+                logger.warning(f"Legacy MongoDB path not supported: {document.file_path}")
+                return f"Legacy document format not supported: {document.filename}"
+            else:
+                # S3 key - use unified storage service
+                content = await unified_storage_service.get_file_content(document.file_path)
             if not content:
                 logger.error(f"No content found for file: {document.filename}")
                 return f"Could not read file: {document.filename}"
@@ -619,9 +624,13 @@ class DocumentService:
             
             # Delete from storage
             try:
-                storage_service = get_storage_service()
-                delete_tasks.append(storage_service.delete_file(doc_data["file_path"]))
-                logger.info(f"Deleted file: {doc_data['file_path']}")
+                if doc_data["file_path"].startswith('mongodb://'):
+                    # Legacy MongoDB path - skip deletion
+                    logger.warning(f"Legacy MongoDB path not supported for deletion: {doc_data['file_path']}")
+                else:
+                    # S3 key - use unified storage service
+                    delete_tasks.append(unified_storage_service.delete_file(doc_data["file_path"]))
+                    logger.info(f"Deleted file: {doc_data['file_path']}")
             except Exception as e:
                 logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
             
@@ -661,9 +670,13 @@ class DocumentService:
             
             # Delete from storage
             try:
-                storage_service = get_storage_service()
-                delete_tasks.append(storage_service.delete_file(doc_data["file_path"]))
-                logger.info(f"Deleted file: {doc_data['file_path']}")
+                if doc_data["file_path"].startswith('mongodb://'):
+                    # Legacy MongoDB path - skip deletion
+                    logger.warning(f"Legacy MongoDB path not supported for deletion: {doc_data['file_path']}")
+                else:
+                    # S3 key - use unified storage service
+                    delete_tasks.append(unified_storage_service.delete_file(doc_data["file_path"]))
+                    logger.info(f"Deleted file: {doc_data['file_path']}")
             except Exception as e:
                 logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
             

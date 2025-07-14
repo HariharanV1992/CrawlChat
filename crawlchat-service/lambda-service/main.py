@@ -22,8 +22,8 @@ from common.src.core.logging import setup_logging
 
 # Lazy imports for Lambda optimization
 def get_storage_service_lazy():
-    from common.src.services.storage_service import get_storage_service
-    return get_storage_service()
+    from common.src.services.unified_storage_service import unified_storage_service
+    return unified_storage_service
 
 def get_crawler_service_lazy():
     # Crawler service removed - using separate crawler-service instead
@@ -292,19 +292,23 @@ async def health_check():
             
             # Check storage service
             storage_service = get_storage_service_lazy()
-            storage_info = storage_service.get_storage_info()
+            storage_healthy = storage_service.s3_client is not None
             
             health_status.update({
                 "status": "healthy" if db_healthy else "unhealthy",
                 "services": {
                     "database": "healthy" if db_healthy else "unhealthy",
-                    "storage": "healthy" if storage_service.s3_client else "limited",
+                    "storage": "healthy" if storage_healthy else "limited",
                     "crawler": "healthy",
                     "chat": "healthy",
                     "document": "healthy"
                 },
                 "metrics": {
-                    "storage": storage_info
+                    "storage": {
+                        "type": "s3",
+                        "bucket": config.s3_bucket if hasattr(config, 's3_bucket') else "not_configured",
+                        "client_available": storage_healthy
+                    }
                 }
             })
             
