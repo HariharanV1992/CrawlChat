@@ -99,13 +99,22 @@ class UnifiedStorageService:
             logger.info(f"[STORAGE] PDF validation passed")
         
         try:
-            # Upload to S3 with proper metadata
+            # Prepare body for S3 upload (using crawler service method)
+            if isinstance(file_content, str):
+                body = file_content.encode('utf-8')
+            elif isinstance(file_content, bytes):
+                body = file_content
+            else:
+                body = str(file_content).encode('utf-8')
+            
+            logger.info(f"[STORAGE] Final body type: {type(body)}, length: {len(body)}")
+            
+            # Upload to S3 with proper metadata (using crawler service approach)
             response = self.s3_client.put_object(
                 Bucket=aws_config.s3_bucket,
                 Key=s3_key,
-                Body=file_content,
+                Body=body,
                 ContentType=content_type,
-                ContentLength=len(file_content),
                 Metadata={
                     'original_filename': filename,
                     'user_id': user_id,
