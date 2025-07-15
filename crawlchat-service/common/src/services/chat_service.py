@@ -6,6 +6,7 @@ import logging
 import uuid
 import re
 import asyncio
+import hashlib
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -991,8 +992,8 @@ Please provide a helpful response:"""
             user_id = session_data.get("user_id")
             logger.info(f"[EMBEDDING] Found session {session_id} for user {user_id}")
             
-            # Import unified document processor
-            from common.src.services.unified_document_processor import unified_document_processor
+            # Import document processing service
+            from common.src.services.document_processing_service import document_processing_service
             
             try:
                 logger.info(f"[EMBEDDING] Creating embeddings for uploaded document: {document.filename}")
@@ -1002,19 +1003,30 @@ Please provide a helpful response:"""
                 file_content = await unified_storage_service.get_file_content(s3_key)
                 
                 if file_content:
-                    # Process document using unified processor
-                    result = await unified_document_processor.process_document(
+                    # Validate file content
+                    logger.info(f"[EMBEDDING] File content size: {len(file_content):,} bytes")
+                    logger.info(f"[EMBEDDING] File MD5: {hashlib.md5(file_content).hexdigest()}")
+                    
+                    # Check PDF validity
+                    if document.filename.lower().endswith('.pdf'):
+                        if not file_content.startswith(b'%PDF-'):
+                            logger.error(f"[EMBEDDING] Invalid PDF header: {file_content[:10]}")
+                            error_message = f"❌ Invalid PDF file: {document.filename}"
+                            await self.add_message(session_id, user_id, MessageRole.SYSTEM, error_message)
+                            return
+                        
+                        if b'%%EOF' not in file_content[-1000:]:
+                            logger.warning(f"[EMBEDDING] PDF EOF marker not found in last 1000 bytes")
+                        
+                        logger.info(f"[EMBEDDING] PDF validation passed")
+                    
+                    # Process document using document processing service
+                    result = await document_processing_service.process_document(
                         file_content=file_content,
                         filename=document.filename,
                         user_id=user_id,
                         session_id=session_id,
-                        metadata={
-                            "session_id": session_id,
-                            "user_id": user_id,
-                            "source": "uploaded_document",
-                            "file_path": document.file_path
-                        },
-                        source="uploaded"
+                        document_id=document.document_id
                     )
                     
                     if result.get("status") == "success":

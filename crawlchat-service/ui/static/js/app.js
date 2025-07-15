@@ -844,6 +844,11 @@ class CrawlChatApp {
         const formData = new FormData();
         formData.append('file', file);
 
+        // Enhanced logging for debugging
+        console.log(`[UPLOAD] Uploading file: ${file.name}`);
+        console.log(`[UPLOAD] File size: ${file.size} bytes`);
+        console.log(`[UPLOAD] File type: ${file.type}`);
+
         const response = await fetch(`/api/v1/chat/sessions/${this.currentSessionId}/documents`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
@@ -852,10 +857,13 @@ class CrawlChatApp {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
+            console.error(`[UPLOAD] Upload failed: ${response.status}`, errorData);
             throw new Error(errorData.detail || 'Upload failed');
         }
 
-        return await response.json();
+        const result = await response.json();
+        console.log(`[UPLOAD] Upload successful:`, result);
+        return result;
     }
 
     async uploadFileBase64(file) {

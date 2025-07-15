@@ -323,13 +323,30 @@ async def upload_document(
                 detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
             )
         
-        # Read file content
+        # Read file content with enhanced validation
         file_content = await file.read()
         file_size = len(file_content)
-        # Log file content bytes for debugging
-        logger.info(f"[API] File size: {file_size}")
-        logger.info(f"[API] First 20 bytes: {file_content[:20]}")
-        logger.info(f"[API] Last 20 bytes: {file_content[-20:]}")
+        
+        # Enhanced file integrity checking
+        logger.info(f"[API] File size: {file_size:,} bytes")
+        logger.info(f"[API] First 20 bytes: {file_content[:20].hex()}")
+        logger.info(f"[API] Last 20 bytes: {file_content[-20:].hex()}")
+        logger.info(f"[API] File MD5: {hashlib.md5(file_content).hexdigest()}")
+        
+        # Check if file is empty
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="File is empty")
+        
+        # Check PDF validity
+        if file.filename.lower().endswith('.pdf'):
+            if not file_content.startswith(b'%PDF-'):
+                logger.error(f"[API] Invalid PDF header: {file_content[:10]}")
+                raise HTTPException(status_code=400, detail="Invalid PDF file - missing PDF header")
+            
+            if b'%%EOF' not in file_content[-1000:]:
+                logger.warning(f"[API] PDF EOF marker not found in last 1000 bytes")
+            
+            logger.info(f"[API] PDF validation passed")
         
         # Check file size (max 10MB)
         if file_size > 10 * 1024 * 1024:
@@ -350,126 +367,59 @@ async def upload_document(
         
         logger.info(f"[API] Document uploaded to S3: {s3_key}")
         
-        # Process document with AWS Textract using unified document processor
-        from common.src.services.unified_document_processor import unified_document_processor
-        
-        processing_result = await unified_document_processor.process_document(
-            file_content=file_content,
+        # Create document record
+        document_data = DocumentUpload(
             filename=file.filename,
+            file_content=file_content,
             user_id=current_user.user_id,
             session_id=session_id,
-            metadata={
-                "task_id": task_id,
-                "upload_source": "chat",
-                "original_filename": file.filename,
-                "file_size": file_size
-            },
-            source="uploaded"
-        )
-        
-        if processing_result.get("status") != "success":
-            logger.error(f"[API] Document processing failed: {processing_result.get('error')}")
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Document processing failed: {processing_result.get('error', 'Unknown error')}"
-            )
-        
-        document_id = processing_result.get("document_id")
-        content_length = processing_result.get("content_length", 0)
-        extraction_method = processing_result.get("extraction_method", "unknown")
-        
-        logger.info(f"[API] Document processed successfully: {document_id}, content length: {content_length}, method: {extraction_method}")
-        
-        # Get the document record that was already created by unified document processor
-        from common.src.models.documents import Document, DocumentType, DocumentStatus
-        
-        # Fetch the existing document record from database
-        from common.src.core.database import mongodb
-        from datetime import datetime
-        
-        await mongodb.connect()
-        doc_data = await mongodb.get_collection("documents").find_one({"document_id": document_id})
-        
-        if not doc_data:
-            logger.error(f"[API] Document record not found after processing: {document_id}")
-            raise HTTPException(status_code=500, detail="Document record not found after processing")
-        
-        # Update the document record with additional metadata
-        update_data = {
-            "file_path": s3_key,
-            "metadata.task_id": task_id,
-            "metadata.extraction_method": extraction_method,
-            "metadata.content_length": content_length,
-            "metadata.vector_store_result": processing_result.get("vector_store_result"),
-            "updated_at": datetime.utcnow()
-        }
-        
-        await mongodb.get_collection("documents").update_one(
-            {"document_id": document_id},
-            {"$set": update_data}
-        )
-        
-        # Create Document object for chat service
-        # Map database fields to Document model fields
-        document_data = {
-            "document_id": doc_data.get("document_id"),
-            "user_id": doc_data.get("user_id"),
-            "filename": doc_data.get("filename"),
-            "file_path": s3_key,  # Use the S3 key as file_path
-            "file_size": doc_data.get("file_size", file_size),
-            "document_type": doc_data.get("document_type", "pdf"),
-            "status": doc_data.get("status", "processed"),  # Use processed status
-            "uploaded_at": doc_data.get("uploaded_at", datetime.utcnow()),
-            "processed_at": doc_data.get("processed_at", datetime.utcnow()),
-            "content": doc_data.get("content"),
-            "summary": doc_data.get("summary"),
-            "key_points": doc_data.get("key_points", []),
-            "metadata": doc_data.get("metadata", {}),
-            "task_id": doc_data.get("task_id"),
-            "crawl_task_id": doc_data.get("crawl_task_id")
-        }
-        
-        # Update metadata with additional information
-        document_data["metadata"].update({
-            "task_id": task_id,
-            "extraction_method": extraction_method,
-            "content_length": content_length,
-            "vector_store_result": processing_result.get("vector_store_result")
-        })
-        
-        document = Document(**document_data)
-        
-        # Link the uploaded document to the chat session
-        await chat_service.link_uploaded_document(
-            session_id,
-            current_user.user_id,
-            document
-        )
-        
-        logger.info(f"[API] Document uploaded and processed successfully: {document.document_id}")
-        
-        # Determine response message based on vector store status
-        vector_store_result = processing_result.get("vector_store_result", {})
-        vector_status = vector_store_result.get("status", "unknown")
-        if vector_status == "uploaded":
-            response_message = f"Document uploaded and processed successfully using {extraction_method}. Vector processing is in progress."
-        elif vector_status == "error":
-            response_message = f"Document uploaded and processed successfully using {extraction_method}. Vector processing failed but document is available for chat."
-        else:
-            response_message = f"Document uploaded and processed successfully using {extraction_method}"
-        
-        return DocumentUploadResponse(
-            message=response_message,
-            document_id=document.document_id,
-            filename=file.filename,
+            s3_key=s3_key,
+            content_type=file.content_type,
             file_size=file_size
         )
+        
+        document = await document_service.upload_document(document_data)
+        
+        # Process document with AWS Textract
+        try:
+            processing_result = await document_processing_service.process_document(
+                file_content=file_content,
+                filename=file.filename,
+                user_id=current_user.user_id,
+                session_id=session_id,
+                document_id=document.document_id
+            )
+            
+            logger.info(f"[API] Document processing completed: {processing_result}")
+            
+            return DocumentUploadResponse(
+                message="Document uploaded and processed successfully",
+                document_id=document.document_id,
+                filename=file.filename,
+                content_length=processing_result.get("content_length", 0),
+                extraction_method=processing_result.get("extraction_method", "AWS Textract"),
+                s3_key=s3_key,
+                processing_status="completed"
+            )
+            
+        except Exception as processing_error:
+            logger.error(f"[API] Document processing failed: {processing_error}")
+            # Still return success for upload, but note processing failed
+            return DocumentUploadResponse(
+                message="Document uploaded successfully but processing failed",
+                document_id=document.document_id,
+                filename=file.filename,
+                content_length=0,
+                extraction_method="none",
+                s3_key=s3_key,
+                processing_status="failed"
+            )
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[API] Error uploading document: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.post("/sessions/{session_id}/documents/base64")
 async def upload_document_base64(

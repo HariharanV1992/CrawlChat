@@ -6,6 +6,7 @@ Handles S3 uploads, downloads, and deletes for user and temp files only.
 import logging
 import os
 import uuid
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -42,29 +43,83 @@ class UnifiedStorageService:
     async def upload_user_document(self, file_content: bytes, filename: str, user_id: str, content_type: Optional[str] = None, task_id: Optional[str] = None) -> Dict[str, Any]:
         if not self.s3_client:
             raise StorageError("S3 client not available")
+        
+        # Validate input
+        if not file_content or len(file_content) == 0:
+            raise StorageError("File content is empty")
+        
+        if not filename:
+            raise StorageError("Filename is required")
+        
+        if not user_id:
+            raise StorageError("User ID is required")
+        
         timestamp = int(datetime.utcnow().timestamp())
         unique_id = str(uuid.uuid4())[:8]
         file_extension = Path(filename).suffix
-        s3_key = f"uploaded_documents/{user_id}/{task_id}/{timestamp}_{unique_id}{file_extension}" if task_id else f"uploaded_documents/{user_id}/{timestamp}_{unique_id}{file_extension}"
+        
+        # Generate S3 key
+        if task_id:
+            s3_key = f"uploaded_documents/{user_id}/{task_id}/{timestamp}_{unique_id}{file_extension}"
+        else:
+            s3_key = f"uploaded_documents/{user_id}/{timestamp}_{unique_id}{file_extension}"
+        
+        # Determine content type
         content_type = content_type or self._get_content_type(file_extension)
+        
+        # Enhanced logging for debugging
+        logger.info(f"[STORAGE] Uploading file: {filename}")
+        logger.info(f"[STORAGE] File size: {len(file_content):,} bytes")
+        logger.info(f"[STORAGE] Content type: {content_type}")
+        logger.info(f"[STORAGE] S3 key: {s3_key}")
+        logger.info(f"[STORAGE] File MD5: {hashlib.md5(file_content).hexdigest()}")
+        
+        # Validate PDF files
+        if filename.lower().endswith('.pdf'):
+            if not file_content.startswith(b'%PDF-'):
+                logger.error(f"[STORAGE] Invalid PDF header: {file_content[:10]}")
+                raise StorageError("Invalid PDF file - missing PDF header")
+            
+            if b'%%EOF' not in file_content[-1000:]:
+                logger.warning(f"[STORAGE] PDF EOF marker not found in last 1000 bytes")
+            
+            logger.info(f"[STORAGE] PDF validation passed")
+        
         try:
-            self.s3_client.put_object(
+            # Upload to S3 with proper metadata
+            response = self.s3_client.put_object(
                 Bucket=config.s3_bucket,
                 Key=s3_key,
                 Body=file_content,
                 ContentType=content_type,
+                ContentLength=len(file_content),
                 Metadata={
                     'original_filename': filename,
                     'user_id': user_id,
                     'task_id': task_id or 'no_task',
                     'upload_timestamp': str(timestamp),
-                    'file_size': str(len(file_content))
+                    'file_size': str(len(file_content)),
+                    'content_md5': hashlib.md5(file_content).hexdigest()
                 }
             )
-            logger.info(f"Uploaded user document: s3://{config.s3_bucket}/{s3_key}")
-            return {"s3_key": s3_key, "filename": filename, "file_size": len(file_content)}
+            
+            # Verify upload was successful
+            if not response.get('ETag'):
+                raise StorageError("S3 upload failed - no ETag returned")
+            
+            logger.info(f"[STORAGE] Successfully uploaded: s3://{config.s3_bucket}/{s3_key}")
+            logger.info(f"[STORAGE] S3 ETag: {response.get('ETag')}")
+            
+            return {
+                "s3_key": s3_key, 
+                "filename": filename, 
+                "file_size": len(file_content),
+                "etag": response.get('ETag'),
+                "bucket": config.s3_bucket
+            }
+            
         except Exception as e:
-            logger.error(f"Error uploading user document: {e}")
+            logger.error(f"[STORAGE] Error uploading user document: {e}")
             raise StorageError(f"Failed to upload user document: {e}")
 
     async def upload_temp_file(self, file_content: bytes, filename: str, purpose: str = "temp", user_id: Optional[str] = None) -> Dict[str, Any]:
