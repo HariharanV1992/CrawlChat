@@ -408,6 +408,13 @@ async def upload_document(
         
         document = await document_service.upload_document(document_data)
         
+        # Link the uploaded document to the chat session
+        await chat_service.link_uploaded_document(
+            session_id,
+            current_user.user_id,
+            document
+        )
+        
         # Process document with AWS Textract
         try:
             processing_result = await document_processing_service.process_document(
