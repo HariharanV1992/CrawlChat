@@ -9,6 +9,8 @@ from typing import List, Optional
 import io
 import os
 from pathlib import Path
+import hashlib
+import traceback
 
 from common.src.models.documents import (
     Document, DocumentCreate, DocumentUpdate, DocumentResponse, DocumentListResponse, DocumentType, DocumentStatus, DocumentUpload
@@ -39,8 +41,43 @@ async def upload_document(
     try:
         logger.info(f"[API] Uploading document: {file.filename} for user: {current_user.user_id}")
         
-        # Read file content
-        file_content = await file.read()
+        # 🔍 ENHANCED DEBUGGING - Track file upload process
+        logger.info(f"[API_DEBUG] === UPLOAD START ===")
+        logger.info(f"[API_DEBUG] File info: {file.filename}")
+        logger.info(f"[API_DEBUG] Content type: {file.content_type}")
+        logger.info(f"[API_DEBUG] File size: {file.size if hasattr(file, 'size') else 'Unknown'}")
+        
+        # Read file content with enhanced error handling
+        try:
+            logger.info(f"[API_DEBUG] Reading file content...")
+            file_content = await file.read()
+            logger.info(f"[API_DEBUG] File content read successfully")
+            logger.info(f"[API_DEBUG] Content type: {type(file_content)}")
+            logger.info(f"[API_DEBUG] Content length: {len(file_content) if file_content else 'None'}")
+            
+            if file_content:
+                logger.info(f"[API_DEBUG] Content MD5: {hashlib.md5(file_content).hexdigest()}")
+                logger.info(f"[API_DEBUG] First 20 bytes: {file_content[:20].hex()}")
+                logger.info(f"[API_DEBUG] Last 20 bytes: {file_content[-20:].hex()}")
+                
+                # Validate PDF if it's a PDF
+                if file.filename and file.filename.lower().endswith('.pdf'):
+                    if file_content.startswith(b'%PDF'):
+                        logger.info(f"[API_DEBUG] ✅ Valid PDF header detected")
+                    else:
+                        logger.warning(f"[API_DEBUG] ⚠️ Invalid PDF header: {file_content[:10]}")
+                    
+                    if b'%%EOF' in file_content:
+                        logger.info(f"[API_DEBUG] ✅ PDF EOF marker found")
+                    else:
+                        logger.warning(f"[API_DEBUG] ⚠️ PDF EOF marker not found")
+            else:
+                logger.error(f"[API_DEBUG] ❌ File content is empty or None")
+                raise HTTPException(status_code=400, detail="File content is empty")
+                
+        except Exception as read_error:
+            logger.error(f"[API_DEBUG] ❌ Error reading file: {read_error}")
+            raise HTTPException(status_code=400, detail=f"Error reading file: {str(read_error)}")
         
         # Parse metadata if provided
         parsed_metadata = None
@@ -50,6 +87,12 @@ async def upload_document(
                 parsed_metadata = json.loads(metadata)
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid JSON metadata")
+        
+        # 🔍 FINAL CHECK before S3 upload
+        logger.info(f"[API_DEBUG] === FINAL CHECK BEFORE S3 UPLOAD ===")
+        logger.info(f"[API_DEBUG] File content length: {len(file_content)}")
+        logger.info(f"[API_DEBUG] File content MD5: {hashlib.md5(file_content).hexdigest()}")
+        logger.info(f"[API_DEBUG] File content type: {type(file_content)}")
         
         # Upload to S3 using the single S3 upload service
         from common.src.services.s3_upload_service import s3_upload_service
@@ -61,10 +104,14 @@ async def upload_document(
         )
         
         if upload_result.get('status') != 'success':
+            logger.error(f"[API_DEBUG] ❌ S3 upload failed: {upload_result.get('error')}")
             raise HTTPException(
                 status_code=500, 
                 detail=f"Upload failed: {upload_result.get('error', 'Unknown error')}"
             )
+        
+        logger.info(f"[API_DEBUG] ✅ S3 upload successful")
+        logger.info(f"[API_DEBUG] === UPLOAD COMPLETE ===")
         
         # Return upload result
         return {
@@ -80,6 +127,9 @@ async def upload_document(
         raise
     except Exception as e:
         logger.error(f"[API] Error uploading document: {e}")
+        logger.error(f"[API_DEBUG] Exception details: {type(e).__name__}: {str(e)}")
+        import traceback
+        logger.error(f"[API_DEBUG] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.post("/process-crawled")

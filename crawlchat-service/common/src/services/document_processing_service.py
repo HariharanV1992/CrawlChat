@@ -445,8 +445,12 @@ class DocumentProcessingService:
         try:
             logger.info(f"[DOC_PROCESSING] Processing document with preprocessing: {filename}")
             
-            # Step 1: Simple text extraction (basic preprocessing)
-            text_content = self._extract_text_from_file(file_content, filename)
+            # Step 1: Extract text content using appropriate method
+            text_content = await self._extract_text_with_aws_textract(file_content, filename)
+            
+            if not text_content:
+                # Fallback to local text extraction
+                text_content = self._extract_text_from_file(file_content, filename)
             
             if not text_content:
                 return {
@@ -454,12 +458,13 @@ class DocumentProcessingService:
                     "error": "No text content could be extracted from file",
                     "filename": filename
                 }
+            
             if text_content:
                 document_id = str(uuid.uuid4())
                 
                 # Prepare metadata
                 processing_metadata = {
-                    "processing_type": "simple_text_extraction",
+                    "processing_type": "aws_textract_with_fallback",
                     "document_type": self._get_document_type(filename),
                     "user_id": user_id
                 }
@@ -482,7 +487,7 @@ class DocumentProcessingService:
                     "preprocessing": {
                         "status": "success",
                         "text_content": text_content,
-                        "processing_type": "simple_text_extraction"
+                        "processing_type": "aws_textract_with_fallback"
                     },
                     "vector_store": vector_result,
                     "document_id": document_id,
@@ -492,7 +497,10 @@ class DocumentProcessingService:
                 # Document was processed but no text extracted (e.g., images)
                 return {
                     "status": "success",
-                    "preprocessing": preprocessing_result,
+                    "preprocessing": {
+                        "status": "no_text_extracted",
+                        "processing_type": "aws_textract_with_fallback"
+                    },
                     "vector_store": None,
                     "message": "Document preprocessed but no text content for vector store",
                     "filename": filename
@@ -544,19 +552,96 @@ class DocumentProcessingService:
             }
 
     def _extract_text_from_file(self, file_content: bytes, filename: str) -> str:
-        """Simple text extraction from file content."""
+        """Extract text from file content using appropriate method based on file type."""
         try:
-            # Try to decode as text first
-            try:
-                return file_content.decode('utf-8')
-            except UnicodeDecodeError:
+            import os
+            _, ext = os.path.splitext(filename.lower())
+            
+            # For PDF files, use proper PDF text extraction
+            if ext == '.pdf':
+                logger.info(f"[DOC_PROCESSING] Extracting text from PDF: {filename}")
+                return self._extract_text_from_pdf(file_content, filename)
+            
+            # For text files, try to decode as text
+            elif ext in ['.txt', '.md', '.html', '.htm']:
                 try:
-                    return file_content.decode('latin-1')
+                    return file_content.decode('utf-8')
                 except UnicodeDecodeError:
-                    # For binary files, return empty string
-                    return ""
+                    try:
+                        return file_content.decode('latin-1')
+                    except UnicodeDecodeError:
+                        logger.warning(f"[DOC_PROCESSING] Could not decode text file: {filename}")
+                        return ""
+            
+            # For other file types, return empty string
+            else:
+                logger.warning(f"[DOC_PROCESSING] Unsupported file type for text extraction: {filename}")
+                return ""
+                
         except Exception as e:
             logger.error(f"[DOC_PROCESSING] Error extracting text from {filename}: {e}")
+            return ""
+    
+    def _extract_text_from_pdf(self, file_content: bytes, filename: str) -> str:
+        """Extract text from PDF using PyPDF2 or other PDF libraries."""
+        try:
+            # Try PyPDF2 first
+            try:
+                import PyPDF2
+                from io import BytesIO
+                
+                pdf_file = BytesIO(file_content)
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                
+                text_content = ""
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text_content += f"\n--- Page {page_num + 1} ---\n{page_text}\n"
+                    except Exception as e:
+                        logger.warning(f"[DOC_PROCESSING] Error extracting text from PDF page {page_num + 1}: {e}")
+                
+                if text_content.strip():
+                    logger.info(f"[DOC_PROCESSING] Successfully extracted {len(text_content)} characters from PDF using PyPDF2: {filename}")
+                    return text_content.strip()
+                else:
+                    logger.warning(f"[DOC_PROCESSING] PyPDF2 extracted no text from PDF: {filename}")
+                    
+            except ImportError:
+                logger.warning("[DOC_PROCESSING] PyPDF2 not available, trying alternative methods")
+            except Exception as e:
+                logger.warning(f"[DOC_PROCESSING] PyPDF2 extraction failed: {e}")
+            
+            # Try pdfminer.six as fallback
+            try:
+                from pdfminer.high_level import extract_text_to_fp
+                from pdfminer.layout import LAParams
+                from io import StringIO
+                
+                output = StringIO()
+                extract_text_to_fp(BytesIO(file_content), output, laparams=LAParams())
+                text_content = output.getvalue()
+                output.close()
+                
+                if text_content.strip():
+                    logger.info(f"[DOC_PROCESSING] Successfully extracted {len(text_content)} characters from PDF using pdfminer: {filename}")
+                    return text_content.strip()
+                else:
+                    logger.warning(f"[DOC_PROCESSING] pdfminer extracted no text from PDF: {filename}")
+                    
+            except ImportError:
+                logger.warning("[DOC_PROCESSING] pdfminer.six not available")
+            except Exception as e:
+                logger.warning(f"[DOC_PROCESSING] pdfminer extraction failed: {e}")
+            
+            # If all local methods fail, log that AWS Textract should be used
+            logger.error(f"[DOC_PROCESSING] All local PDF text extraction methods failed for: {filename}")
+            logger.info(f"[DOC_PROCESSING] Consider using AWS Textract service for better PDF text extraction")
+            return ""
+            
+        except Exception as e:
+            logger.error(f"[DOC_PROCESSING] Error in PDF text extraction for {filename}: {e}")
             return ""
     
     def _get_document_type(self, filename: str) -> str:
@@ -576,6 +661,90 @@ class DocumentProcessingService:
                 return 'unknown'
         except Exception:
             return 'unknown'
+
+    async def _extract_text_with_aws_textract(self, file_content: bytes, filename: str) -> str:
+        """Extract text using AWS Textract if available and appropriate."""
+        try:
+            import os
+            _, ext = os.path.splitext(filename.lower())
+            
+            # Only use AWS Textract for PDFs and images
+            if ext not in ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']:
+                logger.info(f"[DOC_PROCESSING] File type {ext} not suitable for AWS Textract, using local extraction")
+                return ""
+            
+            # Check if we're in a Lambda environment or have AWS credentials
+            is_lambda = (
+                os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
+                os.getenv('AWS_EXECUTION_ENV') or 
+                os.getenv('LAMBDA_TASK_ROOT')
+            )
+            
+            has_aws_creds = (
+                os.getenv('AWS_ACCESS_KEY_ID') and 
+                os.getenv('AWS_SECRET_ACCESS_KEY')
+            )
+            
+            if not is_lambda and not has_aws_creds:
+                logger.info(f"[DOC_PROCESSING] Not in Lambda and no AWS credentials, using local extraction for: {filename}")
+                return ""
+            
+            # Try to use AWS Textract
+            try:
+                from common.src.services.aws_textract_service import textract_service
+                
+                logger.info(f"[DOC_PROCESSING] Attempting AWS Textract extraction for: {filename}")
+                
+                # Upload to S3 temporarily for Textract processing
+                from common.src.core.config import config
+                import tempfile
+                import uuid
+                
+                # Create temporary S3 key
+                temp_key = f"temp_textract/{uuid.uuid4().hex}/{filename}"
+                
+                # Upload to S3
+                import boto3
+                s3_client = boto3.client('s3')
+                s3_client.put_object(
+                    Bucket=config.s3_bucket,
+                    Key=temp_key,
+                    Body=file_content
+                )
+                
+                logger.info(f"[DOC_PROCESSING] Uploaded file to S3 for Textract processing: {temp_key}")
+                
+                # Process with Textract
+                text_content, page_count = await textract_service.extract_text_from_s3_pdf(
+                    s3_bucket=config.s3_bucket,
+                    s3_key=temp_key,
+                    document_type="general"
+                )
+                
+                # Clean up temporary file
+                try:
+                    s3_client.delete_object(Bucket=config.s3_bucket, Key=temp_key)
+                    logger.info(f"[DOC_PROCESSING] Cleaned up temporary S3 file: {temp_key}")
+                except Exception as cleanup_error:
+                    logger.warning(f"[DOC_PROCESSING] Failed to clean up temporary file: {cleanup_error}")
+                
+                if text_content and text_content.strip():
+                    logger.info(f"[DOC_PROCESSING] Successfully extracted {len(text_content)} characters using AWS Textract: {filename}")
+                    return text_content.strip()
+                else:
+                    logger.warning(f"[DOC_PROCESSING] AWS Textract returned no text for: {filename}")
+                    return ""
+                    
+            except ImportError:
+                logger.warning("[DOC_PROCESSING] AWS Textract service not available")
+                return ""
+            except Exception as e:
+                logger.warning(f"[DOC_PROCESSING] AWS Textract extraction failed: {e}")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"[DOC_PROCESSING] Error in AWS Textract extraction for {filename}: {e}")
+            return ""
 
 # Global instance
 document_processing_service = DocumentProcessingService() 

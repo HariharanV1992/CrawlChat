@@ -211,6 +211,162 @@ class S3UploadService:
             # No temp files to clean up with direct put_object
             pass
 
+    def upload_file_lambda_optimized(
+        self,
+        file_content: bytes,
+        filename: str,
+        user_id: str,
+        content_type: Optional[str] = None,
+        s3_prefix: str = 'uploaded_documents',
+        metadata: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Upload a file to S3 using Lambda-optimized method with temporary file.
+        This method is specifically designed to prevent corruption in Lambda environments.
+        
+        Args:
+            file_content: File content as bytes
+            filename: Original filename
+            user_id: User identifier
+            content_type: MIME type (optional, auto-detected if not provided)
+            s3_prefix: S3 prefix/folder
+            metadata: Additional metadata
+            
+        Returns:
+            Dict with upload result including s3_key, status, and error (if any)
+        """
+        import tempfile
+        import os
+        
+        try:
+            logger.info(f"[S3_LAMBDA] === LAMBDA-OPTIMIZED UPLOAD START ===")
+            logger.info(f"[S3_LAMBDA] Input file_content length: {len(file_content) if file_content else 'None'}")
+            logger.info(f"[S3_LAMBDA] Input file_content MD5: {hashlib.md5(file_content).hexdigest() if file_content else 'None'}")
+            
+            # Validate inputs
+            if not file_content or len(file_content) == 0:
+                logger.error(f"[S3_LAMBDA] ❌ File content is empty or None")
+                return {'status': 'error', 'error': 'File content is empty'}
+            
+            if not filename:
+                logger.error(f"[S3_LAMBDA] ❌ Filename is required")
+                return {'status': 'error', 'error': 'Filename is required'}
+            
+            if not user_id:
+                logger.error(f"[S3_LAMBDA] ❌ User ID is required")
+                return {'status': 'error', 'error': 'User ID is required'}
+            
+            # Generate S3 key
+            timestamp = int(datetime.utcnow().timestamp())
+            unique_id = hashlib.md5((filename + str(timestamp)).encode()).hexdigest()[:8]
+            ext = os.path.splitext(filename)[1]
+            s3_key = f"{s3_prefix}/{user_id}/{timestamp}_{unique_id}{ext}"
+            
+            logger.info(f"[S3_LAMBDA] Generated S3 key: {s3_key}")
+            
+            # Create temporary file to avoid memory issues in Lambda
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+                logger.info(f"[S3_LAMBDA] Created temporary file: {temp_file.name}")
+                
+                # Write content to temporary file
+                temp_file.write(file_content)
+                temp_file.flush()
+                os.fsync(temp_file.fileno())  # Ensure data is written to disk
+                
+                logger.info(f"[S3_LAMBDA] Wrote {len(file_content)} bytes to temporary file")
+                logger.info(f"[S3_LAMBDA] Temporary file size: {os.path.getsize(temp_file.name)} bytes")
+                
+                # Verify temporary file content
+                with open(temp_file.name, 'rb') as verify_file:
+                    temp_content = verify_file.read()
+                    temp_md5 = hashlib.md5(temp_content).hexdigest()
+                    logger.info(f"[S3_LAMBDA] Temporary file MD5: {temp_md5}")
+                    
+                    if temp_md5 != hashlib.md5(file_content).hexdigest():
+                        logger.error(f"[S3_LAMBDA] ❌ MD5 mismatch between original and temporary file")
+                        return {'status': 'error', 'error': 'File content corruption detected'}
+                
+                # Guess content type if not provided
+                if not content_type:
+                    import mimetypes
+                    content_type, _ = mimetypes.guess_type(filename)
+                    content_type = content_type or 'application/octet-stream'
+                    logger.info(f"[S3_LAMBDA] Guessed content type: {content_type}")
+                
+                # Prepare metadata
+                meta = metadata.copy() if metadata else {}
+                meta.update({
+                    'original_filename': filename,
+                    'user_id': user_id,
+                    'upload_timestamp': str(timestamp),
+                    'file_size': str(len(file_content)),
+                    'content_md5': hashlib.md5(file_content).hexdigest(),
+                    'upload_method': 'lambda_optimized_temp_file'
+                })
+                
+                logger.info(f"[S3_LAMBDA] Metadata prepared: {meta}")
+                
+                # Upload using upload_file method (more reliable in Lambda)
+                logger.info(f"[S3_LAMBDA] Uploading to S3: s3://{self.bucket_name}/{s3_key}")
+                self.s3_client.upload_file(
+                    Filename=temp_file.name,
+                    Bucket=self.bucket_name,
+                    Key=s3_key,
+                    ExtraArgs={
+                        'ContentType': content_type,
+                        'Metadata': meta
+                    }
+                )
+                
+                logger.info(f"[S3_LAMBDA] Upload successful: s3://{self.bucket_name}/{s3_key}")
+                
+                # Verify upload by downloading a small portion
+                try:
+                    logger.info(f"[S3_LAMBDA] Starting upload verification...")
+                    response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+                    downloaded_content = response['Body'].read()
+                    logger.info(f"[S3_LAMBDA] Verification - downloaded size: {len(downloaded_content):,} bytes")
+                    logger.info(f"[S3_LAMBDA] Verification - downloaded MD5: {hashlib.md5(downloaded_content).hexdigest()}")
+                    
+                    if len(downloaded_content) != len(file_content):
+                        logger.error(f"[S3_LAMBDA] Verification failed - size mismatch: uploaded={len(file_content)}, downloaded={len(downloaded_content)}")
+                        raise Exception("S3 upload verification failed - file size mismatch")
+                    
+                    if hashlib.md5(downloaded_content).hexdigest() != hashlib.md5(file_content).hexdigest():
+                        logger.error(f"[S3_LAMBDA] Verification failed - MD5 mismatch")
+                        raise Exception("S3 upload verification failed - MD5 mismatch")
+                    
+                    logger.info(f"[S3_LAMBDA] Upload verification passed")
+                except Exception as verify_error:
+                    logger.error(f"[S3_LAMBDA] Upload verification failed: {verify_error}")
+                    raise Exception(f"S3 upload verification failed: {str(verify_error)}")
+                
+            # Clean up temporary file
+            try:
+                os.unlink(temp_file.name)
+                logger.info(f"[S3_LAMBDA] Cleaned up temporary file: {temp_file.name}")
+            except Exception as cleanup_error:
+                logger.warning(f"[S3_LAMBDA] Failed to clean up temporary file: {cleanup_error}")
+            
+            logger.info(f"[S3_LAMBDA] === LAMBDA-OPTIMIZED UPLOAD COMPLETE ===")
+            
+            return {
+                'status': 'success',
+                's3_key': s3_key,
+                'bucket': self.bucket_name,
+                'file_size': len(file_content),
+                'filename': filename,
+                's3_url': f"s3://{self.bucket_name}/{s3_key}",
+                'upload_method': 'lambda_optimized_temp_file'
+            }
+            
+        except Exception as e:
+            logger.error(f"[S3_LAMBDA] Upload failed: {e}")
+            logger.error(f"[S3_LAMBDA] Exception details: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[S3_LAMBDA] Traceback: {traceback.format_exc()}")
+            return {'status': 'error', 'error': str(e)}
+
     def upload_user_document(
         self,
         file_content: bytes,
@@ -221,6 +377,7 @@ class S3UploadService:
     ) -> Dict[str, Any]:
         """
         Upload a user document to the uploaded_documents folder.
+        Uses Lambda-optimized method when in Lambda environment.
         
         Args:
             file_content: File content as bytes
@@ -232,19 +389,38 @@ class S3UploadService:
         Returns:
             Dict with upload result
         """
+        # Check if we're in Lambda environment
+        is_lambda = (
+            os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
+            os.getenv('AWS_EXECUTION_ENV') or 
+            os.getenv('LAMBDA_TASK_ROOT')
+        )
+        
         # Prepare metadata
         metadata = {}
         if task_id:
             metadata['task_id'] = task_id
         
-        return self.upload_file(
-            file_content=file_content,
-            filename=filename,
-            user_id=user_id,
-            content_type=content_type,
-            s3_prefix='uploaded_documents',
-            metadata=metadata
-        )
+        if is_lambda:
+            logger.info(f"[S3_UPLOAD] Using Lambda-optimized upload method")
+            return self.upload_file_lambda_optimized(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id,
+                content_type=content_type,
+                s3_prefix='uploaded_documents',
+                metadata=metadata
+            )
+        else:
+            logger.info(f"[S3_UPLOAD] Using standard upload method")
+            return self.upload_file(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id,
+                content_type=content_type,
+                s3_prefix='uploaded_documents',
+                metadata=metadata
+            )
 
     def upload_temp_file(
         self,
