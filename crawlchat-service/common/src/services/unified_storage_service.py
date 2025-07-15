@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 from common.src.core.config import config
+from common.src.core.aws_config import aws_config
 from common.src.core.exceptions import StorageError
 
 logger = logging.getLogger(__name__)
@@ -23,19 +24,31 @@ class UnifiedStorageService:
     def _init_s3_client(self):
         try:
             import boto3
+            from common.src.core.aws_config import aws_config
+            
+            # Use AWS config which handles both Lambda IAM roles and explicit credentials
             if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
-                return boto3.client('s3', region_name=config.s3_region)
+                # In Lambda, use IAM role - no explicit credentials needed
+                logger.info("Initializing S3 client for Lambda environment")
+                return boto3.client('s3', region_name=aws_config.region)
             else:
-                if hasattr(config, 's3_access_key') and hasattr(config, 's3_secret_key') and config.s3_access_key and config.s3_secret_key:
+                # For local development, try explicit credentials first
+                access_key = aws_config.access_key_id
+                secret_key = aws_config.secret_access_key
+                
+                if access_key and secret_key:
+                    logger.info("Initializing S3 client with explicit credentials")
                     return boto3.client(
                         's3',
-                        aws_access_key_id=config.s3_access_key,
-                        aws_secret_access_key=config.s3_secret_key,
-                        region_name=config.s3_region
+                        aws_access_key_id=access_key,
+                        aws_secret_access_key=secret_key,
+                        region_name=aws_config.region
                     )
                 else:
-                    logger.error("S3 credentials missing for local environment.")
-                    return None
+                    # Fall back to boto3 default credential chain
+                    logger.info("Initializing S3 client with boto3 default credential chain")
+                    return boto3.client('s3', region_name=aws_config.region)
+                    
         except Exception as e:
             logger.error(f"Failed to initialize S3 client: {e}")
             return None
@@ -88,7 +101,7 @@ class UnifiedStorageService:
         try:
             # Upload to S3 with proper metadata
             response = self.s3_client.put_object(
-                Bucket=config.s3_bucket,
+                Bucket=aws_config.s3_bucket,
                 Key=s3_key,
                 Body=file_content,
                 ContentType=content_type,
@@ -107,7 +120,7 @@ class UnifiedStorageService:
             if not response.get('ETag'):
                 raise StorageError("S3 upload failed - no ETag returned")
             
-            logger.info(f"[STORAGE] Successfully uploaded: s3://{config.s3_bucket}/{s3_key}")
+            logger.info(f"[STORAGE] Successfully uploaded: s3://{aws_config.s3_bucket}/{s3_key}")
             logger.info(f"[STORAGE] S3 ETag: {response.get('ETag')}")
             
             return {
@@ -115,7 +128,7 @@ class UnifiedStorageService:
                 "filename": filename, 
                 "file_size": len(file_content),
                 "etag": response.get('ETag'),
-                "bucket": config.s3_bucket
+                "bucket": aws_config.s3_bucket
             }
             
         except Exception as e:
@@ -131,7 +144,7 @@ class UnifiedStorageService:
         content_type = self._get_content_type(file_extension)
         try:
             self.s3_client.put_object(
-                Bucket=config.s3_bucket,
+                Bucket=aws_config.s3_bucket,
                 Key=s3_key,
                 Body=file_content,
                 ContentType=content_type,
@@ -143,7 +156,7 @@ class UnifiedStorageService:
                     'temp_file': 'true'
                 }
             )
-            logger.info(f"Uploaded temp file: s3://{config.s3_bucket}/{s3_key}")
+            logger.info(f"Uploaded temp file: s3://{aws_config.s3_bucket}/{s3_key}")
             return {"s3_key": s3_key, "filename": filename, "file_size": len(file_content)}
         except Exception as e:
             logger.error(f"Error uploading temp file: {e}")
@@ -154,7 +167,7 @@ class UnifiedStorageService:
             logger.error("S3 client not available")
             return None
         try:
-            response = self.s3_client.get_object(Bucket=config.s3_bucket, Key=s3_key)
+            response = self.s3_client.get_object(Bucket=aws_config.s3_bucket, Key=s3_key)
             return response['Body'].read()
         except Exception as e:
             logger.error(f"Error getting file content: {e}")
@@ -165,8 +178,8 @@ class UnifiedStorageService:
             logger.error("S3 client not available")
             return False
         try:
-            self.s3_client.delete_object(Bucket=config.s3_bucket, Key=s3_key)
-            logger.info(f"Deleted file: s3://{config.s3_bucket}/{s3_key}")
+            self.s3_client.delete_object(Bucket=aws_config.s3_bucket, Key=s3_key)
+            logger.info(f"Deleted file: s3://{aws_config.s3_bucket}/{s3_key}")
             return True
         except Exception as e:
             logger.error(f"Error deleting file: {e}")
