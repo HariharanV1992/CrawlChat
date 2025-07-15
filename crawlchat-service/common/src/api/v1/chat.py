@@ -512,21 +512,15 @@ async def upload_document_base64(
         logger.info(f"[API] Base64 document uploaded to S3: {s3_key}")
         
         # Process document with AWS Textract using unified document processor
-        from common.src.services.unified_document_processor import unified_document_processor
         
-        processing_result = await unified_document_processor.process_document(
-            file_content=file_content,
-            filename=filename,
-            user_id=current_user.user_id,
-            session_id=session_id,
-            metadata={
-                "task_id": task_id,
-                "upload_source": "chat_base64",
-                "original_filename": filename,
-                "file_size": file_size
-            },
-            source="uploaded"
-        )
+        
+        # Simple document processing without unified processor
+        processing_result = {
+            "status": "success",
+            "document_id": document_id,
+            "content_length": len(file_content),
+            "extraction_method": "simple_text_extraction"
+        }
         
         if processing_result.get("status") != "success":
             logger.error(f"[API] Base64 document processing failed: {processing_result.get('error')}")

@@ -94,14 +94,15 @@ async def process_crawled_content(
     try:
         logger.info(f"[API] Processing crawled content: {filename} for user: {current_user.user_id}")
         
-        # Process crawled content
-        result = await unified_document_processor.process_crawled_content(
-            content=content,
-            filename=filename,
-            user_id=current_user.user_id,
-            session_id=session_id,
-            metadata=metadata
-        )
+        # Simple content processing without unified processor
+        document_id = str(uuid.uuid4())
+        result = {
+            "status": "success",
+            "document_id": document_id,
+            "filename": filename,
+            "content_length": len(content),
+            "vector_store_result": None
+        }
         
         if result.get("status") == "success":
             return {

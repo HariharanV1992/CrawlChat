@@ -16,7 +16,7 @@ import hashlib
 
 from common.src.services.vector_store_service import vector_store_service
 from common.src.services.s3_upload_service import s3_upload_service
-from common.src.services.unified_preprocessing_service import unified_preprocessing_service, DocumentType
+from common.src.models.documents import DocumentType
 from common.src.core.database import mongodb
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ class DocumentProcessingService:
     def __init__(self):
         self.storage_service = s3_upload_service
         self.vector_store_id = None
-        self.preprocessing_service = unified_preprocessing_service
         
     async def process_document_with_vector_store(
         self, 
@@ -446,30 +445,22 @@ class DocumentProcessingService:
         try:
             logger.info(f"[DOC_PROCESSING] Processing document with preprocessing: {filename}")
             
-            # Step 1: Preprocess the document
-            preprocessing_result = await self.preprocessing_service.process_document(
-                file_content=file_content,
-                filename=filename,
-                user_id=user_id
-            )
+            # Step 1: Simple text extraction (basic preprocessing)
+            text_content = self._extract_text_from_file(file_content, filename)
             
-            if preprocessing_result.get("status") != "success":
+            if not text_content:
                 return {
                     "status": "error",
-                    "error": preprocessing_result.get("error", "Preprocessing failed"),
+                    "error": "No text content could be extracted from file",
                     "filename": filename
                 }
-            
-            # Step 2: If preprocessing extracted text, process with vector store
-            text_content = preprocessing_result.get("text_content")
             if text_content:
                 document_id = str(uuid.uuid4())
                 
                 # Prepare metadata
                 processing_metadata = {
-                    "preprocessing_type": preprocessing_result.get("processing_type"),
-                    "document_type": preprocessing_result.get("document_type"),
-                    "normalized_key": preprocessing_result.get("normalized_key"),
+                    "processing_type": "simple_text_extraction",
+                    "document_type": self._get_document_type(filename),
                     "user_id": user_id
                 }
                 
@@ -488,7 +479,11 @@ class DocumentProcessingService:
                 # Combine results
                 return {
                     "status": "success",
-                    "preprocessing": preprocessing_result,
+                    "preprocessing": {
+                        "status": "success",
+                        "text_content": text_content,
+                        "processing_type": "simple_text_extraction"
+                    },
                     "vector_store": vector_result,
                     "document_id": document_id,
                     "filename": filename
@@ -547,6 +542,40 @@ class DocumentProcessingService:
                 "content_length": 0,
                 "extraction_method": "none"
             }
+
+    def _extract_text_from_file(self, file_content: bytes, filename: str) -> str:
+        """Simple text extraction from file content."""
+        try:
+            # Try to decode as text first
+            try:
+                return file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    return file_content.decode('latin-1')
+                except UnicodeDecodeError:
+                    # For binary files, return empty string
+                    return ""
+        except Exception as e:
+            logger.error(f"[DOC_PROCESSING] Error extracting text from {filename}: {e}")
+            return ""
+    
+    def _get_document_type(self, filename: str) -> str:
+        """Get document type from filename extension."""
+        try:
+            import os
+            _, ext = os.path.splitext(filename.lower())
+            if ext in ['.pdf']:
+                return 'pdf'
+            elif ext in ['.txt', '.md']:
+                return 'text'
+            elif ext in ['.html', '.htm']:
+                return 'html'
+            elif ext in ['.doc', '.docx']:
+                return 'document'
+            else:
+                return 'unknown'
+        except Exception:
+            return 'unknown'
 
 # Global instance
 document_processing_service = DocumentProcessingService() 
