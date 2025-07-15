@@ -377,7 +377,7 @@ async def upload_document(
             logger.error(f"[API] S3 connectivity test failed: {s3_error}")
             raise HTTPException(status_code=500, detail=f"S3 connectivity failed: {str(s3_error)}")
         
-        # Upload to S3 using unified storage service with task_id
+        # Upload to S3 using unified storage service with task_id (now uses Lambda-compatible method)
         result = await unified_storage_service.upload_user_document(
             file_content=file_content,
             filename=file.filename,
@@ -385,27 +385,17 @@ async def upload_document(
             content_type=file.content_type,
             task_id=task_id
         )
+        
+        if result.get('status') != 'success':
+            logger.error(f"[API] Upload failed: {result.get('error')}")
+            raise HTTPException(status_code=500, detail=f"Upload failed: {result.get('error')}")
+        
         s3_key = result["s3_key"]
+        upload_method = result.get("upload_method", "unknown")
         
         logger.info(f"[API] Document uploaded to S3: {s3_key}")
-        
-        # Verify S3 upload by downloading a small portion
-        try:
-            from common.src.core.aws_config import aws_config
-            s3_test_client = boto3.client('s3', region_name=aws_config.region)
-            response = s3_test_client.get_object(Bucket=aws_config.s3_bucket, Key=s3_key)
-            downloaded_content = response['Body'].read()
-            logger.info(f"[API] S3 verification - downloaded size: {len(downloaded_content):,} bytes")
-            logger.info(f"[API] S3 verification - downloaded MD5: {hashlib.md5(downloaded_content).hexdigest()}")
-            
-            if len(downloaded_content) != file_size:
-                logger.error(f"[API] S3 verification failed - size mismatch: uploaded={file_size}, downloaded={len(downloaded_content)}")
-                raise HTTPException(status_code=500, detail="S3 upload verification failed - file size mismatch")
-            
-            logger.info(f"[API] S3 upload verification passed")
-        except Exception as verify_error:
-            logger.error(f"[API] S3 verification failed: {verify_error}")
-            raise HTTPException(status_code=500, detail=f"S3 upload verification failed: {str(verify_error)}")
+        logger.info(f"[API] Upload method used: {upload_method}")
+        logger.info(f"[API] Upload verification included in service")
         
         # Create document record
         document_data = DocumentUpload(

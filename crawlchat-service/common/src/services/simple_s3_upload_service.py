@@ -1,5 +1,5 @@
 """
-Simple S3 Upload Service - Direct file upload approach
+Simple S3 Upload Service - Direct file upload approach with Lambda fix
 """
 
 import os
@@ -8,6 +8,7 @@ import hashlib
 from datetime import datetime
 from typing import Optional, Dict, Any
 import logging
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,8 @@ class SimpleS3UploadService:
                 'bucket': self.bucket_name,
                 'file_size': file_size,
                 'filename': filename,
-                's3_url': f"s3://{self.bucket_name}/{s3_key}"
+                's3_url': f"s3://{self.bucket_name}/{s3_key}",
+                'upload_method': 'file_path_upload_file'
             }
             
         except Exception as e:
@@ -58,8 +60,9 @@ class SimpleS3UploadService:
 
     def upload_file_from_memory(self, file_content: bytes, filename: str, user_id: str, s3_prefix: str = 'uploaded_documents') -> Dict[str, Any]:
         """
-        Upload file content from memory to S3.
+        Upload file content from memory to S3 using Lambda-compatible method (temp file + upload_file).
         """
+        temp_path = None
         try:
             # Generate S3 key
             timestamp = int(datetime.utcnow().timestamp())
@@ -69,16 +72,52 @@ class SimpleS3UploadService:
             
             logger.info(f"[SIMPLE_S3] Uploading from memory: {filename} -> s3://{self.bucket_name}/{s3_key}")
             logger.info(f"[SIMPLE_S3] Content size: {len(file_content):,} bytes")
+            logger.info(f"[SIMPLE_S3] First 20 bytes: {file_content[:20].hex()}")
+            logger.info(f"[SIMPLE_S3] Last 20 bytes: {file_content[-20:].hex()}")
+            logger.info(f"[SIMPLE_S3] Content MD5: {hashlib.md5(file_content).hexdigest()}")
             
-            # Upload using put_object
-            self.s3_client.put_object(
-                Bucket=self.bucket_name,
-                Key=s3_key,
-                Body=file_content,
-                ContentType=self._guess_content_type(ext)
+            # Create temporary file
+            temp_path = f"/tmp/{uuid4().hex}_{filename}"
+            logger.info(f"[SIMPLE_S3] Creating temp file: {temp_path}")
+            
+            # Write content to temporary file
+            with open(temp_path, "wb") as f:
+                f.write(file_content)
+            
+            # Verify temp file was written correctly
+            temp_file_size = os.path.getsize(temp_path)
+            logger.info(f"[SIMPLE_S3] Temp file size: {temp_file_size:,} bytes")
+            
+            if temp_file_size != len(file_content):
+                raise Exception(f"Temp file size mismatch: expected {len(file_content)}, got {temp_file_size}")
+            
+            # Upload using upload_file (Lambda-compatible method)
+            self.s3_client.upload_file(
+                temp_path,
+                self.bucket_name,
+                s3_key,
+                ExtraArgs={
+                    'ContentType': self._guess_content_type(ext)
+                }
             )
             
             logger.info(f"[SIMPLE_S3] Upload successful: s3://{self.bucket_name}/{s3_key}")
+            
+            # Verify upload
+            try:
+                response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+                downloaded_content = response['Body'].read()
+                logger.info(f"[SIMPLE_S3] Verification - downloaded size: {len(downloaded_content):,} bytes")
+                logger.info(f"[SIMPLE_S3] Verification - downloaded MD5: {hashlib.md5(downloaded_content).hexdigest()}")
+                
+                if len(downloaded_content) != len(file_content):
+                    logger.error(f"[SIMPLE_S3] Verification failed - size mismatch: uploaded={len(file_content)}, downloaded={len(downloaded_content)}")
+                    raise Exception("S3 upload verification failed - file size mismatch")
+                
+                logger.info(f"[SIMPLE_S3] Upload verification passed")
+            except Exception as verify_error:
+                logger.error(f"[SIMPLE_S3] Upload verification failed: {verify_error}")
+                raise Exception(f"S3 upload verification failed: {str(verify_error)}")
             
             return {
                 'status': 'success',
@@ -86,12 +125,22 @@ class SimpleS3UploadService:
                 'bucket': self.bucket_name,
                 'file_size': len(file_content),
                 'filename': filename,
-                's3_url': f"s3://{self.bucket_name}/{s3_key}"
+                's3_url': f"s3://{self.bucket_name}/{s3_key}",
+                'upload_method': 'temp_file_upload_file'
             }
             
         except Exception as e:
             logger.error(f"[SIMPLE_S3] Upload failed: {e}")
             return {'status': 'error', 'error': str(e)}
+        
+        finally:
+            # Clean up temporary file
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                    logger.info(f"[SIMPLE_S3] Temp file cleaned up: {temp_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"[SIMPLE_S3] Failed to clean up temp file {temp_path}: {cleanup_error}")
 
     def verify_upload(self, s3_key: str) -> Dict[str, Any]:
         """
@@ -120,6 +169,12 @@ class SimpleS3UploadService:
             '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             '.txt': 'text/plain',
             '.html': 'text/html',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.xls': 'application/vnd.ms-excel',
+            '.csv': 'text/csv',
+            '.ppt': 'application/vnd.ms-powerpoint',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.json': 'application/json',
             '.png': 'image/png',
             '.jpg': 'image/jpeg',
             '.jpeg': 'image/jpeg',
