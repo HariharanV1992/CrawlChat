@@ -378,10 +378,7 @@ async def upload_document(
             filename=file.filename,
             file_content=file_content,
             user_id=current_user.user_id,
-            session_id=session_id,
-            s3_key=s3_key,
-            content_type=file.content_type,
-            file_size=file_size
+            task_id=task_id
         )
         
         document = await document_service.upload_document(document_data)

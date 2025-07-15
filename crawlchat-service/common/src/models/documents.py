@@ -62,7 +62,7 @@ class Document(BaseModel):
 class DocumentUpload(BaseModel):
     """Document upload request model."""
     filename: str = Field(..., description="Original filename")
-    content: bytes = Field(..., description="File content")
+    file_content: bytes = Field(..., description="File content")
     user_id: str = Field(..., description="User ID")
     task_id: Optional[str] = Field(None, description="Associated task ID")
 
