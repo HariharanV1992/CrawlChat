@@ -49,31 +49,45 @@ class S3UploadService:
             Dict with upload result including s3_key, status, and error (if any)
         """
         try:
+            # 🔍 ENHANCED DEBUGGING - Track content at every step
+            logger.info(f"[S3_DEBUG] === UPLOAD START ===")
+            logger.info(f"[S3_DEBUG] Input file_content type: {type(file_content)}")
+            logger.info(f"[S3_DEBUG] Input file_content length: {len(file_content) if file_content else 'None'}")
+            logger.info(f"[S3_DEBUG] Input file_content is None: {file_content is None}")
+            logger.info(f"[S3_DEBUG] Input file_content is empty: {not file_content}")
+            
+            if file_content:
+                logger.info(f"[S3_DEBUG] Input file_content[:50]: {file_content[:50]}")
+                logger.info(f"[S3_DEBUG] Input file_content MD5: {hashlib.md5(file_content).hexdigest()}")
+            
             # Validate inputs
             if not file_content or len(file_content) == 0:
+                logger.error(f"[S3_DEBUG] ❌ File content is empty or None")
                 return {'status': 'error', 'error': 'File content is empty'}
             
             if not filename:
+                logger.error(f"[S3_DEBUG] ❌ Filename is required")
                 return {'status': 'error', 'error': 'Filename is required'}
             
             if not user_id:
+                logger.error(f"[S3_DEBUG] ❌ User ID is required")
                 return {'status': 'error', 'error': 'User ID is required'}
             
             # 🔍 EARLY SANITY CHECKS - Debug file content before processing
-            logger.info(f"[DEBUG] file_content length: {len(file_content)}")
-            logger.info(f"[DEBUG] file_content[:100]: {file_content[:100]}")
-            logger.info(f"[DEBUG] file_content MD5: {hashlib.md5(file_content).hexdigest()}")
+            logger.info(f"[S3_DEBUG] After validation - file_content length: {len(file_content)}")
+            logger.info(f"[S3_DEBUG] After validation - file_content[:100]: {file_content[:100]}")
+            logger.info(f"[S3_DEBUG] After validation - file_content MD5: {hashlib.md5(file_content).hexdigest()}")
             
             # Check if it's a PDF and validate it
             if filename.lower().endswith('.pdf'):
                 if file_content.startswith(b"%PDF") and b"%%EOF" in file_content:
-                    logger.info("[DEBUG] PDF file looks valid - has PDF signature and EOF marker")
+                    logger.info("[S3_DEBUG] PDF file looks valid - has PDF signature and EOF marker")
                 else:
-                    logger.warning("[DEBUG] PDF file missing PDF signature or EOF marker!")
-                    logger.warning(f"[DEBUG] PDF header check: {file_content.startswith(b'%PDF')}")
-                    logger.warning(f"[DEBUG] PDF EOF check: {b'%%EOF' in file_content}")
-                    logger.warning(f"[DEBUG] First 20 bytes: {file_content[:20]}")
-                    logger.warning(f"[DEBUG] Last 100 bytes: {file_content[-100:]}")
+                    logger.warning("[S3_DEBUG] PDF file missing PDF signature or EOF marker!")
+                    logger.warning(f"[S3_DEBUG] PDF header check: {file_content.startswith(b'%PDF')}")
+                    logger.warning(f"[S3_DEBUG] PDF EOF check: {b'%%EOF' in file_content}")
+                    logger.warning(f"[S3_DEBUG] First 20 bytes: {file_content[:20]}")
+                    logger.warning(f"[S3_DEBUG] Last 100 bytes: {file_content[-100:]}")
             
             # Generate S3 key
             timestamp = int(datetime.utcnow().timestamp())
@@ -81,13 +95,33 @@ class S3UploadService:
             ext = os.path.splitext(filename)[1]
             s3_key = f"{s3_prefix}/{user_id}/{timestamp}_{unique_id}{ext}"
             
+            logger.info(f"[S3_DEBUG] Generated S3 key: {s3_key}")
+            
             # Prepare body content
+            logger.info(f"[S3_DEBUG] Preparing body content...")
+            logger.info(f"[S3_DEBUG] file_content type before body prep: {type(file_content)}")
+            logger.info(f"[S3_DEBUG] file_content length before body prep: {len(file_content)}")
+            
             if isinstance(file_content, str):
                 body = file_content.encode('utf-8')
+                logger.info(f"[S3_DEBUG] Converted string to bytes, body length: {len(body)}")
             elif isinstance(file_content, bytes):
                 body = file_content
+                logger.info(f"[S3_DEBUG] Using bytes directly, body length: {len(body)}")
             else:
                 body = str(file_content).encode('utf-8')
+                logger.info(f"[S3_DEBUG] Converted other type to bytes, body length: {len(body)}")
+            
+            # 🔍 CRITICAL CHECK - Verify body content after preparation
+            logger.info(f"[S3_DEBUG] Body content type: {type(body)}")
+            logger.info(f"[S3_DEBUG] Body content length: {len(body)}")
+            logger.info(f"[S3_DEBUG] Body content is empty: {not body}")
+            logger.info(f"[S3_DEBUG] Body content[:50]: {body[:50]}")
+            logger.info(f"[S3_DEBUG] Body content MD5: {hashlib.md5(body).hexdigest()}")
+            
+            if not body or len(body) == 0:
+                logger.error(f"[S3_DEBUG] ❌ Body content is empty after preparation!")
+                return {'status': 'error', 'error': 'Body content is empty after preparation'}
             
             # Log upload details
             logger.info(f"[S3_UPLOAD] Uploading: {filename} -> s3://{self.bucket_name}/{s3_key}")
@@ -101,7 +135,7 @@ class S3UploadService:
                 import mimetypes
                 content_type, _ = mimetypes.guess_type(filename)
                 content_type = content_type or 'application/octet-stream'
-                logger.info(f"[DEBUG] Guessed content type: {content_type}")
+                logger.info(f"[S3_DEBUG] Guessed content type: {content_type}")
             
             # Prepare metadata
             meta = metadata.copy() if metadata else {}
@@ -113,6 +147,16 @@ class S3UploadService:
                 'content_md5': hashlib.md5(body).hexdigest(),
                 'upload_method': 'direct_put_object'
             })
+            
+            logger.info(f"[S3_DEBUG] Metadata prepared: {meta}")
+            
+            # 🔍 FINAL CHECK before S3 upload
+            logger.info(f"[S3_DEBUG] === FINAL CHECK BEFORE S3 UPLOAD ===")
+            logger.info(f"[S3_DEBUG] Body length: {len(body)}")
+            logger.info(f"[S3_DEBUG] Body MD5: {hashlib.md5(body).hexdigest()}")
+            logger.info(f"[S3_DEBUG] S3 Bucket: {self.bucket_name}")
+            logger.info(f"[S3_DEBUG] S3 Key: {s3_key}")
+            logger.info(f"[S3_DEBUG] Content Type: {content_type}")
             
             # Upload directly using put_object (more efficient)
             logger.info(f"[S3_UPLOAD] Uploading to S3: s3://{self.bucket_name}/{s3_key}")
@@ -129,6 +173,7 @@ class S3UploadService:
             
             # Verify upload by downloading a small portion
             try:
+                logger.info(f"[S3_DEBUG] Starting upload verification...")
                 response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
                 downloaded_content = response['Body'].read()
                 logger.info(f"[S3_UPLOAD] Verification - downloaded size: {len(downloaded_content):,} bytes")
@@ -143,6 +188,8 @@ class S3UploadService:
                 logger.error(f"[S3_UPLOAD] Upload verification failed: {verify_error}")
                 raise Exception(f"S3 upload verification failed: {str(verify_error)}")
             
+            logger.info(f"[S3_DEBUG] === UPLOAD COMPLETE ===")
+            
             return {
                 'status': 'success',
                 's3_key': s3_key,
@@ -155,6 +202,9 @@ class S3UploadService:
             
         except Exception as e:
             logger.error(f"[S3_UPLOAD] Upload failed: {e}")
+            logger.error(f"[S3_DEBUG] Exception details: {type(e).__name__}: {str(e)}")
+            import traceback
+            logger.error(f"[S3_DEBUG] Traceback: {traceback.format_exc()}")
             return {'status': 'error', 'error': str(e)}
         
         finally:
