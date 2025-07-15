@@ -364,6 +364,7 @@ async def upload_document(
         # Test S3 connectivity before upload
         try:
             logger.info(f"[API] Testing S3 connectivity...")
+            from common.src.core.aws_config import aws_config
             logger.info(f"[API] S3 Bucket: {aws_config.s3_bucket}")
             logger.info(f"[API] AWS Region: {aws_config.region}")
             
@@ -390,6 +391,7 @@ async def upload_document(
         
         # Verify S3 upload by downloading a small portion
         try:
+            from common.src.core.aws_config import aws_config
             s3_test_client = boto3.client('s3', region_name=aws_config.region)
             response = s3_test_client.get_object(Bucket=aws_config.s3_bucket, Key=s3_key)
             downloaded_content = response['Body'].read()
@@ -858,6 +860,7 @@ async def test_s3_connectivity(current_user: UserResponse = Depends(get_current_
         logger.info(f"[API] Testing S3 connectivity for user: {current_user.user_id}")
         
         import boto3
+        from datetime import datetime
         from common.src.core.aws_config import aws_config
         
         # Test basic connectivity
