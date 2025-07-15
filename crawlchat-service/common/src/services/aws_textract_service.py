@@ -1310,27 +1310,17 @@ class AWSTextractService:
             logger.info(f"📁 AWS Textract: S3 key: {s3_key}")
             logger.info(f"📁 AWS Textract: Processing purpose: textract_processing")
             
-            # Process with Textract using environment-appropriate method
-            is_lambda = self._is_running_in_lambda()
+            # Use comprehensive processing for both environments to ensure content extraction
+            # This fixes the issue where Lambda environment was getting empty content
+            logger.info(f"🔄 AWS Textract: Using comprehensive processing for reliable content extraction")
+            text_content, page_count = await self.process_preprocessed_document(
+                s3_bucket=config.s3_bucket,
+                s3_key=s3_key,
+                document_type=document_type
+            )
             
-            if is_lambda:
-                # Use Lambda-optimized processing
-                logger.info(f"⚡ AWS Textract: Using Lambda-optimized processing for direct upload")
-                text_content, page_count = await self.process_document_lambda_optimized(
-                    s3_bucket=config.s3_bucket,
-                    s3_key=s3_key,
-                    document_type=document_type
-                )
-            else:
-                # Use regular processing for local environment
-                text_content, page_count = await self.process_preprocessed_document(
-                    s3_bucket=config.s3_bucket,
-                    s3_key=s3_key,
-                    document_type=document_type
-                )
-            
-            # If no text content extracted, try PDF to image fallback (only for local environment)
-            if not is_lambda and (not text_content or len(text_content.strip()) == 0):
+            # If no text content extracted, try PDF to image fallback (for both environments)
+            if not text_content or len(text_content.strip()) == 0:
                 logger.warning("⚠️ AWS Textract: No text content extracted — trying PDF to image fallback")
                 try:
                     text_content, page_count = await self.fallback_textract_on_pdf_images(
@@ -1538,16 +1528,15 @@ class AWSTextractService:
         try:
             logger.info(f"📄 AWS Textract: Extracting text from S3 PDF s3://{s3_bucket}/{s3_key} (type: {document_type.value})")
             
-            # Environment detection
+            # Environment detection (for logging only)
             is_lambda = self._is_running_in_lambda()
             logger.info(f"🔧 AWS Textract: Running in {'Lambda' if is_lambda else 'Local'} environment")
             
-            # Use Lambda-optimized processing in Lambda environment
-            if is_lambda:
-                logger.info(f"⚡ AWS Textract: Using Lambda-optimized processing")
-                return await self.process_document_lambda_optimized(s3_bucket, s3_key, document_type)
+            # Use comprehensive processing for both environments to ensure content extraction
+            # This fixes the issue where Lambda environment was getting empty content
+            logger.info(f"🔄 AWS Textract: Using comprehensive processing for reliable content extraction")
             
-            # Run comprehensive diagnostics for local environment
+            # Run comprehensive diagnostics for both environments
             self._log_environment_diagnostics()
             
             # Validate S3 file before processing
@@ -1555,7 +1544,7 @@ class AWSTextractService:
                 logger.error("❌ AWS Textract: S3 file validation failed, cannot proceed")
                 raise TextractError("S3 file validation failed")
             
-            # Use the comprehensive async processing for local environment
+            # Use the comprehensive async processing for both environments
             results = await self.process_document_async_comprehensive(
                 s3_bucket=s3_bucket,
                 s3_key=s3_key,
@@ -1571,7 +1560,7 @@ class AWSTextractService:
             logger.info(f"🔍 AWS Textract: Total blocks: {total_blocks}")
             logger.info(f"🔍 AWS Textract: LINE blocks found: {line_count}")
             
-            # Fallback logic for local environment
+            # Fallback logic for both environments
             if line_count == 0:
                 logger.warning("⚠️ AWS Textract: No LINE blocks found — fallback to image conversion")
                 try:
