@@ -14,7 +14,7 @@ from common.src.models.documents import (
     Document, DocumentCreate, DocumentUpdate, DocumentResponse, DocumentListResponse, DocumentType, DocumentStatus, DocumentUpload
 )
 from common.src.services.document_service import document_service
-from common.src.services.unified_document_processor import unified_document_processor
+
 from common.src.api.dependencies import get_current_user
 from common.src.models.auth import UserResponse
 from common.src.core.exceptions import DocumentProcessingError
@@ -51,29 +51,30 @@ async def upload_document(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid JSON metadata")
         
-        # Process document using unified processor
-        result = await unified_document_processor.process_document(
+        # Upload to S3 using the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
+        upload_result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=file.filename or "unknown",
             user_id=current_user.user_id,
-            session_id=session_id,
-            metadata=parsed_metadata,
-            source="uploaded"
+            content_type=file.content_type
         )
         
-        if result.get("status") == "success":
-            return {
-                "message": "Document uploaded and processed successfully",
-                "document_id": result.get("document_id"),
-                "filename": result.get("filename"),
-                "content_length": result.get("content_length", 0),
-                "vector_store_result": result.get("vector_store_result")
-            }
-        else:
+        if upload_result.get('status') != 'success':
             raise HTTPException(
                 status_code=500, 
-                detail=f"Document processing failed: {result.get('error', 'Unknown error')}"
+                detail=f"Upload failed: {upload_result.get('error', 'Unknown error')}"
             )
+        
+        # Return upload result
+        return {
+            "message": "Document uploaded successfully",
+            "document_id": upload_result.get('s3_key'),  # Use S3 key as document ID
+            "filename": upload_result.get('filename'),
+            "s3_key": upload_result.get('s3_key'),
+            "file_size": upload_result.get('file_size'),
+            "upload_method": upload_result.get('upload_method')
+        }
             
     except HTTPException:
         raise

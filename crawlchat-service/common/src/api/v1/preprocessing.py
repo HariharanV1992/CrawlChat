@@ -4,11 +4,11 @@ Provides endpoints for document preprocessing with unified service.
 """
 
 import logging
+import os
 from typing import Optional, List
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse
 
-from common.src.services.unified_preprocessing_service import unified_preprocessing_service, DocumentType
 from common.src.services.document_processing_service import document_processing_service
 from common.src.api.dependencies import get_current_user, get_optional_user
 from common.src.models.auth import UserResponse
@@ -42,24 +42,13 @@ async def process_document(
         filename = file.filename or "unknown"
         user_id = user.id if user else "anonymous"
         
-        # Convert document_type string to enum if provided
-        doc_type = None
-        if document_type:
-            try:
-                doc_type = DocumentType(document_type.lower())
-            except ValueError:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Invalid document type: {document_type}. Valid types: {[dt.value for dt in DocumentType]}"
-                )
-        
-        # Process document
-        result = await unified_preprocessing_service.process_document(
+        # Upload to S3 using the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
+        result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=filename,
             user_id=user_id,
-            document_type=doc_type,
-            force_processing=force_processing
+            content_type=file.content_type
         )
         
         return JSONResponse(content=result)
@@ -136,24 +125,34 @@ async def process_document_from_s3(
         Processing result with metadata
     """
     try:
-        # Convert document_type string to enum if provided
-        doc_type = None
-        if document_type:
-            try:
-                doc_type = DocumentType(document_type.lower())
-            except ValueError:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Invalid document type: {document_type}. Valid types: {[dt.value for dt in DocumentType]}"
-                )
+
         
-        # Process document from S3
-        result = await unified_preprocessing_service.process_from_s3(
-            s3_bucket=s3_bucket,
-            s3_key=s3_key,
-            user_id=user.id,
-            document_type=doc_type
+        # Get file content from S3
+        from common.src.services.s3_upload_service import s3_upload_service, S3UploadService
+        
+        # Create a temporary S3 upload service instance for the specified bucket
+        temp_s3_service = S3UploadService(bucket_name=s3_bucket, region=os.getenv('AWS_REGION', 'ap-south-1'))
+        
+        # Get file content
+        file_content = temp_s3_service.get_file_content(s3_key)
+        
+        if not file_content:
+            raise HTTPException(status_code=404, detail="File not found in S3")
+        
+        # Upload to our main bucket for processing
+        filename = os.path.basename(s3_key)
+        result = s3_upload_service.upload_temp_file(
+            file_content=file_content,
+            filename=filename,
+            purpose="s3_import",
+            user_id=user.id
         )
+        
+        if result.get('status') != 'success':
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to import file from S3: {result.get('error', 'Unknown error')}"
+            )
         
         return JSONResponse(content=result)
         
@@ -185,11 +184,17 @@ async def batch_process_documents(
                 "filename": file.filename or "unknown"
             })
         
-        # Process documents in batch
-        results = await unified_preprocessing_service.batch_process_documents(
-            documents=documents,
-            user_id=user.id
-        )
+        # Upload documents in batch using the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
+        results = []
+        
+        for doc in documents:
+            result = s3_upload_service.upload_user_document(
+                file_content=doc["content"],
+                filename=doc["filename"],
+                user_id=user.id
+            )
+            results.append(result)
         
         return JSONResponse(content={"results": results})
         
@@ -200,17 +205,29 @@ async def batch_process_documents(
 @router.get("/stats")
 async def get_preprocessing_stats():
     """
-    Get preprocessing service statistics and capabilities.
+    Get S3 upload service statistics and capabilities.
     
     Returns:
         Service statistics and supported features
     """
     try:
-        stats = unified_preprocessing_service.get_processing_stats()
+        from common.src.services.s3_upload_service import s3_upload_service
+        stats = {
+            "service": "s3_upload_service",
+            "bucket": s3_upload_service.bucket_name,
+            "region": s3_upload_service.region,
+            "capabilities": {
+                "file_upload": True,
+                "temp_file_upload": True,
+                "file_verification": True,
+                "file_deletion": True,
+                "lambda_compatible": True
+            }
+        }
         return JSONResponse(content=stats)
         
     except Exception as e:
-        logger.error(f"Error getting preprocessing stats: {e}")
+        logger.error(f"Error getting S3 upload stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
 @router.get("/supported-types")
@@ -222,10 +239,14 @@ async def get_supported_document_types():
         List of supported document types
     """
     try:
-        supported_types = [dt.value for dt in DocumentType]
+        supported_types = [
+            '.pdf', '.doc', '.docx', '.txt', '.html', '.xlsx', '.xls', 
+            '.csv', '.ppt', '.pptx', '.json', '.png', '.jpg', '.jpeg', 
+            '.gif', '.bmp', '.tiff'
+        ]
         return JSONResponse(content={
             "supported_document_types": supported_types,
-            "processing_types": [pt.value for pt in unified_preprocessing_service.ProcessingType]
+            "upload_method": "temp_file_upload_file"
         })
         
     except Exception as e:

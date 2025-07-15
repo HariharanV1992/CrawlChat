@@ -377,8 +377,9 @@ async def upload_document(
             logger.error(f"[API] S3 connectivity test failed: {s3_error}")
             raise HTTPException(status_code=500, detail=f"S3 connectivity failed: {str(s3_error)}")
         
-        # Upload to S3 using unified storage service with task_id (now uses Lambda-compatible method)
-        result = await unified_storage_service.upload_user_document(
+        # Upload to S3 using the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
+        result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=file.filename,
             user_id=current_user.user_id,
@@ -497,8 +498,9 @@ async def upload_document_base64(
         # Generate task ID for organization
         task_id = str(uuid.uuid4())
         
-        # Upload to S3 using unified storage service with task_id
-        result = await unified_storage_service.upload_user_document(
+        # Upload to S3 using the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
+        result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=filename,
             user_id=current_user.user_id,
@@ -657,8 +659,9 @@ async def upload_document_background(
         # Generate task ID for organization
         task_id = str(uuid.uuid4())
         
-        # Upload to S3 using unified storage service with task_id
-        result = await unified_storage_service.upload_user_document(
+        # Upload to S3 using the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
+        result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=file.filename,
             user_id=current_user.user_id,
@@ -923,20 +926,21 @@ async def test_simple_upload(
         logger.info(f"[API] First 20 bytes: {file_content[:20].hex()}")
         logger.info(f"[API] Last 20 bytes: {file_content[-20:].hex()}")
         
-        # Import simple S3 upload service
-        from common.src.services.simple_s3_upload_service import simple_s3_upload_service
+        # Import the single S3 upload service
+        from common.src.services.s3_upload_service import s3_upload_service
         
-        # Upload using simple service
-        result = simple_s3_upload_service.upload_file_from_memory(
+        # Upload using the single S3 upload service
+        result = s3_upload_service.upload_file(
             file_content=file_content,
             filename=file.filename,
             user_id=current_user.user_id,
+            content_type=file.content_type,
             s3_prefix='test_simple_uploads'
         )
         
         if result['status'] == 'success':
             # Verify the upload
-            verify_result = simple_s3_upload_service.verify_upload(result['s3_key'])
+            verify_result = s3_upload_service.verify_upload(result['s3_key'])
             
             return {
                 "status": "success",
