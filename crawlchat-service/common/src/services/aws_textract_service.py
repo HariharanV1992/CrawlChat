@@ -1288,11 +1288,11 @@ class AWSTextractService:
         try:
             logger.info(f"📤 AWS Textract: Uploading and extracting {filename} (type: {document_type.value})")
             
-            # Import unified storage service
-            from common.src.services.unified_storage_service import unified_storage_service
+            # Import S3 upload service
+            from common.src.services.s3_upload_service import s3_upload_service
             
             # Upload to S3
-            upload_result = await unified_storage_service.upload_temp_file(
+            upload_result = s3_upload_service.upload_temp_file(
                 file_content=content,
                 filename=filename,
                 purpose="textract_processing",
@@ -1342,7 +1342,7 @@ class AWSTextractService:
             
             # Clean up temporary file
             try:
-                await unified_storage_service.delete_file(s3_key)
+                s3_upload_service.delete_file(s3_key)
                 logger.info(f"🧹 AWS Textract: Cleaned up temporary file: {s3_key}")
             except Exception as cleanup_error:
                 logger.warning(f"⚠️ AWS Textract: Failed to cleanup temporary file {s3_key}: {cleanup_error}")
@@ -1765,8 +1765,8 @@ class AWSTextractService:
                     os.unlink(tmp_file.name)
                 
                 # Upload image to S3
-                from common.src.services.unified_storage_service import unified_storage_service
-                upload_result = await unified_storage_service.upload_temp_file(
+                from common.src.services.s3_upload_service import s3_upload_service
+                upload_result = s3_upload_service.upload_temp_file(
                     file_content=image_bytes,
                     filename=f"fallback_page_{i+1}.png",
                     purpose="textract_fallback",
@@ -1789,7 +1789,7 @@ class AWSTextractService:
                 finally:
                     # Clean up temporary image
                     try:
-                        await unified_storage_service.delete_file(s3_key)
+                        s3_upload_service.delete_file(s3_key)
                     except Exception as cleanup_error:
                         logger.warning(f"⚠️ AWS Textract: Failed to cleanup temp image {s3_key}: {cleanup_error}")
             

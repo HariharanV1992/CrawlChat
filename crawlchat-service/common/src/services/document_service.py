@@ -17,7 +17,7 @@ from common.src.models.documents import (
     DocumentProcessResponse, DocumentList
 )
 from common.src.core.exceptions import DocumentProcessingError
-from common.src.services.unified_storage_service import unified_storage_service
+from common.src.services.s3_upload_service import s3_upload_service
 from common.src.core.database import mongodb
 from common.src.core.aws_config import aws_config
 
@@ -64,7 +64,7 @@ class DocumentService:
             document_id = str(uuid.uuid4())
             
             # Store file using unified storage service
-            result = await unified_storage_service.upload_user_document(
+            result = s3_upload_service.upload_user_document(
                 file_content=file_content,
                 filename=upload_data.filename,
                 user_id=upload_data.user_id,
@@ -295,7 +295,7 @@ class DocumentService:
                 return f"Legacy document format not supported: {document.filename}"
             else:
                 # S3 key - use unified storage service
-                content = await unified_storage_service.get_file_content(document.file_path)
+                content = s3_upload_service.get_file_content(document.file_path)
             if not content:
                 logger.error(f"No content found for file: {document.filename}")
                 return f"Could not read file: {document.filename}"
@@ -628,8 +628,8 @@ class DocumentService:
                     # Legacy MongoDB path - skip deletion
                     logger.warning(f"Legacy MongoDB path not supported for deletion: {doc_data['file_path']}")
                 else:
-                    # S3 key - use unified storage service
-                    delete_tasks.append(unified_storage_service.delete_file(doc_data["file_path"]))
+                    # S3 key - use S3 upload service
+                    delete_tasks.append(s3_upload_service.delete_file(doc_data["file_path"]))
                     logger.info(f"Deleted file: {doc_data['file_path']}")
             except Exception as e:
                 logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")
@@ -674,8 +674,8 @@ class DocumentService:
                     # Legacy MongoDB path - skip deletion
                     logger.warning(f"Legacy MongoDB path not supported for deletion: {doc_data['file_path']}")
                 else:
-                    # S3 key - use unified storage service
-                    delete_tasks.append(unified_storage_service.delete_file(doc_data["file_path"]))
+                    # S3 key - use S3 upload service
+                    delete_tasks.append(s3_upload_service.delete_file(doc_data["file_path"]))
                     logger.info(f"Deleted file: {doc_data['file_path']}")
             except Exception as e:
                 logger.warning(f"Failed to delete file {doc_data['file_path']}: {e}")

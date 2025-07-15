@@ -22,8 +22,8 @@ from common.src.core.logging import setup_logging
 
 # Lazy imports for Lambda optimization
 def get_storage_service_lazy():
-    from common.src.services.unified_storage_service import unified_storage_service
-    return unified_storage_service
+    from common.src.services.s3_upload_service import s3_upload_service
+    return s3_upload_service
 
 def get_crawler_service_lazy():
     # Crawler service removed - using separate crawler-service instead

@@ -101,7 +101,7 @@ def setup_logging(
     logging.getLogger('src.services.email_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.aws_background_service').setLevel(logging.WARNING)
     logging.getLogger('src.services.unified_document_processor').setLevel(logging.WARNING)
-    logging.getLogger('src.services.unified_storage_service').setLevel(logging.WARNING)
+    logging.getLogger('src.services.s3_upload_service').setLevel(logging.WARNING)
     logging.getLogger('src.utils.vector_store_demo').setLevel(logging.ERROR)
     
     # AWS Textract service - allow INFO logs for Lambda monitoring

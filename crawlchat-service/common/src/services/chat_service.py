@@ -21,7 +21,7 @@ from common.src.core.exceptions import ChatError, DatabaseError
 from common.src.services.vector_store_service import VectorStoreService
 from common.src.services.document_service import DocumentService
 from common.src.services.document_processing_service import document_processing_service
-from common.src.services.unified_storage_service import unified_storage_service
+from common.src.services.s3_upload_service import s3_upload_service
 from common.src.utils.prompts import PromptManager
 
 logger = logging.getLogger(__name__)
@@ -836,7 +836,7 @@ Please provide a helpful response:"""
                         if not s3_key.startswith('crawled_documents/'):
                             s3_key = f"crawled_documents/{s3_key}"
                         
-                        content = await unified_storage_service.get_file_content(s3_key)
+                        content = s3_upload_service.get_file_content(s3_key)
                         
                         if content:
                             # Decode content
@@ -1000,7 +1000,7 @@ Please provide a helpful response:"""
                 
                 # Get document content from S3 using unified storage service
                 s3_key = document.file_path
-                file_content = await unified_storage_service.get_file_content(s3_key)
+                file_content = s3_upload_service.get_file_content(s3_key)
                 
                 if file_content:
                     # Validate file content

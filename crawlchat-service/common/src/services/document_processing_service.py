@@ -15,7 +15,7 @@ import re
 import hashlib
 
 from common.src.services.vector_store_service import vector_store_service
-from common.src.services.unified_storage_service import unified_storage_service
+from common.src.services.s3_upload_service import s3_upload_service
 from common.src.services.unified_preprocessing_service import unified_preprocessing_service, DocumentType
 from common.src.core.database import mongodb
 
@@ -25,7 +25,7 @@ class DocumentProcessingService:
     """Enhanced service for processing documents with vector store integration."""
     
     def __init__(self):
-        self.storage_service = unified_storage_service
+        self.storage_service = s3_upload_service
         self.vector_store_id = None
         self.preprocessing_service = unified_preprocessing_service
         
