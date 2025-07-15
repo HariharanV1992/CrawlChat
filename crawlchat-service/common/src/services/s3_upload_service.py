@@ -48,7 +48,6 @@ class S3UploadService:
         Returns:
             Dict with upload result including s3_key, status, and error (if any)
         """
-        temp_path = None
         try:
             # Validate inputs
             if not file_content or len(file_content) == 0:
@@ -97,22 +96,6 @@ class S3UploadService:
             logger.info(f"[S3_UPLOAD] Last 20 bytes: {body[-20:].hex()}")
             logger.info(f"[S3_UPLOAD] Content MD5: {hashlib.md5(body).hexdigest()}")
             
-            # Create temporary file - use only the filename, not the full path
-            safe_filename = os.path.basename(filename)
-            temp_path = f"/tmp/{uuid4().hex}_{safe_filename}"
-            logger.info(f"[S3_UPLOAD] Creating temp file: {temp_path}")
-            
-            # Write content to temporary file
-            with open(temp_path, "wb") as f:
-                f.write(body)
-            
-            # Verify temp file was written correctly
-            temp_file_size = os.path.getsize(temp_path)
-            logger.info(f"[S3_UPLOAD] Temp file size: {temp_file_size:,} bytes")
-            
-            if temp_file_size != len(body):
-                raise Exception(f"Temp file size mismatch: expected {len(body)}, got {temp_file_size}")
-            
             # Guess content type if not provided
             if not content_type:
                 import mimetypes
@@ -128,19 +111,17 @@ class S3UploadService:
                 'upload_timestamp': str(timestamp),
                 'file_size': str(len(body)),
                 'content_md5': hashlib.md5(body).hexdigest(),
-                'upload_method': 'temp_file_upload_file'
+                'upload_method': 'direct_put_object'
             })
             
-            # Upload using upload_file (Lambda-compatible method)
+            # Upload directly using put_object (more efficient)
             logger.info(f"[S3_UPLOAD] Uploading to S3: s3://{self.bucket_name}/{s3_key}")
-            self.s3_client.upload_file(
-                temp_path,
-                self.bucket_name,
-                s3_key,
-                ExtraArgs={
-                    'ContentType': content_type,
-                    'Metadata': meta
-                }
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+                Body=body,
+                ContentType=content_type,
+                Metadata=meta
             )
             
             logger.info(f"[S3_UPLOAD] Upload successful: s3://{self.bucket_name}/{s3_key}")
@@ -169,7 +150,7 @@ class S3UploadService:
                 'file_size': len(body),
                 'filename': filename,
                 's3_url': f"s3://{self.bucket_name}/{s3_key}",
-                'upload_method': 'temp_file_upload_file'
+                'upload_method': 'direct_put_object'
             }
             
         except Exception as e:
@@ -177,13 +158,8 @@ class S3UploadService:
             return {'status': 'error', 'error': str(e)}
         
         finally:
-            # Clean up temporary file
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                    logger.info(f"[S3_UPLOAD] Temp file cleaned up: {temp_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"[S3_UPLOAD] Failed to clean up temp file {temp_path}: {cleanup_error}")
+            # No temp files to clean up with direct put_object
+            pass
 
     def upload_user_document(
         self,
