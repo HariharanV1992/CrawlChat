@@ -70,6 +70,8 @@
                               <path d="M4 20h16"/>
                             </svg>
                         </button>
+                        <!-- Debug: S3 Test Button -->
+                        <button id="testS3Btn" class="test-s3-btn" title="Test S3 Connectivity" onclick="testS3Connectivity()">🔧</button>
                         <!-- Mobile logout button in header for better accessibility -->
                         <button id="mobileLogoutBtn" class="mobile-logout-btn" title="Logout" onclick="logout()">
                             <span>🚪</span>
@@ -291,6 +293,34 @@
             setupMobileNavigation();
             fetchPageUsage();
         });
+
+        // Test S3 connectivity function
+        async function testS3Connectivity() {
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                alert('Please log in first');
+                return;
+            }
+
+            try {
+                console.log('[S3_TEST] Testing S3 connectivity...');
+                const response = await fetch('/api/v1/chat/test-s3', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const result = await response.json();
+                console.log('[S3_TEST] Result:', result);
+                
+                if (result.status === 'success') {
+                    alert(`✅ S3 Test Passed!\n\nBucket: ${result.bucket}\nRegion: ${result.region}\nUser: ${result.user_id}\n\nAll tests passed!`);
+                } else {
+                    alert(`❌ S3 Test Failed!\n\nError: ${result.error}\n\nBucket: ${result.bucket}\nRegion: ${result.region}`);
+                }
+            } catch (error) {
+                console.error('[S3_TEST] Error:', error);
+                alert(`❌ S3 Test Error: ${error.message}`);
+            }
+        }
     </script>
 </body>
 </html> 

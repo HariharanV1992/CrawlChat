@@ -1665,3 +1665,23 @@ body {
 }
 
 .hidden { display: none !important; } 
+
+.test-s3-btn {
+    background: #f59e0b;
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    padding: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 1rem;
+}
+
+.test-s3-btn:hover {
+    background: #d97706;
+    transform: scale(1.05);
+}
+
+.test-s3-btn:active {
+    transform: scale(0.95);
+} 

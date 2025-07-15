@@ -848,12 +848,25 @@ class CrawlChatApp {
         console.log(`[UPLOAD] Uploading file: ${file.name}`);
         console.log(`[UPLOAD] File size: ${file.size} bytes`);
         console.log(`[UPLOAD] File type: ${file.type}`);
+        console.log(`[UPLOAD] Session ID: ${this.currentSessionId}`);
+        
+        // Log file content preview for debugging
+        const reader = new FileReader();
+        reader.onload = () => {
+            const content = reader.result;
+            console.log(`[UPLOAD] File content preview (first 100 chars): ${content.substring(0, 100)}`);
+            console.log(`[UPLOAD] File content length: ${content.length}`);
+        };
+        reader.readAsText(file);
 
         const response = await fetch(`/api/v1/chat/sessions/${this.currentSessionId}/documents`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
             body: formData
         });
+
+        console.log(`[UPLOAD] Response status: ${response.status}`);
+        console.log(`[UPLOAD] Response headers:`, Object.fromEntries(response.headers.entries()));
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));

@@ -361,6 +361,21 @@ async def upload_document(
         # Generate task ID for organization
         task_id = str(uuid.uuid4())
         
+        # Test S3 connectivity before upload
+        try:
+            logger.info(f"[API] Testing S3 connectivity...")
+            logger.info(f"[API] S3 Bucket: {aws_config.s3_bucket}")
+            logger.info(f"[API] AWS Region: {aws_config.region}")
+            
+            # Test S3 access
+            import boto3
+            s3_test_client = boto3.client('s3', region_name=aws_config.region)
+            s3_test_client.head_bucket(Bucket=aws_config.s3_bucket)
+            logger.info(f"[API] S3 connectivity test passed")
+        except Exception as s3_error:
+            logger.error(f"[API] S3 connectivity test failed: {s3_error}")
+            raise HTTPException(status_code=500, detail=f"S3 connectivity failed: {str(s3_error)}")
+        
         # Upload to S3 using unified storage service with task_id
         result = await unified_storage_service.upload_user_document(
             file_content=file_content,
@@ -372,6 +387,23 @@ async def upload_document(
         s3_key = result["s3_key"]
         
         logger.info(f"[API] Document uploaded to S3: {s3_key}")
+        
+        # Verify S3 upload by downloading a small portion
+        try:
+            s3_test_client = boto3.client('s3', region_name=aws_config.region)
+            response = s3_test_client.get_object(Bucket=aws_config.s3_bucket, Key=s3_key)
+            downloaded_content = response['Body'].read()
+            logger.info(f"[API] S3 verification - downloaded size: {len(downloaded_content):,} bytes")
+            logger.info(f"[API] S3 verification - downloaded MD5: {hashlib.md5(downloaded_content).hexdigest()}")
+            
+            if len(downloaded_content) != file_size:
+                logger.error(f"[API] S3 verification failed - size mismatch: uploaded={file_size}, downloaded={len(downloaded_content)}")
+                raise HTTPException(status_code=500, detail="S3 upload verification failed - file size mismatch")
+            
+            logger.info(f"[API] S3 upload verification passed")
+        except Exception as verify_error:
+            logger.error(f"[API] S3 verification failed: {verify_error}")
+            raise HTTPException(status_code=500, detail=f"S3 upload verification failed: {str(verify_error)}")
         
         # Create document record
         document_data = DocumentUpload(
@@ -818,3 +850,65 @@ async def check_document_vector_status(
     except Exception as e:
         logger.error(f"Error checking vector status: {e}")
         raise HTTPException(status_code=500, detail="Failed to check vector status") 
+
+@router.get("/test-s3")
+async def test_s3_connectivity(current_user: UserResponse = Depends(get_current_user)):
+    """Test S3 connectivity and permissions."""
+    try:
+        logger.info(f"[API] Testing S3 connectivity for user: {current_user.user_id}")
+        
+        import boto3
+        from common.src.core.aws_config import aws_config
+        
+        # Test basic connectivity
+        s3_client = boto3.client('s3', region_name=aws_config.region)
+        
+        # Test bucket access
+        bucket_info = s3_client.head_bucket(Bucket=aws_config.s3_bucket)
+        logger.info(f"[API] S3 bucket access test passed: {aws_config.s3_bucket}")
+        
+        # Test write permissions with a small test file
+        test_key = f"test_uploads/{current_user.user_id}/test_{int(datetime.utcnow().timestamp())}.txt"
+        test_content = b"Test file content for S3 connectivity verification"
+        
+        upload_response = s3_client.put_object(
+            Bucket=aws_config.s3_bucket,
+            Key=test_key,
+            Body=test_content,
+            ContentType='text/plain'
+        )
+        logger.info(f"[API] S3 write test passed: {test_key}")
+        
+        # Test read permissions
+        download_response = s3_client.get_object(Bucket=aws_config.s3_bucket, Key=test_key)
+        downloaded_content = download_response['Body'].read()
+        logger.info(f"[API] S3 read test passed: {len(downloaded_content)} bytes")
+        
+        # Clean up test file
+        s3_client.delete_object(Bucket=aws_config.s3_bucket, Key=test_key)
+        logger.info(f"[API] S3 cleanup test passed")
+        
+        return {
+            "status": "success",
+            "message": "S3 connectivity and permissions test passed",
+            "bucket": aws_config.s3_bucket,
+            "region": aws_config.region,
+            "user_id": current_user.user_id,
+            "tests": {
+                "bucket_access": "passed",
+                "write_permissions": "passed",
+                "read_permissions": "passed",
+                "cleanup_permissions": "passed"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"[API] S3 connectivity test failed: {e}")
+        return {
+            "status": "error",
+            "message": f"S3 connectivity test failed: {str(e)}",
+            "bucket": aws_config.s3_bucket,
+            "region": aws_config.region,
+            "user_id": current_user.user_id,
+            "error": str(e)
+        } 
