@@ -18,6 +18,7 @@ class UnifiedStorageService:
     async def upload_user_document(self, file_content: bytes, filename: str, user_id: str, content_type: Optional[str] = None, task_id: Optional[str] = None) -> Dict[str, Any]:
         """Upload user document using the new direct S3 upload service."""
         from common.src.services.direct_s3_upload_service import s3_upload_service
+        from common.src.services.simple_s3_upload_service import simple_s3_upload_service
         
         # Validate input
         if not file_content or len(file_content) == 0:
@@ -34,29 +35,63 @@ class UnifiedStorageService:
         if task_id:
             metadata['task_id'] = task_id
         
-        # Use the new direct S3 upload service
-        result = s3_upload_service.upload_file(
-            file_content=file_content,
-            filename=filename,
-            user_id=user_id,
-            content_type=content_type,
-            s3_prefix='uploaded_documents',
-            metadata=metadata
-        )
+        # Try direct S3 upload service first
+        try:
+            logger.info(f"[UNIFIED_STORAGE] Attempting upload with direct S3 service: {filename}")
+            result = s3_upload_service.upload_file(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id,
+                content_type=content_type,
+                s3_prefix='uploaded_documents',
+                metadata=metadata
+            )
+            
+            if result['status'] == 'success':
+                logger.info(f"[UNIFIED_STORAGE] Direct S3 upload successful: {result['s3_key']}")
+                return {
+                    "s3_key": result['s3_key'],
+                    "filename": filename,
+                    "file_size": len(file_content),
+                    "bucket": result['bucket'],
+                    "upload_method": "direct_s3"
+                }
+            else:
+                logger.warning(f"[UNIFIED_STORAGE] Direct S3 upload failed, trying simple service: {result.get('error')}")
+                
+        except Exception as e:
+            logger.warning(f"[UNIFIED_STORAGE] Direct S3 upload error, trying simple service: {e}")
         
-        if result['status'] == 'success':
-            return {
-                "s3_key": result['s3_key'],
-                "filename": filename,
-                "file_size": len(file_content),
-                "bucket": result['bucket']
-            }
-        else:
-            raise StorageError(f"Failed to upload user document: {result.get('error', 'Unknown error')}")
+        # Fallback to simple S3 upload service
+        try:
+            logger.info(f"[UNIFIED_STORAGE] Attempting upload with simple S3 service: {filename}")
+            result = simple_s3_upload_service.upload_file_from_memory(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id,
+                s3_prefix='uploaded_documents'
+            )
+            
+            if result['status'] == 'success':
+                logger.info(f"[UNIFIED_STORAGE] Simple S3 upload successful: {result['s3_key']}")
+                return {
+                    "s3_key": result['s3_key'],
+                    "filename": filename,
+                    "file_size": len(file_content),
+                    "bucket": result['bucket'],
+                    "upload_method": "simple_s3"
+                }
+            else:
+                raise StorageError(f"Simple S3 upload failed: {result.get('error', 'Unknown error')}")
+                
+        except Exception as e:
+            logger.error(f"[UNIFIED_STORAGE] Simple S3 upload error: {e}")
+            raise StorageError(f"All upload methods failed: {str(e)}")
 
     async def upload_temp_file(self, file_content: bytes, filename: str, purpose: str = "temp", user_id: Optional[str] = None) -> Dict[str, Any]:
         """Upload temp file using the new direct S3 upload service."""
         from common.src.services.direct_s3_upload_service import s3_upload_service
+        from common.src.services.simple_s3_upload_service import simple_s3_upload_service
         
         # Prepare metadata
         metadata = {
@@ -64,24 +99,56 @@ class UnifiedStorageService:
             'temp_file': 'true'
         }
         
-        # Use the new direct S3 upload service
-        result = s3_upload_service.upload_file(
-            file_content=file_content,
-            filename=filename,
-            user_id=user_id or 'anonymous',
-            content_type=None,  # Auto-detect
-            s3_prefix=f'temp_files/{purpose}',
-            metadata=metadata
-        )
+        # Try direct S3 upload service first
+        try:
+            logger.info(f"[UNIFIED_STORAGE] Attempting temp upload with direct S3 service: {filename}")
+            result = s3_upload_service.upload_file(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id or 'anonymous',
+                content_type=None,  # Auto-detect
+                s3_prefix=f'temp_files/{purpose}',
+                metadata=metadata
+            )
+            
+            if result['status'] == 'success':
+                logger.info(f"[UNIFIED_STORAGE] Direct S3 temp upload successful: {result['s3_key']}")
+                return {
+                    "s3_key": result['s3_key'],
+                    "filename": filename,
+                    "file_size": len(file_content),
+                    "upload_method": "direct_s3"
+                }
+            else:
+                logger.warning(f"[UNIFIED_STORAGE] Direct S3 temp upload failed, trying simple service: {result.get('error')}")
+                
+        except Exception as e:
+            logger.warning(f"[UNIFIED_STORAGE] Direct S3 temp upload error, trying simple service: {e}")
         
-        if result['status'] == 'success':
-            return {
-                "s3_key": result['s3_key'],
-                "filename": filename,
-                "file_size": len(file_content)
-            }
-        else:
-            raise StorageError(f"Failed to upload temp file: {result.get('error', 'Unknown error')}")
+        # Fallback to simple S3 upload service
+        try:
+            logger.info(f"[UNIFIED_STORAGE] Attempting temp upload with simple S3 service: {filename}")
+            result = simple_s3_upload_service.upload_file_from_memory(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id or 'anonymous',
+                s3_prefix=f'temp_files/{purpose}'
+            )
+            
+            if result['status'] == 'success':
+                logger.info(f"[UNIFIED_STORAGE] Simple S3 temp upload successful: {result['s3_key']}")
+                return {
+                    "s3_key": result['s3_key'],
+                    "filename": filename,
+                    "file_size": len(file_content),
+                    "upload_method": "simple_s3"
+                }
+            else:
+                raise StorageError(f"Simple S3 temp upload failed: {result.get('error', 'Unknown error')}")
+                
+        except Exception as e:
+            logger.error(f"[UNIFIED_STORAGE] Simple S3 temp upload error: {e}")
+            raise StorageError(f"All temp upload methods failed: {str(e)}")
 
     async def get_file_content(self, s3_key: str) -> Optional[bytes]:
         """Get file content using the new direct S3 upload service."""

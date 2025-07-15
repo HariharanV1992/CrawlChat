@@ -915,3 +915,58 @@ async def test_s3_connectivity(current_user: UserResponse = Depends(get_current_
             "user_id": current_user.user_id,
             "error": str(e)
         } 
+
+@router.post("/test-simple-upload")
+async def test_simple_upload(
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Test simple S3 upload service."""
+    logger.info(f"[API] Testing simple S3 upload for user: {current_user.user_id}")
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        logger.info(f"[API] File size: {file_size:,} bytes")
+        logger.info(f"[API] First 20 bytes: {file_content[:20].hex()}")
+        logger.info(f"[API] Last 20 bytes: {file_content[-20:].hex()}")
+        
+        # Import simple S3 upload service
+        from common.src.services.simple_s3_upload_service import simple_s3_upload_service
+        
+        # Upload using simple service
+        result = simple_s3_upload_service.upload_file_from_memory(
+            file_content=file_content,
+            filename=file.filename,
+            user_id=current_user.user_id,
+            s3_prefix='test_simple_uploads'
+        )
+        
+        if result['status'] == 'success':
+            # Verify the upload
+            verify_result = simple_s3_upload_service.verify_upload(result['s3_key'])
+            
+            return {
+                "status": "success",
+                "message": "Simple S3 upload test completed",
+                "upload_result": result,
+                "verification_result": verify_result,
+                "s3_path": result['s3_url'],
+                "file_size_uploaded": file_size,
+                "file_size_verified": verify_result.get('file_size', 0)
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Simple S3 upload failed",
+                "error": result.get('error', 'Unknown error')
+            }
+            
+    except Exception as e:
+        logger.error(f"[API] Simple S3 upload test error: {e}")
+        return {
+            "status": "error",
+            "message": f"Test failed: {str(e)}"
+        } 

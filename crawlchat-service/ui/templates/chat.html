@@ -72,6 +72,8 @@
                         </button>
                         <!-- Debug: S3 Test Button -->
                         <button id="testS3Btn" class="test-s3-btn" title="Test S3 Connectivity" onclick="testS3Connectivity()">🔧</button>
+                        <!-- Debug: Simple S3 Upload Test Button -->
+                        <button id="testSimpleUploadBtn" class="test-simple-upload-btn" title="Test Simple S3 Upload" onclick="testSimpleUpload()">📤</button>
                         <!-- Mobile logout button in header for better accessibility -->
                         <button id="mobileLogoutBtn" class="mobile-logout-btn" title="Logout" onclick="logout()">
                             <span>🚪</span>
@@ -319,6 +321,37 @@
             } catch (error) {
                 console.error('[S3_TEST] Error:', error);
                 alert(`❌ S3 Test Error: ${error.message}`);
+            }
+        }
+
+        // Test Simple S3 Upload function
+        async function testSimpleUpload() {
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                alert('Please log in first');
+                return;
+            }
+
+            try {
+                console.log('[SIMPLE_UPLOAD_TEST] Testing simple S3 upload...');
+                const response = await fetch('/api/v1/chat/test-simple-upload', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                const result = await response.json();
+                console.log('[SIMPLE_UPLOAD_TEST] Result:', result);
+                
+                if (result.status === 'success') {
+                    alert(`✅ Simple S3 Upload Test Passed!\n\nMessage: ${result.message}\n\nAll tests passed!`);
+                } else {
+                    alert(`❌ Simple S3 Upload Test Failed!\n\nError: ${result.error}\n\nMessage: ${result.message}`);
+                }
+            } catch (error) {
+                console.error('[SIMPLE_UPLOAD_TEST] Error:', error);
+                alert(`❌ Simple S3 Upload Error: ${error.message}`);
             }
         }
     </script>
