@@ -329,7 +329,7 @@ async def upload_document(
                 detail=f"File type not supported. Allowed types: {', '.join(allowed_extensions)}"
             )
         
-        # Read file content with enhanced validation
+        # Read file content with enhanced validation - READ ONLY ONCE
         file_content = await file.read()
         file_size = len(file_content)
         
@@ -338,6 +338,21 @@ async def upload_document(
         logger.info(f"[API] First 20 bytes: {file_content[:20].hex()}")
         logger.info(f"[API] Last 20 bytes: {file_content[-20:].hex()}")
         logger.info(f"[API] File MD5: {hashlib.md5(file_content).hexdigest()}")
+        logger.info(f"[API] File content type: {file.content_type}")
+        logger.info(f"[API] File filename: {file.filename}")
+        
+        # 🔍 CRITICAL: Check if file content is valid before passing to S3
+        if file.filename.lower().endswith('.pdf'):
+            if file_content.startswith(b'%PDF-'):
+                logger.info(f"[API] ✅ Valid PDF header detected")
+            else:
+                logger.error(f"[API] ❌ Invalid PDF header: {file_content[:10]}")
+                raise HTTPException(status_code=400, detail="Invalid PDF file - missing PDF header")
+            
+            if b'%%EOF' in file_content[-1000:]:
+                logger.info(f"[API] ✅ PDF EOF marker found")
+            else:
+                logger.warning(f"[API] ⚠️ PDF EOF marker not found in last 1000 bytes")
         
         # Check if file is empty
         if file_size == 0:

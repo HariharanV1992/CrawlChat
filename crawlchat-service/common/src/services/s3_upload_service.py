@@ -60,6 +60,22 @@ class S3UploadService:
             if not user_id:
                 return {'status': 'error', 'error': 'User ID is required'}
             
+            # 🔍 EARLY SANITY CHECKS - Debug file content before processing
+            logger.info(f"[DEBUG] file_content length: {len(file_content)}")
+            logger.info(f"[DEBUG] file_content[:100]: {file_content[:100]}")
+            logger.info(f"[DEBUG] file_content MD5: {hashlib.md5(file_content).hexdigest()}")
+            
+            # Check if it's a PDF and validate it
+            if filename.lower().endswith('.pdf'):
+                if file_content.startswith(b"%PDF") and b"%%EOF" in file_content:
+                    logger.info("[DEBUG] PDF file looks valid - has PDF signature and EOF marker")
+                else:
+                    logger.warning("[DEBUG] PDF file missing PDF signature or EOF marker!")
+                    logger.warning(f"[DEBUG] PDF header check: {file_content.startswith(b'%PDF')}")
+                    logger.warning(f"[DEBUG] PDF EOF check: {b'%%EOF' in file_content}")
+                    logger.warning(f"[DEBUG] First 20 bytes: {file_content[:20]}")
+                    logger.warning(f"[DEBUG] Last 100 bytes: {file_content[-100:]}")
+            
             # Generate S3 key
             timestamp = int(datetime.utcnow().timestamp())
             unique_id = hashlib.md5((filename + str(timestamp)).encode()).hexdigest()[:8]
@@ -81,8 +97,9 @@ class S3UploadService:
             logger.info(f"[S3_UPLOAD] Last 20 bytes: {body[-20:].hex()}")
             logger.info(f"[S3_UPLOAD] Content MD5: {hashlib.md5(body).hexdigest()}")
             
-            # Create temporary file
-            temp_path = f"/tmp/{uuid4().hex}_{filename}"
+            # Create temporary file - use only the filename, not the full path
+            safe_filename = os.path.basename(filename)
+            temp_path = f"/tmp/{uuid4().hex}_{safe_filename}"
             logger.info(f"[S3_UPLOAD] Creating temp file: {temp_path}")
             
             # Write content to temporary file
@@ -98,7 +115,10 @@ class S3UploadService:
             
             # Guess content type if not provided
             if not content_type:
-                content_type = self._guess_content_type(ext)
+                import mimetypes
+                content_type, _ = mimetypes.guess_type(filename)
+                content_type = content_type or 'application/octet-stream'
+                logger.info(f"[DEBUG] Guessed content type: {content_type}")
             
             # Prepare metadata
             meta = metadata.copy() if metadata else {}
@@ -124,6 +144,7 @@ class S3UploadService:
             )
             
             logger.info(f"[S3_UPLOAD] Upload successful: s3://{self.bucket_name}/{s3_key}")
+            logger.info(f"[S3_UPLOAD] File available at s3://{self.bucket_name}/{s3_key}")
             
             # Verify upload by downloading a small portion
             try:
