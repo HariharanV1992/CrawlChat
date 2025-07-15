@@ -958,15 +958,16 @@ async def test_simple_upload(
                 "file_size_verified": verify_result.get('file_size', 0)
             }
         else:
-            return {
-                "status": "error",
-                "message": "Simple S3 upload failed",
-                "error": result.get('error', 'Unknown error')
-            }
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Simple S3 upload failed: {result.get('error', 'Unknown error')}"
+            )
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[API] Simple S3 upload test error: {e}")
-        return {
-            "status": "error",
-            "message": f"Test failed: {str(e)}"
-        } 
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Test failed: {str(e)}"
+        ) 

@@ -332,27 +332,46 @@
                 return;
             }
 
-            try {
-                console.log('[SIMPLE_UPLOAD_TEST] Testing simple S3 upload...');
-                const response = await fetch('/api/v1/chat/test-simple-upload', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`
+            // Create a file input
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = '.pdf,.doc,.docx,.txt,.html,.jpg,.jpeg,.png,.gif,.bmp,.tiff';
+            
+            fileInput.onchange = async function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                try {
+                    console.log('[SIMPLE_UPLOAD_TEST] Testing simple S3 upload...');
+                    console.log('[SIMPLE_UPLOAD_TEST] File:', file.name, 'Size:', file.size);
+                    
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    
+                    const response = await fetch('/api/v1/chat/test-simple-upload', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    console.log('[SIMPLE_UPLOAD_TEST] Result:', result);
+                    
+                    if (response.ok && result.status === 'success') {
+                        alert(`✅ Simple S3 Upload Test Passed!\n\nS3 Path: ${result.s3_path}\nFile Size: ${result.file_size_uploaded} bytes\nVerified Size: ${result.file_size_verified} bytes\n\nUpload successful!`);
+                    } else {
+                        const errorMessage = result.detail || result.message || result.error || 'Unknown error';
+                        alert(`❌ Simple S3 Upload Test Failed!\n\nError: ${errorMessage}\n\nStatus: ${response.status}`);
                     }
-                });
-                
-                const result = await response.json();
-                console.log('[SIMPLE_UPLOAD_TEST] Result:', result);
-                
-                if (result.status === 'success') {
-                    alert(`✅ Simple S3 Upload Test Passed!\n\nMessage: ${result.message}\n\nAll tests passed!`);
-                } else {
-                    alert(`❌ Simple S3 Upload Test Failed!\n\nError: ${result.error}\n\nMessage: ${result.message}`);
+                } catch (error) {
+                    console.error('[SIMPLE_UPLOAD_TEST] Error:', error);
+                    alert(`❌ Simple S3 Upload Error: ${error.message}`);
                 }
-            } catch (error) {
-                console.error('[SIMPLE_UPLOAD_TEST] Error:', error);
-                alert(`❌ Simple S3 Upload Error: ${error.message}`);
-            }
+            };
+            
+            fileInput.click();
         }
     </script>
 </body>
