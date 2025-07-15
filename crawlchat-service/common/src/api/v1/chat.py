@@ -4,6 +4,7 @@ Chat API endpoints for Stock Market Crawler.
 
 import logging
 import uuid
+import hashlib
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from typing import List, Optional
 from pydantic import BaseModel
@@ -12,12 +13,14 @@ from common.src.models.chat import (
     ChatSession, ChatMessage, SessionCreate, SessionCreateResponse, 
     SessionList, MessageCreate, MessageResponse, ChatRequest, ChatResponse, ChatHistory
 )
+from common.src.models.documents import DocumentUpload
 from common.src.services.chat_service import chat_service
 from common.src.api.dependencies import get_current_user
 from common.src.models.auth import UserResponse
 from common.src.services.aws_background_service import aws_background_service
 from common.src.services.document_service import document_service
 from common.src.services.unified_storage_service import unified_storage_service
+from common.src.services.document_processing_service import document_processing_service
 from common.src.core.exceptions import ChatError
 
 logger = logging.getLogger(__name__)
@@ -31,7 +34,10 @@ class DocumentUploadResponse(BaseModel):
     message: str
     document_id: str
     filename: str
-    file_size: int
+    content_length: int
+    extraction_method: str
+    s3_key: str
+    processing_status: str
 
 @router.post("/sessions", response_model=SessionCreateResponse)
 async def create_session(current_user: UserResponse = Depends(get_current_user)):
