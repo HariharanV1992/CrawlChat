@@ -511,5 +511,42 @@ class DocumentProcessingService:
                 "filename": filename
             }
 
+    async def process_document(
+        self,
+        file_content: bytes,
+        filename: str,
+        user_id: str,
+        session_id: str,
+        document_id: str
+    ) -> Dict[str, Any]:
+        """Process a document with preprocessing and vector store integration."""
+        try:
+            logger.info(f"[DOC_PROCESSING] Processing document: {filename} for user: {user_id}")
+            
+            # Use the existing process_document_with_preprocessing method
+            result = await self.process_document_with_preprocessing(
+                file_content=file_content,
+                filename=filename,
+                user_id=user_id,
+                metadata={
+                    "session_id": session_id,
+                    "document_id": document_id,
+                    "source": "chat_upload"
+                },
+                session_id=session_id
+            )
+            
+            logger.info(f"[DOC_PROCESSING] Document processing completed: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"[DOC_PROCESSING] Error processing document {filename}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "content_length": 0,
+                "extraction_method": "none"
+            }
+
 # Global instance
 document_processing_service = DocumentProcessingService() 
