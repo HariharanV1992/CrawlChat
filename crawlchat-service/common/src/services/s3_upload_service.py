@@ -410,9 +410,14 @@ class S3UploadService:
         except Exception as e:
             logger.error(f"[S3_LAMBDA] ❌ Upload failed: {e}")
             logger.error(f"[S3_LAMBDA] Exception details: {type(e).__name__}: {str(e)}")
+            logger.error(f"[S3_LAMBDA] Exception repr: {repr(e)}")
             import traceback
             logger.error(f"[S3_LAMBDA] Traceback: {traceback.format_exc()}")
-            return {'status': 'error', 'error': str(e)}
+            error_msg = str(e)
+            logger.error(f"[S3_LAMBDA] Error message: '{error_msg}'")
+            logger.error(f"[S3_LAMBDA] Error message length: {len(error_msg)}")
+            logger.error(f"[S3_LAMBDA] Error message bytes: {error_msg.encode()}")
+            return {'status': 'error', 'error': error_msg}
 
     def upload_user_document(
         self,
@@ -462,7 +467,7 @@ class S3UploadService:
         # Always use Lambda-optimized method for PDFs in production to ensure reliability
         if is_lambda or (filename.lower().endswith('.pdf')):
             logger.info(f"[S3_UPLOAD] Using Lambda-optimized upload method (Lambda: {is_lambda}, PDF: {filename.lower().endswith('.pdf')})")
-            return self.upload_file_lambda_optimized(
+            result = self.upload_file_lambda_optimized(
                 file_content=file_content,
                 filename=filename,
                 user_id=user_id,
@@ -470,9 +475,11 @@ class S3UploadService:
                 s3_prefix='uploaded_documents',
                 metadata=metadata
             )
+            logger.info(f"[S3_UPLOAD] Lambda-optimized upload result: {result}")
+            return result
         else:
             logger.info(f"[S3_UPLOAD] Using standard upload method")
-            return self.upload_file(
+            result = self.upload_file(
                 file_content=file_content,
                 filename=filename,
                 user_id=user_id,
@@ -480,6 +487,8 @@ class S3UploadService:
                 s3_prefix='uploaded_documents',
                 metadata=metadata
             )
+            logger.info(f"[S3_UPLOAD] Standard upload result: {result}")
+            return result
 
     def upload_temp_file(
         self,

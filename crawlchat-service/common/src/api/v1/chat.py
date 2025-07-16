@@ -418,6 +418,11 @@ async def upload_document(
         
         # Upload to S3 using the single S3 upload service
         from common.src.services.s3_upload_service import s3_upload_service
+        logger.info(f"[API] Starting S3 upload for file: {file.filename}")
+        logger.info(f"[API] File size: {len(file_content):,} bytes")
+        logger.info(f"[API] User ID: {current_user.user_id}")
+        logger.info(f"[API] Content type: {file.content_type}")
+        
         result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=file.filename,
@@ -426,9 +431,16 @@ async def upload_document(
             task_id=task_id
         )
         
+        logger.info(f"[API] S3 upload result: {result}")
+        logger.info(f"[API] Result type: {type(result)}")
+        logger.info(f"[API] Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        
         if result.get('status') != 'success':
-            logger.error(f"[API] Upload failed: {result.get('error')}")
-            raise HTTPException(status_code=500, detail=f"Upload failed: {result.get('error')}")
+            error_msg = result.get('error', 'Unknown error')
+            logger.error(f"[API] Upload failed with error: {error_msg}")
+            logger.error(f"[API] Error type: {type(error_msg)}")
+            logger.error(f"[API] Full result: {result}")
+            raise HTTPException(status_code=500, detail=f"Upload failed: {error_msg}")
         
         s3_key = result["s3_key"]
         upload_method = result.get("upload_method", "unknown")
