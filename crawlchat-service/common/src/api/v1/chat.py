@@ -8,6 +8,7 @@ import hashlib
 from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from typing import List, Optional
 from pydantic import BaseModel
+from pathlib import Path
 
 from common.src.models.chat import (
     ChatSession, ChatMessage, SessionCreate, SessionCreateResponse, 
@@ -321,7 +322,7 @@ async def upload_document(
         
         # Validate file type
         allowed_extensions = ['.pdf', '.doc', '.docx', '.txt', '.html', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff']
-        file_extension = '.' + file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        file_extension = Path(file.filename).suffix.lower()
         
         if file_extension not in allowed_extensions:
             raise HTTPException(
@@ -333,8 +334,9 @@ async def upload_document(
         file_content = await file.read()
         file_size = len(file_content)
         
-        # 🔍 CRITICAL: Enhanced file content validation
+        # 🔍 CRITICAL: Enhanced file content validation for Lambda
         logger.info(f"[API] === FILE CONTENT VALIDATION ===")
+        logger.info(f"[API] Environment: {'LAMBDA' if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else 'LOCAL'}")
         logger.info(f"[API] File size: {file_size:,} bytes")
         logger.info(f"[API] File content type: {type(file_content)}")
         logger.info(f"[API] File content is None: {file_content is None}")
@@ -344,6 +346,27 @@ async def upload_document(
             logger.info(f"[API] File MD5: {hashlib.md5(file_content).hexdigest()}")
             logger.info(f"[API] First 50 bytes: {file_content[:50].hex()}")
             logger.info(f"[API] Last 50 bytes: {file_content[-50:].hex()}")
+        
+        # 🔍 CRITICAL: Validate file content before proceeding
+        if not file_content or file_size == 0:
+            logger.error(f"[API] ❌ File content is empty or None")
+            raise HTTPException(status_code=400, detail="File content is empty or corrupted")
+        
+        # 🔍 CRITICAL: Lambda-specific file content verification
+        if os.environ.get('AWS_LAMBDA_FUNCTION_NAME'):
+            logger.info(f"[API] Running in Lambda environment - applying Lambda optimizations")
+            
+            # Verify file content integrity in Lambda
+            if len(file_content) < 100:  # PDFs should be larger than 100 bytes
+                logger.error(f"[API] ❌ File content too small for PDF: {len(file_content)} bytes")
+                raise HTTPException(status_code=400, detail="File content appears to be corrupted")
+            
+            # Check if content looks like a PDF (should start with %PDF)
+            if file_content.startswith(b'%PDF'):
+                logger.info(f"[API] ✅ File content appears to be valid PDF")
+            else:
+                logger.warning(f"[API] ⚠️ File content doesn't start with PDF signature")
+                logger.info(f"[API] File starts with: {file_content[:20].hex()}")
             
             # Enhanced PDF validation
             if file.filename.lower().endswith('.pdf'):
@@ -364,10 +387,6 @@ async def upload_document(
         else:
             logger.error(f"[API] ❌ File content is empty or None")
             raise HTTPException(status_code=400, detail="File content is empty")
-        
-        # Check if file is empty
-        if file_size == 0:
-            raise HTTPException(status_code=400, detail="File is empty")
         
         # Check file size (max 10MB)
         if file_size > 10 * 1024 * 1024:
@@ -415,15 +434,31 @@ async def upload_document(
         logger.info(f"[API] Upload method used: {upload_method}")
         logger.info(f"[API] Upload verification included in service")
         
-        # Create document record
-        document_data = DocumentUpload(
-            filename=file.filename,
-            file_content=file_content,
+        # Create document record directly (don't upload again)
+        from common.src.models.documents import Document, DocumentType, DocumentStatus
+        from datetime import datetime
+        
+        document_id = str(uuid.uuid4())
+        file_extension = Path(file.filename).suffix.lower()
+        document_type = _get_document_type(file_extension)
+        
+        document = Document(
+            document_id=document_id,
             user_id=current_user.user_id,
-            task_id=task_id
+            filename=file.filename,
+            file_path=s3_key,  # Use the S3 key from the successful upload
+            document_type=document_type,
+            file_size=len(file_content),
+            status=DocumentStatus.UPLOADED,
+            uploaded_at=datetime.utcnow()
         )
         
-        document = await document_service.upload_document(document_data)
+        # Save to database
+        from common.src.core.database import mongodb
+        await mongodb.connect()
+        await mongodb.get_collection("documents").insert_one(document.dict())
+        
+        logger.info(f"[API] Document record created: {document_id}")
         
         # Link the uploaded document to the chat session
         await chat_service.link_uploaded_document(
@@ -472,6 +507,31 @@ async def upload_document(
     except Exception as e:
         logger.error(f"[API] Error uploading document: {e}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+def _get_document_type(extension: str) -> DocumentType:
+    """Get document type from file extension."""
+    from common.src.models.documents import DocumentType
+    
+    document_types = {
+        '.pdf': DocumentType.PDF,
+        '.doc': DocumentType.DOC,
+        '.docx': DocumentType.DOCX,
+        '.txt': DocumentType.TEXT,
+        '.html': DocumentType.HTML,
+        '.xlsx': DocumentType.EXCEL,
+        '.xls': DocumentType.EXCEL,
+        '.csv': DocumentType.CSV,
+        '.ppt': DocumentType.POWERPOINT,
+        '.pptx': DocumentType.POWERPOINT,
+        '.json': DocumentType.JSON,
+        '.png': DocumentType.IMAGE,
+        '.jpg': DocumentType.IMAGE,
+        '.jpeg': DocumentType.IMAGE,
+        '.gif': DocumentType.IMAGE,
+        '.bmp': DocumentType.IMAGE,
+        '.tiff': DocumentType.IMAGE
+    }
+    return document_types.get(extension.lower(), DocumentType.GENERAL)
 
 @router.post("/sessions/{session_id}/documents/base64")
 async def upload_document_base64(
@@ -1058,3 +1118,179 @@ async def test_simple_upload(
         raise HTTPException(status_code=500, detail=f"Test failed: {str(e)}")
     finally:
         logger.info(f"[API_DEBUG] === SIMPLE UPLOAD TEST END ===") 
+
+@router.post("/lambda-upload-test")
+async def lambda_upload_test(
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """
+    Lambda-optimized upload test endpoint for debugging PDF upload issues in production.
+    This endpoint is specifically designed to handle Lambda environment constraints.
+    """
+    import os
+    import tempfile
+    
+    logger.info(f"[LAMBDA_DEBUG] === LAMBDA UPLOAD TEST START ===")
+    logger.info(f"[LAMBDA_DEBUG] Environment: {'LAMBDA' if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else 'LOCAL'}")
+    logger.info(f"[LAMBDA_DEBUG] File: {file.filename}")
+    logger.info(f"[LAMBDA_DEBUG] Content type: {file.content_type}")
+    logger.info(f"[LAMBDA_DEBUG] User: {current_user.user_id}")
+    
+    try:
+        # 🔍 STEP 1: Read file content with Lambda-optimized approach
+        logger.info(f"[LAMBDA_DEBUG] Reading file content...")
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        logger.info(f"[LAMBDA_DEBUG] File content read successfully")
+        logger.info(f"[LAMBDA_DEBUG] File size: {file_size:,} bytes")
+        logger.info(f"[LAMBDA_DEBUG] File content type: {type(file_content)}")
+        logger.info(f"[LAMBDA_DEBUG] File content is None: {file_content is None}")
+        logger.info(f"[LAMBDA_DEBUG] File content is empty: {not file_content}")
+        
+        if file_content:
+            logger.info(f"[LAMBDA_DEBUG] File MD5: {hashlib.md5(file_content).hexdigest()}")
+            logger.info(f"[LAMBDA_DEBUG] First 50 bytes: {file_content[:50].hex()}")
+            logger.info(f"[LAMBDA_DEBUG] Last 50 bytes: {file_content[-50:].hex()}")
+        
+        # 🔍 STEP 2: Validate file content
+        if not file_content or file_size == 0:
+            logger.error(f"[LAMBDA_DEBUG] ❌ File content is empty or None")
+            raise HTTPException(status_code=400, detail="File content is empty")
+        
+        # 🔍 STEP 3: Test temporary file creation in Lambda
+        logger.info(f"[LAMBDA_DEBUG] Testing temporary file creation...")
+        
+        # Create temporary file in Lambda-compatible location
+        temp_dir = "/tmp" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else tempfile.gettempdir()
+        temp_file_path = os.path.join(temp_dir, f"lambda_test_{file.filename}")
+        
+        logger.info(f"[LAMBDA_DEBUG] Temp directory: {temp_dir}")
+        logger.info(f"[LAMBDA_DEBUG] Temp file path: {temp_file_path}")
+        
+        # Write file content to temporary file in binary mode
+        with open(temp_file_path, 'wb') as temp_file:
+            temp_file.write(file_content)
+            temp_file.flush()  # Ensure content is written to disk
+            os.fsync(temp_file.fileno())  # Force sync to disk
+        
+        # Verify temporary file was written correctly
+        temp_file_size = os.path.getsize(temp_file_path)
+        logger.info(f"[LAMBDA_DEBUG] Temp file size: {temp_file_size:,} bytes")
+        logger.info(f"[LAMBDA_DEBUG] Size match: {temp_file_size == file_size}")
+        
+        # Read back the temporary file to verify content
+        with open(temp_file_path, 'rb') as temp_file:
+            temp_content = temp_file.read()
+        
+        temp_content_size = len(temp_content)
+        content_match = temp_content == file_content
+        logger.info(f"[LAMBDA_DEBUG] Temp content size: {temp_content_size:,} bytes")
+        logger.info(f"[LAMBDA_DEBUG] Content match: {content_match}")
+        
+        if temp_content:
+            logger.info(f"[LAMBDA_DEBUG] Temp file MD5: {hashlib.md5(temp_content).hexdigest()}")
+        
+        # 🔍 STEP 4: Test S3 upload with Lambda-optimized method
+        logger.info(f"[LAMBDA_DEBUG] Testing S3 upload...")
+        
+        from common.src.services.s3_upload_service import s3_upload_service
+        
+        # Generate unique filename
+        import uuid
+        task_id = str(uuid.uuid4())
+        
+        # Upload using Lambda-optimized method
+        result = s3_upload_service.upload_user_document(
+            file_content=file_content,
+            filename=file.filename,
+            user_id=current_user.user_id,
+            content_type=file.content_type,
+            task_id=task_id
+        )
+        
+        logger.info(f"[LAMBDA_DEBUG] S3 upload result: {result}")
+        
+        if result.get('status') != 'success':
+            logger.error(f"[LAMBDA_DEBUG] ❌ S3 upload failed: {result.get('error')}")
+            raise HTTPException(status_code=500, detail=f"S3 upload failed: {result.get('error')}")
+        
+        s3_key = result["s3_key"]
+        upload_method = result.get("upload_method", "unknown")
+        
+        logger.info(f"[LAMBDA_DEBUG] ✅ S3 upload successful")
+        logger.info(f"[LAMBDA_DEBUG] S3 key: {s3_key}")
+        logger.info(f"[LAMBDA_DEBUG] Upload method: {upload_method}")
+        
+        # 🔍 STEP 5: Verify uploaded file in S3
+        logger.info(f"[LAMBDA_DEBUG] Verifying uploaded file in S3...")
+        
+        try:
+            # Get the uploaded file content from S3
+            s3_content = s3_upload_service.get_file_content(s3_key)
+            s3_content_size = len(s3_content) if s3_content else 0
+            
+            logger.info(f"[LAMBDA_DEBUG] S3 file size: {s3_content_size:,} bytes")
+            logger.info(f"[LAMBDA_DEBUG] Original vs S3 size match: {s3_content_size == file_size}")
+            
+            if s3_content:
+                s3_md5 = hashlib.md5(s3_content).hexdigest()
+                original_md5 = hashlib.md5(file_content).hexdigest()
+                md5_match = s3_md5 == original_md5
+                
+                logger.info(f"[LAMBDA_DEBUG] Original MD5: {original_md5}")
+                logger.info(f"[LAMBDA_DEBUG] S3 MD5: {s3_md5}")
+                logger.info(f"[LAMBDA_DEBUG] MD5 match: {md5_match}")
+                
+                if md5_match:
+                    logger.info(f"[LAMBDA_DEBUG] ✅ File integrity verified - content matches")
+                else:
+                    logger.error(f"[LAMBDA_DEBUG] ❌ File integrity check failed - content corrupted")
+            else:
+                logger.error(f"[LAMBDA_DEBUG] ❌ Could not retrieve file content from S3")
+                
+        except Exception as e:
+            logger.error(f"[LAMBDA_DEBUG] ❌ Error verifying S3 file: {e}")
+        
+        # Clean up temporary file
+        try:
+            os.remove(temp_file_path)
+            logger.info(f"[LAMBDA_DEBUG] Temporary file cleaned up")
+        except Exception as e:
+            logger.warning(f"[LAMBDA_DEBUG] Could not clean up temp file: {e}")
+        
+        # 🔍 STEP 6: Return comprehensive debug information
+        debug_info = {
+            "status": "success",
+            "message": "Lambda upload test completed",
+            "environment": "LAMBDA" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else "LOCAL",
+            "file_info": {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "original_size": file_size,
+                "original_md5": hashlib.md5(file_content).hexdigest() if file_content else None
+            },
+            "temp_file_info": {
+                "temp_dir": temp_dir,
+                "temp_file_size": temp_file_size,
+                "size_match": temp_file_size == file_size,
+                "content_match": content_match
+            },
+            "s3_info": {
+                "s3_key": s3_key,
+                "upload_method": upload_method,
+                "s3_file_size": s3_content_size if 's3_content_size' in locals() else None,
+                "s3_md5": s3_md5 if 's3_md5' in locals() else None,
+                "md5_match": md5_match if 'md5_match' in locals() else None
+            },
+            "task_id": task_id
+        }
+        
+        logger.info(f"[LAMBDA_DEBUG] === LAMBDA UPLOAD TEST COMPLETED ===")
+        return debug_info
+        
+    except Exception as e:
+        logger.error(f"[LAMBDA_DEBUG] ❌ Lambda upload test failed: {e}")
+        logger.error(f"[LAMBDA_DEBUG] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Lambda upload test failed: {str(e)}") 
