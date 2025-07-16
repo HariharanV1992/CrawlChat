@@ -25,6 +25,8 @@ from common.src.services.document_service import document_service
 from common.src.services.document_processing_service import document_processing_service
 from common.src.core.exceptions import ChatError
 
+import os
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
@@ -1029,21 +1031,13 @@ async def test_simple_upload(
             raise HTTPException(status_code=400, detail="File content is empty")
         
         # Check environment
-        import os
-        is_lambda = (
-            os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
-            os.getenv('AWS_EXECUTION_ENV') or 
-            os.getenv('LAMBDA_TASK_ROOT') or
-            os.getenv('AWS_LAMBDA_RUNTIME_API')
-        )
-        
         logger.info(f"[API_DEBUG] Environment check:")
         logger.info(f"[API_DEBUG]   AWS_LAMBDA_FUNCTION_NAME: {os.getenv('AWS_LAMBDA_FUNCTION_NAME')}")
         logger.info(f"[API_DEBUG]   AWS_EXECUTION_ENV: {os.getenv('AWS_EXECUTION_ENV')}")
         logger.info(f"[API_DEBUG]   LAMBDA_TASK_ROOT: {os.getenv('LAMBDA_TASK_ROOT')}")
         logger.info(f"[API_DEBUG]   AWS_LAMBDA_RUNTIME_API: {os.getenv('AWS_LAMBDA_RUNTIME_API')}")
         logger.info(f"[API_DEBUG]   Current working directory: {os.getcwd()}")
-        logger.info(f"[API_DEBUG]   Is Lambda environment: {is_lambda}")
+        logger.info(f"[API_DEBUG]   Is Lambda environment: {os.environ.get('AWS_LAMBDA_FUNCTION_NAME') or os.environ.get('AWS_EXECUTION_ENV') or os.environ.get('LAMBDA_TASK_ROOT') or os.environ.get('AWS_LAMBDA_RUNTIME_API')}")
         
         # Test S3 upload
         from common.src.services.s3_upload_service import s3_upload_service
@@ -1099,7 +1093,7 @@ async def test_simple_upload(
                 "message": "Simple upload test completed successfully",
                 "upload_result": result,
                 "file_size": file_size,
-                "environment": "lambda" if is_lambda else "local",
+                "environment": "lambda" if os.environ.get('AWS_LAMBDA_FUNCTION_NAME') else "local",
                 "pdf_valid": file.filename.lower().endswith('.pdf') and file_content.startswith(b'%PDF')
             }
         else:
