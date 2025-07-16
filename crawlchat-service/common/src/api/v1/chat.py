@@ -10,11 +10,12 @@ from typing import List, Optional
 from pydantic import BaseModel
 from pathlib import Path
 
+# Import models at the top level
+from common.src.models.documents import Document, DocumentType, DocumentStatus
 from common.src.models.chat import (
     ChatSession, ChatMessage, SessionCreate, SessionCreateResponse, 
     SessionList, MessageCreate, MessageResponse, ChatRequest, ChatResponse, ChatHistory
 )
-from common.src.models.documents import DocumentUpload
 from common.src.services.chat_service import chat_service
 from common.src.api.dependencies import get_current_user
 from common.src.models.auth import UserResponse
@@ -435,7 +436,6 @@ async def upload_document(
         logger.info(f"[API] Upload verification included in service")
         
         # Create document record directly (don't upload again)
-        from common.src.models.documents import Document, DocumentType, DocumentStatus
         from datetime import datetime
         
         document_id = str(uuid.uuid4())
@@ -510,8 +510,6 @@ async def upload_document(
 
 def _get_document_type(extension: str) -> DocumentType:
     """Get document type from file extension."""
-    from common.src.models.documents import DocumentType
-    
     document_types = {
         '.pdf': DocumentType.PDF,
         '.doc': DocumentType.DOC,
@@ -620,7 +618,6 @@ async def upload_document_base64(
         logger.info(f"[API] Base64 document processed successfully: {document_id}, content length: {content_length}, method: {extraction_method}")
         
         # Get the document record that was already created by unified document processor
-        from common.src.models.documents import Document, DocumentType, DocumentStatus
         
         # Fetch the existing document record from database
         from common.src.core.database import mongodb
