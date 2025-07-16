@@ -333,45 +333,47 @@ async def upload_document(
         file_content = await file.read()
         file_size = len(file_content)
         
-        # Enhanced file integrity checking
+        # 🔍 CRITICAL: Enhanced file content validation
+        logger.info(f"[API] === FILE CONTENT VALIDATION ===")
         logger.info(f"[API] File size: {file_size:,} bytes")
-        logger.info(f"[API] First 20 bytes: {file_content[:20].hex()}")
-        logger.info(f"[API] Last 20 bytes: {file_content[-20:].hex()}")
-        logger.info(f"[API] File MD5: {hashlib.md5(file_content).hexdigest()}")
-        logger.info(f"[API] File content type: {file.content_type}")
-        logger.info(f"[API] File filename: {file.filename}")
+        logger.info(f"[API] File content type: {type(file_content)}")
+        logger.info(f"[API] File content is None: {file_content is None}")
+        logger.info(f"[API] File content is empty: {not file_content}")
         
-        # 🔍 CRITICAL: Check if file content is valid before passing to S3
-        if file.filename.lower().endswith('.pdf'):
-            if file_content.startswith(b'%PDF-'):
-                logger.info(f"[API] ✅ Valid PDF header detected")
-            else:
-                logger.error(f"[API] ❌ Invalid PDF header: {file_content[:10]}")
-                raise HTTPException(status_code=400, detail="Invalid PDF file - missing PDF header")
+        if file_content:
+            logger.info(f"[API] File MD5: {hashlib.md5(file_content).hexdigest()}")
+            logger.info(f"[API] First 50 bytes: {file_content[:50].hex()}")
+            logger.info(f"[API] Last 50 bytes: {file_content[-50:].hex()}")
             
-            if b'%%EOF' in file_content[-1000:]:
-                logger.info(f"[API] ✅ PDF EOF marker found")
-            else:
-                logger.warning(f"[API] ⚠️ PDF EOF marker not found in last 1000 bytes")
+            # Enhanced PDF validation
+            if file.filename.lower().endswith('.pdf'):
+                logger.info(f"[API] PDF file detected - performing enhanced validation")
+                logger.info(f"[API] PDF header check: {file_content.startswith(b'%PDF')}")
+                logger.info(f"[API] PDF EOF check: {b'%%EOF' in file_content}")
+                logger.info(f"[API] PDF size: {len(file_content):,} bytes")
+                
+                if not file_content.startswith(b'%PDF'):
+                    logger.error(f"[API] ❌ Invalid PDF header: {file_content[:20]}")
+                    raise HTTPException(status_code=400, detail="Invalid PDF file - missing PDF header")
+                
+                if b'%%EOF' not in file_content[-1000:]:
+                    logger.warning(f"[API] ⚠️ PDF EOF marker not found in last 1000 bytes")
+                    # Don't fail for missing EOF, but log it
+                
+                logger.info(f"[API] ✅ PDF validation passed")
+        else:
+            logger.error(f"[API] ❌ File content is empty or None")
+            raise HTTPException(status_code=400, detail="File content is empty")
         
         # Check if file is empty
         if file_size == 0:
             raise HTTPException(status_code=400, detail="File is empty")
         
-        # Check PDF validity
-        if file.filename.lower().endswith('.pdf'):
-            if not file_content.startswith(b'%PDF-'):
-                logger.error(f"[API] Invalid PDF header: {file_content[:10]}")
-                raise HTTPException(status_code=400, detail="Invalid PDF file - missing PDF header")
-            
-            if b'%%EOF' not in file_content[-1000:]:
-                logger.warning(f"[API] PDF EOF marker not found in last 1000 bytes")
-            
-            logger.info(f"[API] PDF validation passed")
-        
         # Check file size (max 10MB)
         if file_size > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File size too large. Maximum size is 10MB")
+        
+        logger.info(f"[API] === FILE CONTENT VALIDATION COMPLETE ===")
         
         # Generate task ID for organization
         task_id = str(uuid.uuid4())
@@ -930,54 +932,129 @@ async def test_simple_upload(
     file: UploadFile = File(...),
     current_user: UserResponse = Depends(get_current_user)
 ):
-    """Test simple S3 upload service."""
-    logger.info(f"[API] Testing simple S3 upload for user: {current_user.user_id}")
+    """Test simple upload without processing - for debugging PDF upload issues."""
+    logger.info(f"[API_DEBUG] === SIMPLE UPLOAD TEST START ===")
+    logger.info(f"[API_DEBUG] File: {file.filename}")
+    logger.info(f"[API_DEBUG] Content type: {file.content_type}")
+    logger.info(f"[API_DEBUG] User: {current_user.user_id}")
     
     try:
         # Read file content
         file_content = await file.read()
         file_size = len(file_content)
         
-        logger.info(f"[API] File size: {file_size:,} bytes")
-        logger.info(f"[API] First 20 bytes: {file_content[:20].hex()}")
-        logger.info(f"[API] Last 20 bytes: {file_content[-20:].hex()}")
+        logger.info(f"[API_DEBUG] File content read successfully")
+        logger.info(f"[API_DEBUG] File size: {file_size:,} bytes")
+        logger.info(f"[API_DEBUG] File content type: {type(file_content)}")
         
-        # Import the single S3 upload service
+        if file_content:
+            logger.info(f"[API_DEBUG] File MD5: {hashlib.md5(file_content).hexdigest()}")
+            logger.info(f"[API_DEBUG] First 50 bytes: {file_content[:50].hex()}")
+            logger.info(f"[API_DEBUG] Last 50 bytes: {file_content[-50:].hex()}")
+            
+            # Check if it's a PDF
+            if file.filename and file.filename.lower().endswith('.pdf'):
+                logger.info(f"[API_DEBUG] PDF file detected")
+                logger.info(f"[API_DEBUG] PDF header check: {file_content.startswith(b'%PDF')}")
+                logger.info(f"[API_DEBUG] PDF EOF check: {b'%%EOF' in file_content}")
+                
+                if file_content.startswith(b'%PDF'):
+                    logger.info(f"[API_DEBUG] ✅ Valid PDF header")
+                else:
+                    logger.error(f"[API_DEBUG] ❌ Invalid PDF header: {file_content[:20]}")
+                
+                if b'%%EOF' in file_content[-1000:]:
+                    logger.info(f"[API_DEBUG] ✅ PDF EOF marker found")
+                else:
+                    logger.warning(f"[API_DEBUG] ⚠️ PDF EOF marker not found")
+        else:
+            logger.error(f"[API_DEBUG] ❌ File content is empty")
+            raise HTTPException(status_code=400, detail="File content is empty")
+        
+        # Check environment
+        import os
+        is_lambda = (
+            os.getenv('AWS_LAMBDA_FUNCTION_NAME') or 
+            os.getenv('AWS_EXECUTION_ENV') or 
+            os.getenv('LAMBDA_TASK_ROOT') or
+            os.getenv('AWS_LAMBDA_RUNTIME_API')
+        )
+        
+        logger.info(f"[API_DEBUG] Environment check:")
+        logger.info(f"[API_DEBUG]   AWS_LAMBDA_FUNCTION_NAME: {os.getenv('AWS_LAMBDA_FUNCTION_NAME')}")
+        logger.info(f"[API_DEBUG]   AWS_EXECUTION_ENV: {os.getenv('AWS_EXECUTION_ENV')}")
+        logger.info(f"[API_DEBUG]   LAMBDA_TASK_ROOT: {os.getenv('LAMBDA_TASK_ROOT')}")
+        logger.info(f"[API_DEBUG]   AWS_LAMBDA_RUNTIME_API: {os.getenv('AWS_LAMBDA_RUNTIME_API')}")
+        logger.info(f"[API_DEBUG]   Current working directory: {os.getcwd()}")
+        logger.info(f"[API_DEBUG]   Is Lambda environment: {is_lambda}")
+        
+        # Test S3 upload
         from common.src.services.s3_upload_service import s3_upload_service
         
-        # Upload using the single S3 upload service
-        result = s3_upload_service.upload_file(
+        logger.info(f"[API_DEBUG] Starting S3 upload test...")
+        result = s3_upload_service.upload_user_document(
             file_content=file_content,
             filename=file.filename,
             user_id=current_user.user_id,
-            content_type=file.content_type,
-            s3_prefix='test_simple_uploads'
+            content_type=file.content_type
         )
         
-        if result['status'] == 'success':
-            # Verify the upload
-            verify_result = s3_upload_service.verify_upload(result['s3_key'])
+        logger.info(f"[API_DEBUG] S3 upload result: {result}")
+        
+        if result.get('status') == 'success':
+            logger.info(f"[API_DEBUG] ✅ S3 upload successful")
+            
+            # Test download to verify
+            try:
+                s3_key = result['s3_key']
+                logger.info(f"[API_DEBUG] Testing download verification...")
+                
+                downloaded_content = s3_upload_service.get_file_content(s3_key)
+                if downloaded_content:
+                    logger.info(f"[API_DEBUG] Download successful")
+                    logger.info(f"[API_DEBUG] Downloaded size: {len(downloaded_content):,} bytes")
+                    logger.info(f"[API_DEBUG] Downloaded MD5: {hashlib.md5(downloaded_content).hexdigest()}")
+                    
+                    if len(downloaded_content) == len(file_content):
+                        logger.info(f"[API_DEBUG] ✅ Size match verified")
+                    else:
+                        logger.error(f"[API_DEBUG] ❌ Size mismatch: original={len(file_content)}, downloaded={len(downloaded_content)}")
+                    
+                    if hashlib.md5(downloaded_content).hexdigest() == hashlib.md5(file_content).hexdigest():
+                        logger.info(f"[API_DEBUG] ✅ MD5 match verified")
+                    else:
+                        logger.error(f"[API_DEBUG] ❌ MD5 mismatch")
+                        
+                        # Check if it's a PDF and compare headers
+                        if file.filename.lower().endswith('.pdf'):
+                            logger.info(f"[API_DEBUG] PDF comparison:")
+                            logger.info(f"[API_DEBUG] Original PDF header: {file_content[:20]}")
+                            logger.info(f"[API_DEBUG] Downloaded PDF header: {downloaded_content[:20]}")
+                            logger.info(f"[API_DEBUG] Original PDF EOF: {file_content[-50:]}")
+                            logger.info(f"[API_DEBUG] Downloaded PDF EOF: {downloaded_content[-50:]}")
+                else:
+                    logger.error(f"[API_DEBUG] ❌ Download failed - no content returned")
+                    
+            except Exception as download_error:
+                logger.error(f"[API_DEBUG] ❌ Download verification failed: {download_error}")
             
             return {
-                "status": "success",
-                "message": "Simple S3 upload test completed",
+                "message": "Simple upload test completed successfully",
                 "upload_result": result,
-                "verification_result": verify_result,
-                "s3_path": result['s3_url'],
-                "file_size_uploaded": file_size,
-                "file_size_verified": verify_result.get('file_size', 0)
+                "file_size": file_size,
+                "environment": "lambda" if is_lambda else "local",
+                "pdf_valid": file.filename.lower().endswith('.pdf') and file_content.startswith(b'%PDF')
             }
         else:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Simple S3 upload failed: {result.get('error', 'Unknown error')}"
-            )
+            logger.error(f"[API_DEBUG] ❌ S3 upload failed: {result.get('error')}")
+            raise HTTPException(status_code=500, detail=f"Upload failed: {result.get('error')}")
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[API] Simple S3 upload test error: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Test failed: {str(e)}"
-        ) 
+        logger.error(f"[API_DEBUG] ❌ Error in simple upload test: {e}")
+        import traceback
+        logger.error(f"[API_DEBUG] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Test failed: {str(e)}")
+    finally:
+        logger.info(f"[API_DEBUG] === SIMPLE UPLOAD TEST END ===") 
